@@ -227,22 +227,42 @@ Tracks all decisions and progress made during development.
 
 ## Networking
 
-### Decisions
-- **Library:** libcurl (`curl_multi` interface for concurrent non-blocking downloads)
-- **Streaming:** Assets downloadable at runtime while game runs (Fortnite-style) — not just batch pre-launch updates
-- **Update triggers:** On launch + manually triggered by player
-- **DLC/paid content:** Deferred — free patches and updates only for now
-- **Architecture:**
-  - **Download Manager:** Background thread running `curl_multi` poll loop, accepts prioritized requests, reports completions via thread-safe queue
-  - **Asset Cache:** Local disk cache with LRU eviction and checksum verification on load
-  - **Asset Handle:** Lightweight token returned immediately on request — game polls `isReady()` or registers a callback; never blocks the game loop
-  - **Priority queue:** Three levels — Critical (needed now), High (prefetch, player approaching), Background (speculative)
-  - **Manifest system:** JSON manifest on server listing every streamable asset (path, version, checksum, size); fetched on launch and on manual trigger; delta comparison determines what to download
-- **World streaming integration:** `WorldStreaming` system detects player proximity to zones and issues `High` priority prefetch requests ahead of time
-- **Placeholder/fallback strategy:** Low-res or lowest-LOD version shown while full asset downloads
-  - Textures: low-res placeholder
-  - Meshes: simplified proxy or bounding box
-  - Audio: silence or generic ambient
+### Context
+The goal is not multiplayer — it's downloading assets and updates post-ship. This is a much simpler problem than game networking, but the decision to support **runtime asset streaming** (like Fortnite) makes it meaningfully more complex than just a batch pre-launch patcher. Assets need to arrive while the game is running without ever stalling the game loop.
+
+### Library: libcurl
+- Using `curl_multi` interface for concurrent, non-blocking downloads on a background thread
+- Chosen over platform-native APIs (NSURLSession on Apple, WinHTTP on Windows, HttpURLConnection on Android) because four separate HTTP implementations is significant maintenance overhead for something as commodity as file downloading. The ~1MB binary cost of libcurl is worth the single unified implementation
+- Chosen over `cpp-httplib` (header-only alternative) because cpp-httplib has no built-in async — you'd need to manage threads yourself, which negates its simplicity advantage for this use case
+
+### Streaming Architecture
+Assets can be requested at runtime while the game runs. The game loop must never block waiting for a download.
+
+- **Download Manager:** Dedicated background thread running a `curl_multi` poll loop. Accepts prioritized download requests from any thread and pushes completions to a thread-safe queue consumed by the asset system
+- **Priority queue:** Three levels drive scheduling within the download manager:
+  - *Critical* — asset needed right now (player is looking at it); jumps to front of queue
+  - *High* — prefetch for assets the player is moving toward; loaded ahead of time
+  - *Background* — speculative prefetch; yields to all higher priority work
+- **Asset Handle:** `AssetHandle<T>` returned immediately when an asset is requested — a lightweight non-owning token the game polls with `isReady()` or attaches a callback to. The game loop never waits; it checks readiness each frame and falls back to a placeholder until the asset arrives
+- **Asset Cache:** Downloaded files stored on local disk. LRU eviction keeps cache within a configured size limit. Checksums verified on load to detect corruption or partial downloads
+- **Manifest system:** A JSON manifest on the server lists every streamable asset (path, version, checksum, size). Fetched on launch and on manual player trigger. Delta comparison against the local manifest determines exactly what needs downloading — unchanged assets are never re-fetched
+
+### Update Triggers
+- On launch: manifest fetched, delta computed, missing/changed assets queued at Background priority
+- Manually triggered: player initiates check from settings menu, same flow as launch
+
+### World Streaming Integration
+The `WorldStreaming` system (part of the scene graph layer) detects player proximity to unloaded zones and issues `High` priority prefetch requests ahead of need. When the player enters a zone, assets should already be ready or nearly so.
+
+### Placeholder / Fallback Strategy
+Low-quality fallbacks shown while full-resolution assets download — this is how modern streaming games avoid hard pop-in:
+- Textures: lowest available LOD or a flat-colour placeholder
+- Meshes: simplified proxy mesh or bounding box
+- Audio: silence or a generic ambient loop
+
+### Deferred
+- Paid DLC / in-app purchases — free patches and updates only for now
+- Multiplayer / real-time networking — long-term, separate system entirely
 
 ### Status
 - [ ] Networking not started
