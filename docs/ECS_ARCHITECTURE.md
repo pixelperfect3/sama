@@ -218,6 +218,102 @@ Covers `View<Components...>` iteration:
 
 ---
 
+## DAG Scheduler
+
+Systems run in parallel using a compile-time dependency graph. The scheduler is built entirely from type information — no runtime overhead.
+
+### How Conflicts Are Detected
+
+Two systems conflict if one **writes** a component the other **reads or writes**. Concurrent reads are always safe.
+
+| System A | System B | Relationship |
+|---|---|---|
+| writes Position | reads Position | A must finish before B |
+| writes Position | writes Velocity | No conflict — parallel safe |
+| reads Position | reads Position | No conflict — reads are safe |
+
+### Compile-Time Schedule
+
+Each system declares its data dependencies as type aliases:
+
+```cpp
+struct MovementSystem : ISystem {
+    using Reads  = TypeList<Velocity>;
+    using Writes = TypeList<Position>;
+    void update(Registry&, float dt) override;
+};
+```
+
+`buildSchedule<Systems...>()` is a `constexpr` function that:
+1. Builds an N×N conflict matrix from all system Reads/Writes pairs
+2. Computes dependency ordering (topological sort)
+3. Groups systems into **phases** — within a phase, all systems are conflict-free and run in parallel
+4. Returns a `constexpr Schedule` — a plain array baked into the binary
+
+```
+Given: InputSystem, PhysicsSystem, MovementSystem, AudioSystem, RenderSystem
+
+Phase 0: [ InputSystem ]
+Phase 1: [ PhysicsSystem, MovementSystem ]   ← parallel, both only depend on Input
+Phase 2: [ AudioSystem, RenderSystem ]       ← parallel, read-only after Phase 1
+```
+
+Binary size impact: ~100–500 bytes for the phase array. No `std::unordered_map`, no heap allocation, no RTTI in the scheduler.
+
+### Execution Model
+
+```mermaid
+graph TD
+    FRAME["runFrame(reg, dt)"]
+    P0["Phase 0\nInputSystem"]
+    P1A["Phase 1 — Thread 1\nPhysicsSystem"]
+    P1B["Phase 1 — Thread 2\nMovementSystem"]
+    WAIT1["waitAll()"]
+    P2A["Phase 2 — Thread 1\nAudioSystem"]
+    P2B["Phase 2 — Thread 2\nRenderSystem"]
+    WAIT2["waitAll()"]
+
+    FRAME --> P0
+    P0 --> P1A
+    P0 --> P1B
+    P1A --> WAIT1
+    P1B --> WAIT1
+    WAIT1 --> P2A
+    WAIT1 --> P2B
+    P2A --> WAIT2
+    P2B --> WAIT2
+```
+
+`SystemExecutor` owns the thread pool and drives the phase loop. The thread pool is fixed-size, configured at startup per platform (e.g. fewer threads on mobile).
+
+### Constraints
+- All systems must be known at **compile time** — no runtime-registered systems in this layer
+- Write conflicts between systems are serialized (no parallelism) — acceptable for now, revisit if profiling shows a bottleneck
+- Explicit ordering without data deps (e.g. `dependsOn(InputSystem)`) not yet supported — future consideration
+
+### New File Structure
+
+```
+engine/ecs/
+├── TypeList.h         Compile-time type list: Contains, Intersects utilities
+├── Schedule.h         constexpr buildSchedule<>(), Phase/Schedule structs
+├── System.h           Updated: Reads/Writes type aliases + SystemType concept
+├── SystemExecutor.h   Drives phase loop against ThreadPool + Registry
+└── SystemExecutor.cpp
+
+engine/threading/
+├── ThreadPool.h       Fixed-size worker thread pool
+└── ThreadPool.cpp
+
+tests/ecs/
+└── TestSchedule.cpp   DAG construction, phase grouping, conflict detection
+
+tests/threading/
+└── TestThreadPool.cpp Submit, waitAll, multi-batch correctness
+```
+
+---
+
 ## Key Design Properties
 
 | Property | How it's achieved |
@@ -229,3 +325,5 @@ Covers `View<Components...>` iteration:
 | No empty-store side effects | `view()` passes null for unused component types; View handles null as empty |
 | Type safety | `std::type_index` keyed map, static_cast inside Registry |
 | Zero dependencies | Pure C++20 stdlib only |
+| Zero-cost parallel scheduling | Compile-time DAG — phase array baked into binary, no runtime graph traversal |
+| Safe parallelism | Conflict detection via Reads/Writes type aliases — data races impossible by construction |

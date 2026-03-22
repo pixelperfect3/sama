@@ -27,8 +27,17 @@ Tracks all decisions and progress made during development.
 ### Threading Model
 - **Approach:** System-level parallelism — independent systems run concurrently (e.g. physics + audio in parallel)
 - **Intra-system threading:** Deferred — revisit component-level worker threads if a single system becomes a bottleneck on high-end targets
-- **Platform flexibility:** Thread count configurable per platform (e.g. fewer threads on mobile)
-- **ECS:** Single-threaded today; future systems will declare read/write component sets to enable safe parallel scheduling
+- **Platform flexibility:** Thread pool size fixed at startup, configurable per platform (e.g. fewer threads on mobile)
+- **Dependency declaration:** Static — each system declares `using Reads = TypeList<...>` and `using Writes = TypeList<...>` as type aliases
+- **DAG construction:** Compile-time via `constexpr buildSchedule<Systems...>()` — computes execution phases and bakes them into the binary as a plain array. Zero runtime overhead, no heap allocation in the scheduler
+  - Two systems conflict if one writes a component the other reads or writes
+  - Conflicting systems are serialized in the DAG (no parallelism) — revisit splitting ownership if this becomes a perf bottleneck
+  - All systems must be known at compile time — runtime-registered systems not supported in this layer (future scripting layer would be separate)
+  - Binary size impact: minimal (~100–500 bytes for the phase array) — smaller than a runtime hash map approach
+- **Execution:** Phase-based — each phase is a set of systems with no conflicts, dispatched in parallel to the thread pool. Executor waits for all systems in a phase to finish before starting the next
+
+#### Future Consideration
+- Explicit system ordering without data dependencies (e.g. `dependsOn(InputSystem)` even with no shared components) — not implemented yet, revisit when needed
 
 ### Compile Time
 - **Goal:** Keep compile times fast — this is a priority, not an afterthought
