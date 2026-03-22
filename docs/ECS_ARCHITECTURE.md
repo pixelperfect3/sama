@@ -162,6 +162,62 @@ tests/ecs/
 
 ---
 
+## Test Coverage
+
+**57 test cases, 3423 assertions.** All tests use [Catch2 v3](https://github.com/catchorg/Catch2).
+
+### TestEntity.cpp — 6 tests
+Covers the `EntityID` bit-packing primitives:
+- `INVALID_ENTITY` equals 0
+- `makeEntityID` / `entityIndex` / `entityGeneration` roundtrip for normal, zero, and max (`0xFFFFFFFF`) values
+- Distinct index+generation pairs always produce unique IDs
+- All functions are usable as `constexpr`
+
+### TestSparseSet.cpp — 14 tests
+Covers `SparseSet<T>` in isolation:
+- Insert a component and retrieve it via `get`
+- `contains` returns correct true/false
+- `get` returns `nullptr` for an entity that was never inserted
+- Remove a component, verify it is no longer present
+- **Swap-and-pop correctness** — insert A, B, C; remove B; verify A and C are still accessible and the dense array remains packed
+- `components()` span reflects mutations correctly
+- `entities()` span stays in sync with the dense array
+- `size()` tracks insertions and removals accurately
+- `clear()` empties all three internal arrays
+- Double-insert on the same entity overwrites the existing value
+- Zero-size (`Tag`) component works correctly
+- Stress test: 200 entities with alternating removals, verify full consistency throughout
+
+### TestRegistry.cpp — 19 tests
+Covers the `Registry` end-to-end:
+- `createEntity` returns a valid entity; `isValid` returns true
+- `destroyEntity` invalidates the entity; `isValid` returns false
+- **Generation safety** — a destroyed entity ID is invalid even if its index is later recycled by a new entity
+- `emplace` and `get` roundtrip for a component
+- `get` returns `nullptr` for a component the entity does not have
+- `has` returns the correct boolean
+- `remove<T>` removes only the specified component, leaves others intact
+- `destroyEntity` removes all components from every store
+- Stress: create 1000 entities, destroy half, create 300 more — verify all IDs and components are consistent
+- **Stale ID cycle test** — 50 destroy/create cycles on the same index, verify old IDs never become valid again
+
+### TestView.cpp — 18 tests
+Covers `View<Components...>` iteration:
+- Single-component `each` visits exactly the right entities
+- Two-component `each` visits only entities that have **both** components
+- Three-component `each` filters correctly across all three stores
+- `each` with no matching entities iterates zero times
+- Mutations inside `each` persist after the loop
+- **Range-based `for`** produces identical results to `each`
+- Adding a component between two view calls includes the new entity
+- Removing a component between two view calls excludes it
+- Destroying an entity between two view calls excludes it
+- Zero-size (`Tag`) component views work correctly
+- **10k entity simulation** — create 10,000 entities with `Position` and `Velocity`, run a movement step via `view<Position, Velocity>`, verify all positions updated correctly
+- **10k half-coverage count** — 10,000 entities where only half have both components, verify exact count via view iteration
+
+---
+
 ## Key Design Properties
 
 | Property | How it's achieved |
