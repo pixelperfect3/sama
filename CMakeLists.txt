@@ -9,14 +9,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(engine INTERFACE)
 target_include_directories(engine INTERFACE ${CMAKE_SOURCE_DIR})
 
-# Tests
+# Dependencies
 include(FetchContent)
+
 FetchContent_Declare(
     Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG        v3.4.0
 )
-FetchContent_MakeAvailable(Catch2)
+
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG        1.0.1
+)
+
+FetchContent_MakeAvailable(Catch2 glm)
 
 add_executable(engine_tests
     engine/ecs/Registry.cpp
@@ -27,9 +35,23 @@ add_executable(engine_tests
     tests/ecs/TestView.cpp
     tests/ecs/TestSchedule.cpp
     tests/threading/TestThreadPool.cpp
+    tests/math/TestMath.cpp
+    tests/math/TestFrustum.cpp
+    tests/math/TestTransform.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine glm::glm Catch2::Catch2WithMain)
+
+# GLM compile flags — set here so they take effect before any GLM header is included,
+# regardless of include order inside translation units.
+# Config.h documents these flags; CMake enforces them.
+target_compile_definitions(engine_tests PRIVATE
+    GLM_FORCE_INTRINSICS
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+    GLM_FORCE_XYZW_ONLY
+    GLM_ENABLE_EXPERIMENTAL    # required for glm/gtx/ headers (e.g. matrix_decompose)
+)
 
 # clang-tidy integration (optional, enable with -DENABLE_CLANG_TIDY=ON)
 option(ENABLE_CLANG_TIDY "Enable clang-tidy analysis" OFF)
