@@ -6,13 +6,42 @@ Tracks all decisions and progress made during development.
 
 ## Project Setup
 
+### C++ Standard
+- **Version:** C++20
+  - Concepts, `std::span`, `std::ranges`, `consteval`, Coroutines all available
+  - **Modules excluded** — build system support is still inconsistent across platforms (MSVC, Clang, Android NDK)
+  - Target compilers: Apple Clang (Xcode 12+), Clang/MSVC on Windows, Android NDK r23+
+
+### Code Formatting
+- **Style:** Allman braces, 4-space indent, 100 char line limit, `PointerAlignment: Left`
+- **Naming:** `UpperCamelCase` classes, `camelCase` functions/variables, `ALL_CAPS` constants, private members suffixed with `_`
+- **Namespaces:** `lower_case`, no indentation inside namespaces
+- **Tool:** clang-format — run after every C++ file write/edit
+  ```
+  brew install clang-format   # one-time setup
+  clang-format -i <file>      # single file
+  clang-format -i engine/ecs/*.h engine/ecs/*.cpp   # directory
+  ```
+  Config: `.clang-format` at project root
+
+### Threading Model
+- **Approach:** System-level parallelism — independent systems run concurrently (e.g. physics + audio in parallel)
+- **Intra-system threading:** Deferred — revisit component-level worker threads if a single system becomes a bottleneck on high-end targets
+- **Platform flexibility:** Thread count configurable per platform (e.g. fewer threads on mobile)
+- **ECS:** Single-threaded today; future systems will declare read/write component sets to enable safe parallel scheduling
+
+### Compile Time
+- **Goal:** Keep compile times fast — this is a priority, not an afterthought
+- **Strategies in use:**
+  - `#pragma once` on all headers (faster than include guards on most compilers)
+  - Forward declarations preferred over full includes in headers
+  - Template-heavy code isolated to headers that are not transitively included everywhere
+  - `Registry.cpp` extracts non-template implementations out of the header
+  - C++20 Modules excluded partly for this reason — when tooling matures, revisit
+- **Future:** Consider unity builds (`UNITY_BUILD` in CMake) or precompiled headers (`target_precompile_headers`) if compile times become painful at scale
+
 ### Tooling
-- **clang-format:** Run after every C++ file write/edit to enforce consistent style
-  ```
-  brew install clang-format   # one-time setup if not installed
-  clang-format -i engine/ecs/*.h engine/ecs/*.cpp tests/ecs/*.cpp
-  ```
-  Config: `.clang-format` at project root (Allman braces, 4-space indent, 100 char limit)
+- **clang-format:** Run after every C++ file write/edit (see Code Formatting above)
 - **clang-tidy:** Optional static analysis, enable with `-DENABLE_CLANG_TIDY=ON` in CMake
 - **Build:**
   ```
@@ -29,11 +58,7 @@ Tracks all decisions and progress made during development.
   - Note: Revisit archetype-based ECS in the future if multi-component query performance becomes a bottleneck
 - **Entity IDs:** uint64, packed as `[ index | generation ]`
 - **Memory layout:** SoA (Struct of Arrays)
-- **C++ version:** C++20 (Modules excluded due to inconsistent cross-platform build support)
 - **Design target:** ~50k active entities
-
-- **Threading model:** System-level parallelism (independent systems run concurrently)
-  - Note: Revisit component-level (worker thread) parallelism later if it becomes a bottleneck for higher-end games
 
 ### Status
 - [ ] ECS implementation not started
