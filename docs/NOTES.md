@@ -322,6 +322,33 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 
 ---
 
+## 2D Support
+
+### Context
+The question is whether the engine should be 2D-first, 3D-first, or dual from the start. There are no current 2D game ideas in the pipeline — the primary target is 3D (open world / FPS style). However, orthographic rendering and 2D physics are standard asks that real projects will need eventually.
+
+### Decision: Option B — Orthographic Camera + Sprite Rendering Early, 2D Physics Deferred
+
+**What this means:**
+- Add orthographic camera projection and sprite rendering (a quad mesh + texture atlas) early, as a lightweight addition to the 3D renderer. This enables UI layers, HUDs, and 2D minigames without any separate 2D pipeline.
+- 2D physics (Box2D) is **deferred** — not integrated until a concrete 2D game or physics-driven 2D feature is needed.
+
+**Why not 2D-first:** No current 2D game plans. Building a full 2D pipeline upfront would add complexity (separate physics world, 2D coordinate system, Z-ordering) with no near-term payoff.
+
+**Why not a full dual pipeline:** A fully separate 2D renderer + physics system is maintenance burden. Most "2D games" in a 3D engine are just orthographic 3D — the same renderer, same ECS, same systems, just a camera switch.
+
+**Why Option B over doing nothing:** Orthographic + sprites are low cost to add onto the existing 3D renderer — it's essentially a camera flag and a sprite mesh type. This gives 2D capability for free without a standalone 2D pipeline. Deferring Box2D keeps scope tight until there's a real need.
+
+**2D Physics plan (when needed):**
+- Box2D v3 (~300KB) behind an `IPhysics2DEngine` interface, parallel to Jolt's `IPhysicsEngine`
+- 2D and 3D physics worlds run independently — no attempt to bridge them
+- Trigger when: first game concept that needs rigid body 2D physics
+
+### Status
+- [ ] 2D orthographic camera + sprite rendering not started
+- [ ] Box2D integration deferred
+
+---
+
 ## Open Decisions (Pending Discussion)
-- 2D support timing
 - External library policy
