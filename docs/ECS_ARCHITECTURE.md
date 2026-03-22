@@ -39,8 +39,8 @@ graph TD
 
     REG -->|"createEntity() / destroyEntity()"| EID
     REG -->|"stores one per component type"| ISS
-    REG -->|"view&lt;T...&gt;() returns"| VIEW
-    USYS -->|"calls reg.view&lt;T...&gt;().each(...)"| VIEW
+    REG -->|"view[T...]() returns"| VIEW
+    USYS -->|"calls reg.view[T...]().each(...)"| VIEW
 ```
 
 ---
@@ -64,9 +64,9 @@ sequenceDiagram
     end
     R-->>G: EntityID {index | generation}
 
-    G->>R: emplace&lt;Position&gt;(entity, ...)
-    R->>R: getOrCreateStore&lt;Position&gt;()
-    R->>R: SparseSet&lt;Position&gt;.insert(entity, value)
+    G->>R: emplace[Position](entity, ...)
+    R->>R: getOrCreateStore[Position]()
+    R->>R: SparseSet[Position].insert(entity, value)
 
     G->>R: destroyEntity(entity)
     R->>R: isValid(entity)?
