@@ -20,10 +20,13 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(engine_tests
     engine/ecs/Registry.cpp
+    engine/threading/ThreadPool.cpp
     tests/ecs/TestEntity.cpp
     tests/ecs/TestSparseSet.cpp
     tests/ecs/TestRegistry.cpp
     tests/ecs/TestView.cpp
+    tests/ecs/TestSchedule.cpp
+    tests/threading/TestThreadPool.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine Catch2::Catch2WithMain)
