@@ -269,7 +269,59 @@ Low-quality fallbacks shown while full-resolution assets download — this is ho
 
 ---
 
+## Editor
+
+### Context
+The goal is a simple, usable editor for a solo developer — explicitly not Unity/Unreal complexity. The editor is not a separate application; it runs as a mode inside the engine itself, sharing the same renderer (bgfx), ECS, and asset system. This eliminates an entire class of sync bugs and means there is only one binary to maintain.
+
+### Implementation: ImGui Inside the Engine
+The editor is an engine mode toggled at startup (or via a key). In editor mode, ImGui panels are rendered on top of the game viewport using the same bgfx render pass. In play mode, ImGui is hidden and the game runs normally. This approach is fast to iterate on, fully cross-platform with the same code, and keeps the editor and runtime tightly coupled so what you see in the editor is exactly what runs in the game.
+
+### First Milestone — Minimum Viable Editor
+These panels ship first; everything else is deferred:
+- **Scene view** — 3D viewport with mouse/keyboard navigation
+- **Hierarchy** — entity tree showing parent/child relationships
+- **Inspector** — selected entity's components with editable fields
+- **Asset browser** — files on disk (textures, meshes, audio)
+- **Play / Pause / Stop** — run the game inside the editor
+- **Transform gizmos** — move, rotate, scale selected entities in the 3D viewport
+
+### Scripting: C++ Only (Lua Tabled)
+Scripting was considered to enable non-programmer game logic authoring and hot-reload without recompilation. For a solo developer shipping one game in C++, the added complexity of a scripting bridge (binding layer, separate language tooling, debugger integration) is not justified at this stage. Lua (~300KB, widely used in games) is the preferred candidate if scripting is added later — note this for future consideration.
+
+### Hot Reload
+Hot reload is important for fast iteration — change a system, see it live in the running game without restarting.
+
+**How it works:** Game logic is compiled as a dynamic library (`.dylib` Mac, `.dll` Windows) separate from the engine core. A file watcher detects source changes, triggers a fast incremental recompile of just the game library, then the engine unloads the old library and loads the new one. Because all entity and component data lives in the engine's Registry (not the game library), ECS state is fully preserved across reloads. Only system logic and any static state inside systems is reset.
+
+**Scope:** Game systems only — engine core (ECS, renderer, physics, audio) is never reloaded. This keeps the compile-time DAG scheduler intact for engine systems while adding a simpler runtime-registered layer for game systems that need hot reload.
+
+**Platform support:**
+- Mac: `dlopen`/`dlclose`/`dlsym` — straightforward
+- Windows: `LoadLibrary`/`FreeLibrary` — requires copying `.dll` before load to avoid file locking
+- iOS: Not supported — Apple prohibits dynamic code loading on device (development-only feature anyway)
+- Android: `dlopen` works — useful during on-device development
+
+### In-Game Visualiser
+Kept separate from the editor — an independent ImGui overlay always available at runtime (in both editor and play mode). Shows FPS, CPU/GPU usage, texture memory, active entity count, and feature toggles. Does not share code with the editor panels beyond both using ImGui.
+
+### Publishing
+Per-platform Build action in the editor:
+1. Compiles a release build with editor code stripped
+2. Packages all assets (including manifest for streaming)
+3. Outputs platform-specific bundle: `.app` (Mac), `.exe`/installer (Windows), `.ipa` (iOS), `.apk`/`.aab` (Android)
+Signing and notarization handled per platform (Xcode for Apple, certificate signing for Windows).
+
+### Deferred
+- Lua scripting — revisit when/if non-programmer authoring or hot-reload-without-recompile becomes a priority
+- Material editor, animation timeline, node graph — post-MVP editor features
+- In-editor asset import pipeline (currently assets are pre-processed externally)
+
+### Status
+- [ ] Editor not started
+
+---
+
 ## Open Decisions (Pending Discussion)
-- Editor design
 - 2D support timing
 - External library policy
