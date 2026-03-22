@@ -192,8 +192,40 @@ Tracks all decisions and progress made during development.
 
 ---
 
+## Input
+
+### Decisions
+- **Implementation:** Custom — no external library (SDL2 is the only real option but too heavy for just input)
+- **Architecture:** 3 layers
+  - **Platform layer:** One `IPlatformInput` impl per platform — polls native events and pushes to a shared `InputEventQueue` in a unified format
+  - **Input manager:** Tracks double-buffered per-frame state (pressed/held/released) for keyboard, mouse, gamepad, touch, sensors
+  - **Action mapping:** Named actions (`"Jump"`, `"Move"`) bound to one or more inputs, serialized to/from JSON
+- **Gamepad:** All platforms via platform-native APIs, mapped to a unified `GamepadState`
+  - Windows: XInput (Xbox controllers) + DirectInput fallback
+  - Mac/iOS: GCController (GameController framework)
+  - Android: `AInputEvent` with `AINPUT_SOURCE_JOYSTICK`
+- **Analog sticks:** -1..1 normalized, deadzone (~0.1 default to avoid drift) + optional response curve (linear/quadratic) configurable per binding
+- **Rebindable controls:** Yes — action map updated at runtime and serialized to JSON
+- **Touch:** First-class, up to 10 fingers, phase tracking (began/moved/ended)
+- **Motion sensors:** Accelerometer + gyroscope supported
+- **Composite axes:** WASD keys map to a `Vec2` axis the same way a left stick does — game code sees no difference
+- **API surface (game code only sees this):**
+  ```cpp
+  isKeyDown / isKeyPressed / isKeyReleased
+  isActionPressed / isActionDown / isActionReleased
+  getActionAxis(name) -> Vec2
+  getTrigger / getAxis
+  isTouchActive / getTouchPosition
+  getAccelerometer / getGyroscope
+  input.bind("Jump", Key::Space) / input.bind("Jump", GamepadButton::A)
+  ```
+
+### Status
+- [ ] Input not started
+
+---
+
 ## Open Decisions (Pending Discussion)
-- Input framework per platform
 - Networking
 - Editor design
 - 2D support timing
