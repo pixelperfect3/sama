@@ -225,8 +225,31 @@ Tracks all decisions and progress made during development.
 
 ---
 
+## Networking
+
+### Decisions
+- **Library:** libcurl (`curl_multi` interface for concurrent non-blocking downloads)
+- **Streaming:** Assets downloadable at runtime while game runs (Fortnite-style) — not just batch pre-launch updates
+- **Update triggers:** On launch + manually triggered by player
+- **DLC/paid content:** Deferred — free patches and updates only for now
+- **Architecture:**
+  - **Download Manager:** Background thread running `curl_multi` poll loop, accepts prioritized requests, reports completions via thread-safe queue
+  - **Asset Cache:** Local disk cache with LRU eviction and checksum verification on load
+  - **Asset Handle:** Lightweight token returned immediately on request — game polls `isReady()` or registers a callback; never blocks the game loop
+  - **Priority queue:** Three levels — Critical (needed now), High (prefetch, player approaching), Background (speculative)
+  - **Manifest system:** JSON manifest on server listing every streamable asset (path, version, checksum, size); fetched on launch and on manual trigger; delta comparison determines what to download
+- **World streaming integration:** `WorldStreaming` system detects player proximity to zones and issues `High` priority prefetch requests ahead of time
+- **Placeholder/fallback strategy:** Low-res or lowest-LOD version shown while full asset downloads
+  - Textures: low-res placeholder
+  - Meshes: simplified proxy or bounding box
+  - Audio: silence or generic ambient
+
+### Status
+- [ ] Networking not started
+
+---
+
 ## Open Decisions (Pending Discussion)
-- Networking
 - Editor design
 - 2D support timing
 - External library policy
