@@ -350,5 +350,25 @@ The question is whether the engine should be 2D-first, 3D-first, or dual from th
 
 ---
 
-## Open Decisions (Pending Discussion)
-- External library policy
+## External Library Policy
+
+### Approach: Case-by-Case, Evaluated at Integration Time
+No blanket rejection criteria — libraries are evaluated when a concrete need arises, not speculatively. The goal is to avoid over-engineering the policy before the trade-offs are real.
+
+### Primary Evaluation Factors (in order of importance)
+1. **Binary size** — the most important axis. Every library adds to the shipped binary, which matters for mobile (app store size limits, download rates, install rates). Prefer header-only or small compiled libraries; document the size cost of every library added.
+2. **Performance** — the second primary factor. A library that adds size but delivers measurable performance gains (e.g. Jolt's multi-threaded physics) is worth it. A library that adds size with no meaningful perf advantage over a hand-rolled alternative is not.
+3. **License** — MIT/BSD/Apache always acceptable. LGPL is acceptable with care (dynamic linking to avoid GPL infection). GPL is not acceptable in shipped game code. Royalty-bearing licenses (FMOD, PhysX) are case-by-case based on feature value vs. cost.
+4. **Platform support** — must cover all four targets (Windows, Mac, iOS, Android) or be explicitly scoped to platforms where it's used.
+5. **Maintenance / activity** — actively maintained projects preferred; abandoned libraries avoided unless the code is stable and self-contained.
+6. **Build system** — must integrate with CMake (via FetchContent or add_subdirectory). Libraries requiring custom build systems are a red flag.
+
+### Vendoring vs. FetchContent
+- FetchContent is the current default (see Catch2 in CMakeLists.txt) — keeps the repo lightweight
+- Vendor (copy source into repo) when: upstream is unstable, we need local patches, or the library is small enough that vendoring is trivial
+- Decision made per library at integration time
+
+### Status
+- Policy defined; applied as each library is integrated
+
+---
