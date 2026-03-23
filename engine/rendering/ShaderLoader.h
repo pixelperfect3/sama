@@ -20,4 +20,13 @@ namespace engine::rendering
 // Used for Phase 2 smoke tests.  Returns BGFX_INVALID_HANDLE on failure.
 [[nodiscard]] bgfx::ProgramHandle loadUnlitProgram();
 
+// PBR program — two-stream vertex (position + surface), GGX PBR fragment shader.
+// Returns BGFX_INVALID_HANDLE on failure or when running the Noop renderer.
+[[nodiscard]] bgfx::ProgramHandle loadPbrProgram();
+
+// Sprite program — position + texcoord0 + color0 streams, samples s_texture
+// and multiplies by vertex color.  Used by UiRenderSystem / SpriteBatcher.
+// Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadSpriteProgram();
+
 }  // namespace engine::rendering

@@ -130,6 +130,30 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT ANDROID ""   fs_unlit_essl COMPILED_SHADERS)
 
+# PBR — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr.sc VERTEX   OSX   metal  vs_pbr_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_pbr.sc FRAGMENT OSX   metal  fs_pbr_mtl  COMPILED_SHADERS)
+
+# PBR — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr.sc VERTEX   LINUX spirv  vs_pbr_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_pbr.sc FRAGMENT LINUX spirv  fs_pbr_spv  COMPILED_SHADERS)
+
+# PBR — GLSL (OpenGL; required by BGFX_EMBEDDED_SHADER on macOS/Linux)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr.sc VERTEX   LINUX 120    vs_pbr_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_pbr.sc FRAGMENT LINUX 120    fs_pbr_glsl COMPILED_SHADERS)
+
+# PBR — ESSL (OpenGLES / Android; required by BGFX_EMBEDDED_SHADER on macOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr.sc VERTEX   ANDROID ""   vs_pbr_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_pbr.sc FRAGMENT ANDROID ""   fs_pbr_essl COMPILED_SHADERS)
+
 # Instanced — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   OSX     metal  vs_instanced_mtl  COMPILED_SHADERS)
@@ -146,6 +170,30 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   ANDROID ""     vs_instanced_essl COMPILED_SHADERS)
 
+# Sprite — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_sprite.sc VERTEX   OSX     metal  vs_sprite_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT OSX     metal  fs_sprite_mtl  COMPILED_SHADERS)
+
+# Sprite — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_sprite.sc VERTEX   LINUX   spirv  vs_sprite_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT LINUX   spirv  fs_sprite_spv  COMPILED_SHADERS)
+
+# Sprite — GLSL (OpenGL; required by BGFX_EMBEDDED_SHADER on macOS/Linux)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_sprite.sc VERTEX   LINUX   120    vs_sprite_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT LINUX   120    fs_sprite_glsl COMPILED_SHADERS)
+
+# Sprite — ESSL (OpenGLES / Android; required by BGFX_EMBEDDED_SHADER on macOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_sprite.sc VERTEX   ANDROID ""     vs_sprite_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT ANDROID ""     fs_sprite_essl COMPILED_SHADERS)
+
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
 # --- engine_rendering static library ---
@@ -157,9 +205,12 @@ add_library(engine_rendering STATIC
     engine/rendering/MeshBuilder.cpp
     engine/rendering/RenderResources.cpp
     engine/rendering/ShaderLoader.cpp
+    engine/rendering/ShaderUniforms.cpp
     engine/rendering/systems/FrustumCullSystem.cpp
     engine/rendering/systems/DrawCallBuildSystem.cpp
     engine/rendering/systems/InstanceBufferBuildSystem.cpp
+    engine/rendering/SpriteBatcher.cpp
+    engine/rendering/systems/UiRenderSystem.cpp
     engine/platform/desktop/GlfwWindow.cpp
 )
 
@@ -208,6 +259,8 @@ add_executable(engine_tests
     tests/rendering/TestRenderSettings.cpp
     tests/rendering/TestMesh.cpp
     tests/rendering/TestInstancing.cpp
+    tests/rendering/TestUi.cpp
+    tests/rendering/TestPbr.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)

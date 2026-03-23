@@ -9,10 +9,26 @@
 // (_mtl, _spv, _glsl, _essl, etc.) to populate the EmbeddedShader table automatically.
 // All platform-supported variants must be present — the macro is conditioned on
 // BGFX_PLATFORM_SUPPORTS_* flags which are true for multiple backends on macOS.
+#include "generated/shaders/fs_pbr_essl.bin.h"
+#include "generated/shaders/fs_pbr_glsl.bin.h"
+#include "generated/shaders/fs_pbr_mtl.bin.h"
+#include "generated/shaders/fs_pbr_spv.bin.h"
+#include "generated/shaders/fs_sprite_essl.bin.h"
+#include "generated/shaders/fs_sprite_glsl.bin.h"
+#include "generated/shaders/fs_sprite_mtl.bin.h"
+#include "generated/shaders/fs_sprite_spv.bin.h"
 #include "generated/shaders/fs_unlit_essl.bin.h"
 #include "generated/shaders/fs_unlit_glsl.bin.h"
 #include "generated/shaders/fs_unlit_mtl.bin.h"
 #include "generated/shaders/fs_unlit_spv.bin.h"
+#include "generated/shaders/vs_pbr_essl.bin.h"
+#include "generated/shaders/vs_pbr_glsl.bin.h"
+#include "generated/shaders/vs_pbr_mtl.bin.h"
+#include "generated/shaders/vs_pbr_spv.bin.h"
+#include "generated/shaders/vs_sprite_essl.bin.h"
+#include "generated/shaders/vs_sprite_glsl.bin.h"
+#include "generated/shaders/vs_sprite_mtl.bin.h"
+#include "generated/shaders/vs_sprite_spv.bin.h"
 #include "generated/shaders/vs_unlit_essl.bin.h"
 #include "generated/shaders/vs_unlit_glsl.bin.h"
 #include "generated/shaders/vs_unlit_mtl.bin.h"
@@ -29,6 +45,18 @@ namespace
 static const bgfx::EmbeddedShader kUnlitShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_unlit),
     BGFX_EMBEDDED_SHADER(fs_unlit),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+static const bgfx::EmbeddedShader kPbrShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_pbr),
+    BGFX_EMBEDDED_SHADER(fs_pbr),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+static const bgfx::EmbeddedShader kSpriteShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_sprite),
+    BGFX_EMBEDDED_SHADER(fs_sprite),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -55,6 +83,50 @@ bgfx::ProgramHandle loadUnlitProgram()
     }
 
     // destroyShaders=true: bgfx takes ownership of vsh/fsh handles.
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadPbrProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    // The Noop renderer (headless unit tests) cannot run real shaders.
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kPbrShaders, renderer, "vs_pbr");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kPbrShaders, renderer, "fs_pbr");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadSpriteProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    // The Noop renderer (headless unit tests) cannot run real shaders.
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kSpriteShaders, renderer, "vs_sprite");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSpriteShaders, renderer, "fs_sprite");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
     return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
 }
 
