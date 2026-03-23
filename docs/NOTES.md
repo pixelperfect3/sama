@@ -26,7 +26,12 @@ Tracks all decisions and progress made during development.
 
 ### Threading Model
 - **Approach:** System-level parallelism — independent systems run concurrently (e.g. physics + audio in parallel)
-- **Intra-system threading:** Deferred — revisit component-level worker threads if a single system becomes a bottleneck on high-end targets
+- **Intra-system threading:** Deferred for general ECS systems — revisit if a single system becomes a bottleneck on high-end targets.
+  **Exception: render systems use intra-system data parallelism from day one.** `FrustumCullSystem` and `DrawCallBuildSystem` partition their entity lists across thread pool workers each frame. This is not a perf-driven future optimisation — it is baked into the render architecture because:
+  1. bgfx's encoder model was designed specifically for multi-threaded draw call recording (`bgfx::begin(true)` per worker, `bgfx::end()` after the loop)
+  2. The render workload (culling and recording draw calls for up to 50k visible entities) is the dominant CPU hot path, not a speculative concern
+  3. bgfx encoders require the pattern regardless — a single encoder on the main thread would serialise all draw call setup work
+  The general "deferred" rule still applies to physics, audio, input, and all non-render ECS systems.
 - **Platform flexibility:** Thread pool size fixed at startup, configurable per platform (e.g. fewer threads on mobile)
 - **Dependency declaration:** Static — each system declares `using Reads = TypeList<...>` and `using Writes = TypeList<...>` as type aliases
 - **DAG construction:** Compile-time via `constexpr buildSchedule<Systems...>()` — computes execution phases and bakes them into the binary as a plain array. Zero runtime overhead, no heap allocation in the scheduler
@@ -87,8 +92,58 @@ Tracks all decisions and progress made during development.
   - RT on mobile is not viable in the near term (requires A17 Pro/M-series for Metal, high-end Android for Vulkan RT)
   - Revisit when RT is ready to implement — evaluate bgfx RT support status at that time, or consider a targeted custom RT layer on top
 
+### Implementation Decisions (resolved during Phase 1–2 implementation)
+
+**View ID layout** — bgfx views are a scarce resource (max 32 by default). Shadows with CSM require one view per cascade, so the shadow range must be reserved upfront:
+  - Views 0–7: shadow maps (`kViewShadowBase = 0`, up to 8 cascades/spot lights)
+  - Views 8–13: fixed passes (depth prepass=8, opaque=9, transparency=10, reserved=11–13)
+  - Views 14–15: UI/HUD
+  - Views 16–47: post-process sub-passes (bloom needs 10+ sequential passes, each requiring its own view)
+  This replaces the original "6 fixed views" design — the post-process chain is not a single view.
+
+**Light data format** — `u_lights` as a uniform array cannot hold 256 lights × 3 vec4s = 768 vec4s: bgfx's `BGFX_CONFIG_MAX_UNIFORMS = 512` by default. **Decision: pack light data into an `RGBA32F` texture (256×4 texels, 16 KB)**:
+  - Row 0: `position.xyz, radius`
+  - Row 1: `color*intensity.xyz, type`
+  - Row 2: `spotDirection.xyz, cosOuterAngle`
+  - Row 3: `cosInnerAngle, 0, 0, 0`
+  Sampled via `texelFetch` / `texture2D` with point sampler in the fragment shader. This also resolves the 3-vec4 layout gap where `cosInnerAngle` had nowhere to fit.
+
+**Cluster light grid format** — `u_lightGrid` and `u_lightIndices` also cannot be large uniform arrays at scale. **Decision: use textures**:
+  - Light grid: 3456×1 `RGBA32F` texture (one texel per cluster, `.xy = offset, count`)
+  - Light index list: 8192×1 `R32F` texture (flat list of uint light indices)
+
+**Shadow atlas for CSM** — rather than one framebuffer + sampler per cascade, pack all cascades into a single shadow atlas texture with UV offsetting. This avoids per-cascade sampler uniform slots and simplifies the shader to one `SAMPLER2DSHADOW`. Atlas layout for 4 cascades: 4096×2048 (four 1024×2048 columns), or 4096×4096 for 2048² cascades.
+
+**`WorldTransformComponent` must have `alignas(16)`** — GLM's `mat4` has 4-byte alignment by default. For future `SimdMat4` compatibility (ARM NEON requires 16-byte alignment), add `alignas(16)` now to avoid ABI breakage later.
+
+**`SparseSet<VisibleTag>` empty-type specialisation required** — the doc claims `VisibleTag` on 50k entities costs only the sparse index array (200 KB). Without a `SparseSet` specialisation for empty types, the dense array still allocates (50 KB of 1-byte `VisibleTag`s). The specialisation must be written in Phase 2.
+
+**`AssetHandle<T>` and `AABB` are Phase 2 prerequisites** — both are referenced by component headers and render systems but were absent from the original plan. Must be created before any render component headers compile.
+
+**Post-process is N sequential bgfx views, not one** — bloom requires 1 threshold pass + 5 downsample + 5 upsample + 1 composite = 12 passes. Each reads the previous pass's output and cannot share a bgfx view. The view range 16–47 (32 slots) is allocated for all post-process sub-passes. `PostProcessSystem` manages its own view ID counter within this range.
+
+**DAG system Reads/Writes for render systems** — if `LightClusterBuffer` is managed outside ECS (owned by `Renderer`, passed by reference), `LightCullSystem` has no ECS `Writes`. This allows the DAG to schedule `LightCullSystem` and `FrustumCullSystem` in the same phase (truly parallel) without any false data dependency. Confirmed correct design.
+
+**Tangent bitangent sign encoding** — `a_tangent.w` (snorm8) stores handedness. Never quantise to 0; store +1 as `+127` and -1 as `-1` in the mesh importer. The shader reads `sign(a_tangent.w)` and a zero would eliminate the bitangent.
+
+**Normal matrix for non-uniform scale** — for Phase 3, assume uniform scale and use `mat3(u_model)` for the normal transform. For non-uniform scale, `transpose(inverse(mat3(u_model)))` is required — tracked as technical debt, computed on CPU and uploaded as `u_normalMatrix` when needed.
+
+### Implementation Progress
+- [x] Phase 1 — bgfx init, GLFW window, Renderer lifecycle (committed)
+- [x] Phase 1b — RenderSettings quality structs, GpuFeatures, presets, 42 tests (committed)
+- [ ] Phase 2 — mesh upload, vertex layouts, unlit draw, frustum cull (in progress)
+- [ ] Phase 3 — PBR material + directional light
+- [ ] Phase 4 — shadow maps (single cascade)
+- [ ] Phase 5 — instanced mesh rendering
+- [ ] Phase 6 — clustered point + spot lights
+- [ ] Phase 7 — post-processing (bloom, tonemap, FXAA)
+- [ ] Phase 8 — SSAO
+- [ ] Phase 9 — CSM (3 cascades)
+- [ ] Phase 10 — 2D sprite batching + UI pass
+- [ ] Phase 11 — IBL (environment cubemap)
+
 ### Status
-- [ ] Rendering not started
+- [ ] Rendering implementation in progress (Phase 2)
 
 ---
 
