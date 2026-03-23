@@ -150,13 +150,73 @@ Tracks all decisions and progress made during development.
   - JSON during development (human-readable, git-diffable)
   - Binary format for shipped builds (fast to parse, compact)
   - Build step bakes JSON → binary at build time
-  - JSON parser to decide: nlohmann/json (header-only, ~1MB) or rapidjson (faster, smaller) — pending external library policy discussion
+  - JSON parser: **rapidjson** (see JSON section below)
 - **GPU instancing:** Separate system from the scene graph, needed early for vegetation/foliage/rocks
   - Millions of instances (grass, trees, pebbles) rendered via single draw calls — not scene graph nodes
 - **Scale target:** ~20k–50k actively managed scene graph nodes at runtime, with region-based streaming loading/unloading around the player
 
 ### Status
 - [ ] Scene graph not started
+
+---
+
+## JSON
+
+### Decision: rapidjson
+
+**Library:** rapidjson (~300KB header, MIT + BSD, Tencent)
+
+Chosen over nlohmann/json (~1MB header, MIT) for two reasons that directly match the external library policy priority order:
+
+1. **Binary size** — rapidjson headers are ~300KB vs ~1MB. Headers compile into every translation unit that includes them. The difference is real across a project of this size, and binary size is the primary evaluation criterion.
+2. **Performance** — The asset manifest (fetched at launch, potentially thousands of entries) is the only JSON file parsed in the shipped binary that is large enough for parse speed to matter. rapidjson's SAX mode with its `MemoryPoolAllocator` parses it with near-zero heap allocation. nlohmann/json builds a full DOM from `std::map`/`std::unordered_map`, which allocates heavily.
+
+**Rejected: nlohmann/json** — better ergonomics, but the API advantage is negated by wrapping rapidjson (see below). The 3× size penalty is not justified.
+
+### Where JSON is used
+
+| Use site | File size | In shipped binary |
+|---|---|---|
+| Asset manifest (streaming delta) | Large — thousands of entries | Yes — parsed at launch |
+| Player config (RenderSettings, action maps) | Tiny | Yes — parsed at startup |
+| Scene files | Medium | No — baked to binary at build time; JSON is dev/editor only |
+| Build pipeline (JSON → binary bake) | Any | No — offline tooling |
+
+### Integration pattern: `engine::io` wrapper
+
+rapidjson's API is not exposed directly anywhere in engine or game code. All JSON access goes through a thin wrapper at `engine/io/Json.h`. This keeps rapidjson's verbose type-checking and manual iteration internal, and means the parser can be swapped by changing one file.
+
+```cpp
+// engine/io/Json.h — what the rest of the engine sees
+namespace engine::io
+{
+    class JsonDocument { /* owns the parsed document + allocator */ };
+    class JsonValue    { /* non-owning view into a value node */ };
+
+    JsonDocument     parseJson(std::string_view text);
+    JsonDocument     parseJsonFile(std::string_view path);
+
+    JsonValue        get(JsonValue obj, std::string_view key); // null JsonValue if missing
+    bool             getBool(JsonValue, bool fallback = false);
+    int32_t          getInt(JsonValue, int32_t fallback = 0);
+    float            getFloat(JsonValue, float fallback = 0.0f);
+    std::string_view getString(JsonValue, std::string_view fallback = {});
+    bool             isNull(JsonValue);
+    bool             isArray(JsonValue);
+    std::size_t      arraySize(JsonValue);
+    JsonValue        arrayElement(JsonValue, std::size_t index);
+
+    class JsonWriter { /* SAX writer wrapping rapidjson::Writer<StringBuffer> */ };
+}
+```
+
+**Writing** uses rapidjson's SAX writer (streaming, no intermediate DOM) — efficient for serialising large scene files during the build bake step.
+
+**Manifest parsing** uses SAX mode directly inside the asset system's manifest parser — the only site that needs high throughput. It processes entries as a stream rather than building a DOM.
+
+### Status
+- [ ] rapidjson not yet integrated (FetchContent entry needed in CMakeLists.txt)
+- [ ] `engine/io/Json.h` wrapper not yet implemented
 
 ---
 
@@ -421,11 +481,8 @@ Side projects to improve third-party libraries used by the engine.
 
 ### Pending decisions (not yet resolved)
 
-One architectural decision is still open and blocks implementation of the scene graph serialization system.
-
 | Item | Blocked by | Notes |
 |---|---|---|
-| JSON parser choice: nlohmann/json vs rapidjson | External library policy evaluation | nlohmann/json: header-only, ~1MB, easy to use. rapidjson: faster parse, smaller binary. Evaluate at integration time per external library policy. See NOTES.md → Scene Graph |
 | Post-MVP editor features: material editor, animation timeline, node graph | MVP editor ships first | See NOTES.md → Editor → Deferred |
 | In-editor asset import pipeline | MVP editor ships first; assets currently pre-processed externally | See NOTES.md → Editor → Deferred |
 
