@@ -1,0 +1,85 @@
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include "engine/rendering/Mesh.h"
+
+namespace engine::rendering
+{
+
+// ---------------------------------------------------------------------------
+// RenderResources — integer-keyed registry for live bgfx GPU handles.
+//
+// Maps uint32_t IDs to Mesh (and in later phases: textures, materials, shaders).
+// IDs are allocated from a free list backed by a simple generation counter so
+// that slots are reused after removal.  Callers store the uint32_t ID in their
+// MeshComponent.
+//
+// Thread safety: single-threaded; all mutations happen on the main thread
+// before render systems run.
+// ---------------------------------------------------------------------------
+
+class RenderResources
+{
+public:
+    RenderResources() = default;
+    ~RenderResources() = default;
+
+    // Non-copyable — each Mesh holds live bgfx handles.
+    RenderResources(const RenderResources&) = delete;
+    RenderResources& operator=(const RenderResources&) = delete;
+
+    RenderResources(RenderResources&&) = default;
+    RenderResources& operator=(RenderResources&&) = default;
+
+    // -----------------------------------------------------------------------
+    // Mesh registry
+    // -----------------------------------------------------------------------
+
+    // Take ownership of a Mesh, return its stable ID.
+    // The returned ID is valid until removeMesh() is called with it.
+    uint32_t addMesh(Mesh mesh);
+
+    // Returns a pointer to the Mesh with the given ID, or nullptr if the ID is
+    // not live.  Pointer is valid until the next add/remove call.
+    [[nodiscard]] const Mesh* getMesh(uint32_t id) const;
+
+    // Destroy the Mesh's bgfx handles and free the slot for reuse.
+    // No-op if the ID is not live.
+    void removeMesh(uint32_t id);
+
+    // Destroy all live GPU handles and reset the registry to empty.
+    // Called during renderer shutdown.
+    void destroyAll();
+
+private:
+    // -----------------------------------------------------------------------
+    // Slot-based free-list allocation.
+    //
+    // slots_[i].occupied == true means meshes_[i] holds a live Mesh.
+    // freeList_ contains indices of unoccupied slots ready for reuse.
+    // IDs are 1-based (0 is reserved as "invalid") so ID == index + 1.
+    // -----------------------------------------------------------------------
+
+    struct Slot
+    {
+        Mesh mesh;
+        bool occupied = false;
+    };
+
+    std::vector<Slot> slots_;
+    std::vector<uint32_t> freeList_;
+
+    // Convert between external ID (1-based) and internal index (0-based).
+    static constexpr uint32_t toIndex(uint32_t id)
+    {
+        return id - 1u;
+    }
+    static constexpr uint32_t toId(uint32_t index)
+    {
+        return index + 1u;
+    }
+};
+
+}  // namespace engine::rendering

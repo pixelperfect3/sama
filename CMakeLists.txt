@@ -54,18 +54,116 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake)
 
+# ---------------------------------------------------------------------------
+# Shader compilation — runs shaderc at build time, embeds bytecode as .h files
+# ---------------------------------------------------------------------------
+
+set(SHADER_SRC_DIR     ${CMAKE_SOURCE_DIR}/engine/shaders)
+set(SHADER_INCLUDE_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/src)
+set(SHADER_OUT_DIR     ${CMAKE_CURRENT_BINARY_DIR}/include/generated/shaders)
+set(VARYING_DEF        ${SHADER_SRC_DIR}/varying.def.sc)
+
+# Helper: compile one shader via shaderc --bin2c and append its output header
+# to a list variable.
+#
+# Arguments:
+#   FILE       — shader source path
+#   TYPE       — VERTEX or FRAGMENT
+#   PLATFORM   — OSX or LINUX
+#   PROFILE    — metal or spirv
+#   BIN2C_NAME — name of the C symbol (also used as part of output filename)
+#   OUT_LIST   — CMake variable to append the output path to
+function(compile_shader FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
+    set(OUT_FILE ${SHADER_OUT_DIR}/${BIN2C_NAME}.bin.h)
+
+    # Build the shaderc_parse argument list; PROFILE is optional (empty = omit).
+    set(_PARSE_ARGS
+        FILE       ${FILE}
+        OUTPUT     ${OUT_FILE}
+        BIN2C      ${BIN2C_NAME}
+        ${PLATFORM}
+        ${TYPE}
+        VARYINGDEF ${VARYING_DEF}
+        INCLUDES   ${SHADER_INCLUDE_DIR}
+    )
+    if(NOT "${PROFILE}" STREQUAL "")
+        list(APPEND _PARSE_ARGS PROFILE ${PROFILE})
+    endif()
+
+    shaderc_parse(CLI ${_PARSE_ARGS})
+
+    add_custom_command(
+        OUTPUT  ${OUT_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUT_DIR}
+        COMMAND $<TARGET_FILE:shaderc> ${CLI}
+        MAIN_DEPENDENCY ${FILE}
+        DEPENDS ${VARYING_DEF} shaderc
+        COMMENT "Compiling shader ${BIN2C_NAME}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set(${OUT_LIST} ${${OUT_LIST}} ${OUT_FILE} PARENT_SCOPE)
+endfunction()
+
+set(COMPILED_SHADERS "")
+
+# Unlit — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_unlit.sc VERTEX   OSX   metal  vs_unlit_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT OSX   metal  fs_unlit_mtl  COMPILED_SHADERS)
+
+# Unlit — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_unlit.sc VERTEX   LINUX spirv  vs_unlit_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT LINUX spirv  fs_unlit_spv  COMPILED_SHADERS)
+
+# Unlit — GLSL (OpenGL; required by BGFX_EMBEDDED_SHADER on macOS/Linux)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_unlit.sc VERTEX   LINUX 120    vs_unlit_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT LINUX 120    fs_unlit_glsl COMPILED_SHADERS)
+
+# Unlit — ESSL (OpenGLES / Android; required by BGFX_EMBEDDED_SHADER on macOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_unlit.sc VERTEX   ANDROID ""   vs_unlit_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT ANDROID ""   fs_unlit_essl COMPILED_SHADERS)
+
+add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
+
 # --- engine_rendering static library ---
 # Wraps bgfx init/shutdown/frame and the GLFW window backend.
 add_library(engine_rendering STATIC
     engine/rendering/Renderer.cpp
     engine/rendering/GpuFeatures.cpp
     engine/rendering/RenderSettings.cpp
+    engine/rendering/MeshBuilder.cpp
+    engine/rendering/RenderResources.cpp
+    engine/rendering/ShaderLoader.cpp
+    engine/rendering/systems/FrustumCullSystem.cpp
+    engine/rendering/systems/DrawCallBuildSystem.cpp
     engine/platform/desktop/GlfwWindow.cpp
 )
 
-target_include_directories(engine_rendering PUBLIC ${CMAKE_SOURCE_DIR})
+add_dependencies(engine_rendering engine_shaders)
 
-target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw)
+target_include_directories(engine_rendering PUBLIC
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+)
+
+target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm)
+
+# Same GLM flags as engine_tests to ensure consistent behaviour when rendering
+# code includes GLM headers directly.
+target_compile_definitions(engine_rendering PUBLIC
+    GLM_FORCE_INTRINSICS
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+    GLM_FORCE_XYZW_ONLY
+    GLM_ENABLE_EXPERIMENTAL
+)
 
 if(APPLE)
     target_link_libraries(engine_rendering PUBLIC
@@ -91,6 +189,7 @@ add_executable(engine_tests
     tests/math/TestTransform.cpp
     tests/rendering/TestRenderer.cpp
     tests/rendering/TestRenderSettings.cpp
+    tests/rendering/TestMesh.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)
