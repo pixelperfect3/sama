@@ -219,10 +219,12 @@ static_assert(sizeof(WorldTransformComponent) == 64);
 ```mermaid
 classDiagram
     class Mesh {
-        bgfx::VertexBufferHandle vbh
+        bgfx::VertexBufferHandle positionVbh
+        bgfx::VertexBufferHandle surfaceVbh
         bgfx::IndexBufferHandle ibh
-        bgfx::VertexLayout layout
         AABB bounds
+        uint32_t vertexCount
+        uint32_t indexCount
     }
 
     class Material {
@@ -250,6 +252,219 @@ classDiagram
 ```
 
 All assets are loaded through the `AssetSystem` (streaming / asset cache layer). The `RenderResources` registry holds the live bgfx handles; assets themselves store metadata only.
+
+---
+
+## GPU Data Layout
+
+Everything the GPU touches is laid out to minimise bandwidth: vertices are split into two streams so depth-only passes skip surface data entirely, attributes are packed to the smallest accurate representation, index buffers default to 16-bit, and texture formats are selected per-platform from `GpuFeatures` at load time.
+
+### Vertex Streams
+
+Meshes use **two vertex buffers** bound as separate streams. Depth-only passes (shadow maps, depth prepass) bind only Stream 0. The surface stream never enters the vertex fetch cache for those passes.
+
+```
+Stream 0 — Position only
+┌──────────────────────────┐
+│ float px, py, pz         │  12 bytes / vertex
+└──────────────────────────┘
+
+Stream 1 — Surface attributes
+┌────────────────────────────────────────────────────────┐
+│ snorm16 normalX, normalY  │  4 bytes  oct-encoded normal│
+│ snorm8  tanX, tanY, tanZ  │           oct-encoded tangent│
+│ snorm8  tanSign           │  4 bytes  bitangent handedness│
+│ float16 u, v              │  4 bytes  UV coordinates    │
+└────────────────────────────────────────────────────────┘
+                               12 bytes / vertex
+```
+
+**Total: 24 bytes/vertex.** Naïve layout (float3 pos + float3 normal + float4 tangent + float2 UV) = 48 bytes/vertex — a 50% reduction in vertex fetch bandwidth.
+
+**Normal/tangent encoding (oct):** A unit vector maps onto an octahedron, flattened to a square in [-1, 1]². Two `snorm16` values encode the normal; the shader reconstructs Z with `sqrt(1 - dot(xy, xy))` and a sign flip. Tangent is encoded the same way with an extra `snorm8` for bitangent handedness. Precision loss is visually imperceptible for normal maps.
+
+**UV precision:** `float16` gives ~3 decimal digits of precision — sufficient for UV coordinates in the range [0, 1] and for typical 0–8× tiling. If a mesh needs sub-texel precision at high tiling factors, the importer falls back to `float32` for that mesh's Stream 1.
+
+**bgfx vertex layout declarations:**
+
+```cpp
+// engine/rendering/VertexLayouts.h
+
+inline bgfx::VertexLayout positionLayout()
+{
+    bgfx::VertexLayout l;
+    l.begin()
+     .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+     .end();
+    return l;  // stride: 12 bytes
+}
+
+inline bgfx::VertexLayout surfaceLayout(const GpuFeatures& gpu)
+{
+    bgfx::VertexLayout l;
+    l.begin()
+     .add(bgfx::Attrib::Normal,    2, bgfx::AttribType::Int16, /*normalized=*/true)
+     .add(bgfx::Attrib::Tangent,   4, bgfx::AttribType::Int8,  /*normalized=*/true)
+     .add(bgfx::Attrib::TexCoord0, 2,
+          gpu.halfPrecisionAttribs ? bgfx::AttribType::Half : bgfx::AttribType::Float)
+     .end();
+    return l;  // stride: 12 bytes (half UV) or 16 bytes (float UV fallback)
+}
+```
+
+The `GpuFeatures` check on UV type is the only per-platform branch in the vertex layout. All other attributes are universally supported by Metal and Vulkan.
+
+**Skinned meshes** add a third stream (Stream 2) — bone indices (`uint8_t × 4`) and bone weights (`unorm8 × 4`) — 8 bytes/vertex. Bound only for skinned draw calls; static geometry never pays for it.
+
+### Index Buffers
+
+16-bit indices (65 535 max vertices per mesh) are the default — half the memory and bandwidth of 32-bit. The importer checks vertex count at build time and emits `BGFX_BUFFER_INDEX_32` only when the mesh genuinely exceeds 65 535 vertices. Most game meshes don't.
+
+```cpp
+const bool needs32bit = vertexCount > 65535u;
+const uint16_t flags  = needs32bit ? BGFX_BUFFER_INDEX_32 : BGFX_BUFFER_NONE;
+mesh.ibh = bgfx::createIndexBuffer(mem, flags);
+```
+
+### Mesh Optimisation Pipeline
+
+Applied offline by the asset importer (not at runtime) using **meshoptimizer** (~100 KB, MIT):
+
+```
+Raw mesh (from glTF / FBX)
+        │
+        ▼
+1. Weld duplicate vertices
+        │
+        ▼
+2. Vertex cache optimisation   — Forsyth reorder, maximises post-transform cache hits
+        │
+        ▼
+3. Overdraw optimisation       — reorder triangles to reduce pixel overdraw (threshold: 1.05)
+        │
+        ▼
+4. Vertex fetch optimisation   — remap vertices to match draw order, maximises prefetch
+        │
+        ▼
+5. Attribute packing           — encode normals/tangents to oct, UVs to float16
+        │
+        ▼
+6. Meshlet generation          — compute meshlets for future GPU-driven culling (stored, unused now)
+        │
+        ▼
+Packed binary mesh file (assets/meshes/*.nmesh)
+```
+
+Steps 2–4 are three orthogonal passes in meshoptimizer (`optimizeVertexCache`, `optimizeOverdraw`, `optimizeVertexFetch`). Running all three takes ~10 ms per mesh on a desktop — fine for offline import, never acceptable at runtime.
+
+### Uniform and Constant Buffer Packing
+
+bgfx uses `Vec4` as the minimum uniform unit — a single `float` still occupies a full 16-byte slot. Packing rules:
+
+**Per-frame constants** (set once per frame, shared across all draw calls in a view):
+
+```
+u_frameParams [Vec4 × 2]
+  .xy  = viewport size (pixels)
+  .zw  = { near, far }
+  [1].xyzw = time, deltaTime, 0, 0
+```
+
+**Per-material constants** (set once per material batch):
+
+```
+u_material [Vec4 × 2]
+  [0].rgb  = albedo
+  [0].a    = roughness
+  [1].r    = metallic
+  [1].gba  = emissive RGB
+```
+
+**Light data** (uploaded as a `Vec4` array before the opaque pass, indexed in the cluster list):
+
+```
+u_lights [Vec4 × 3 per light, max 256 lights]
+  [0].xyz  = world position (point/spot) or direction (directional)
+  [0].w    = radius
+  [1].rgb  = colour × intensity (pre-multiplied)
+  [1].w    = type (0=point, 1=spot, 2=directional)
+  [2].xyz  = spot direction
+  [2].w    = cos(outerAngle)  ← matches SpotLightComponent precomputation
+```
+
+Keeping the `cos(outerAngle)` from `SpotLightComponent` already precomputed means the CPU just copies it directly into the uniform array — no per-frame trig.
+
+### Texture Compression
+
+Textures are compressed offline at import time. The engine selects the right binary at load time based on `GpuFeatures`:
+
+| Texture role | Mac / iOS (Metal) | Windows (Vulkan) | Android modern | Android legacy |
+|---|---|---|---|---|
+| Albedo (sRGB) | ASTC 4×4 | BC7 | ASTC 4×4 | ETC2 RGB8 |
+| Normal map (linear, 2-channel) | ASTC 4×4 | BC5 | ASTC 4×4 | ETC2 RG11 |
+| ORM (occlusion/roughness/metallic) | ASTC 4×4 | BC7 | ASTC 4×4 | ETC2 RGB8 |
+| HDR environment (linear float) | ASTC HDR 6×6 | BC6H | ASTC HDR 6×6 | RGBA16F (uncompressed) |
+
+BC5 for normal maps stores only RG and lets the shader reconstruct B — better quality per byte than BC7 for 2-channel data.
+
+Each texture asset ships with multiple compressed variants in the same `.ntex` file. The asset loader reads `GpuFeatures.preferredTextureFormat` and picks the matching variant.
+
+### GPU Feature Detection
+
+`GpuFeatures` is populated once at startup from `bgfx::getCaps()` and passed by `const` reference wherever rendering decisions depend on hardware capability.
+
+```cpp
+// engine/rendering/GpuFeatures.h
+
+struct GpuFeatures
+{
+    // Vertex attributes
+    bool halfPrecisionAttribs;   // AttribType::Half supported (float16 UVs)
+    bool uint10Attribs;          // AttribType::Uint10 supported (RGB10A2 — alternative packing)
+
+    // Texture formats
+    bool textureBC;              // BC1–BC7 (desktop)
+    bool textureASTC;            // ASTC LDR + HDR (Apple, modern Android)
+    bool textureETC2;            // ETC2 (Android fallback)
+    bool textureShadowCompare;   // BGFX_CAPS_TEXTURE_COMPARE_LEQUAL — PCF shadow sampling
+    bool textureBC6H;            // BC6H — HDR environment maps (desktop)
+
+    // Rendering features
+    bool computeShaders;         // BGFX_CAPS_COMPUTE — GPU-driven culling path (future)
+    bool indirectDraw;           // BGFX_CAPS_DRAW_INDIRECT — GPU-driven instances (future)
+    bool instancing;             // BGFX_CAPS_INSTANCING — hardware instancing
+
+    // Limits
+    uint32_t maxTextureSize;     // caps shadow map and environment map resolution
+    uint32_t maxDrawCalls;       // hard per-frame budget reported by bgfx
+
+    // Preferred compressed format for this device (resolved at startup)
+    enum class TextureFormat : uint8_t { ASTC, BC, ETC2, Uncompressed } preferredTextureFormat;
+
+    static GpuFeatures query();  // calls bgfx::getCaps() and populates the struct
+};
+```
+
+`RenderSettings::platformDefault()` reads `GpuFeatures` when constructing defaults — e.g., `maxTextureSize` caps `ShadowSettings::directionalRes` so a device that only supports 2048² textures never tries to allocate a 4096² shadow map.
+
+---
+
+## bgfx Limitations and Modification Assessment
+
+bgfx covers everything needed for the base architecture without modification. Two features would require forking bgfx and are deferred until profiling justifies the cost:
+
+| Feature | Status | Notes |
+|---|---|---|
+| Packed vertex attributes (half, snorm16, snorm8) | **Supported natively** | `AttribType::Half`, `Int16`, `Int8` — no changes needed |
+| 16-bit index buffers | **Supported natively** | `BGFX_BUFFER_NONE` default |
+| Per-GPU feature caps | **Supported natively** | `bgfx::getCaps()` covers all needed flags |
+| Multi-stream vertex buffers | **Supported natively** | Multiple `bgfx::setVertexBuffer` calls per draw |
+| Compressed texture formats | **Supported natively** | `BGFX_TEXTURE_FORMAT_BC*`, `ASTC*`, `ETC2*` |
+| **Bindless textures** | **Not supported** | Would need bgfx fork + Vulkan `VK_EXT_descriptor_indexing` + Metal argument buffers. Workaround: sort draw calls by material (already in sort key). Trigger: profiling shows material rebinding is a CPU bottleneck |
+| **Push constants / root constants** | **Not exposed** | bgfx uses UBO path for all uniforms. Push constants would reduce per-draw CPU overhead on mobile. Trigger: profiling shows uniform binding is a bottleneck at high draw counts |
+| GPU-driven indirect draw with variable count | **Partial** | `BGFX_CAPS_DRAW_INDIRECT` exists; `drawIndirectCount` (variable GPU-generated count) not supported. Needed for full GPU-driven culling. Trigger: instance count exceeds ~100k |
+
+**No bgfx modifications are needed to ship the base renderer.** The bindless and push-constant gaps are real but only matter at draw counts and material counts well above the initial target. Both are profiling-triggered decisions.
 
 ---
 
