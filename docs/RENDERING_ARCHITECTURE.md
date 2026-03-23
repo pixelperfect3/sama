@@ -429,6 +429,11 @@ struct GpuFeatures
     bool textureShadowCompare;   // BGFX_CAPS_TEXTURE_COMPARE_LEQUAL — PCF shadow sampling
     bool textureBC6H;            // BC6H — HDR environment maps (desktop)
 
+    // GPU architecture
+    bool isTBDR;                 // Tile-Based Deferred Renderer (all mobile GPUs, Apple Silicon)
+                                 // Drives: depth prepass disabled, sort key priority flip,
+                                 // transient attachment hints, SSAO off by default
+
     // Rendering features
     bool computeShaders;         // BGFX_CAPS_COMPUTE — GPU-driven culling path (future)
     bool indirectDraw;           // BGFX_CAPS_DRAW_INDIRECT — GPU-driven instances (future)
@@ -449,9 +454,81 @@ struct GpuFeatures
 
 ---
 
+## Mobile GPU Architecture (TBDR)
+
+All mobile GPUs — ARM Mali (Pixel 7: Mali-G710), Qualcomm Adreno, Apple A-series, PowerVR — use **Tile-Based Deferred Rendering (TBDR)**. Desktop GPUs use **Immediate Mode Rendering (IMR)**. The two architectures have opposite relationships with several pipeline techniques.
+
+### TBDR vs IMR
+
+```mermaid
+graph LR
+    subgraph "IMR (Desktop — Nvidia, AMD)"
+        V["Vertex shader"] --> R["Rasterise"] --> F["Fragment shader"] --> FB["Framebuffer\n(main VRAM)"]
+    end
+
+    subgraph "TBDR (Mobile — Mali, Adreno, Apple)"
+        V2["Vertex shader\n(all geometry)"] --> BIN["Tile binning\n(sort geometry per tile)"]
+        BIN --> HSR["HSR / FPK\n(kill occluded fragments\nbefore fragment shader)"]
+        HSR --> F2["Fragment shader\n(visible fragments only)"]
+        F2 --> TILE["On-chip tile SRAM\n(colour + depth + stencil)"]
+        TILE -->|"resolve at tile end"| FB2["Framebuffer\n(main memory)"]
+    end
+```
+
+**Hidden Surface Removal (HSR) / Forward Pixel Kill (FPK):** The hardware sorts geometry within each tile and kills fragments that are provably occluded *before* running the fragment shader. This is the hardware equivalent of what a depth prepass provides on IMR — but it costs nothing and requires no extra draw calls.
+
+### Depth Prepass on TBDR — Harmful, Not Helpful
+
+A depth prepass on TBDR:
+
+1. **Doubles vertex work.** Every vertex is processed twice — depth-only pass and main pass.
+2. **Forces a tile resolve.** The depth buffer in tile SRAM must flush to main memory after the prepass so the main pass can read it back. This is exactly the expensive operation TBDR is designed to avoid.
+3. **Wastes the HSR.** TBDR kills occluded fragments for free. The prepass replicates this at CPU-visible cost.
+
+**`depthPrepassEnabled` defaults to `false` on all TBDR platforms** (iOS, Android) and `true` on IMR (Windows, Mac desktop with discrete GPU). `GpuFeatures.isTBDR` drives this in `RenderSettings::platformDefault()`.
+
+**Exception — alpha-tested geometry only:** TBDR's HSR cannot pre-kill alpha-tested fragments (foliage, fences, hair) because the GPU doesn't know visibility until the alpha test runs in the shader. A narrow depth-only prepass covering masked geometry *only* can still help on TBDR for scenes with heavy foliage. This is an optional pass, off by default, toggled by `depthPrepassAlphaTestedOnly` in `RenderSettings`.
+
+### Sort Key Priority Flip
+
+Without a depth prepass, front-to-back sort order is the primary input to TBDR's HSR. The opaque sort key priority flips on mobile:
+
+| Platform | Sort key priority |
+|---|---|
+| IMR (desktop) | shader ID → texture set → depth front-to-back |
+| TBDR (mobile) | depth front-to-back → shader ID → texture set |
+
+### Transient Attachments
+
+On TBDR, attachments that are written in one pass and only read in the same pass never need to touch main memory. Marking them as transient prevents the resolve. bgfx exposes this via `BGFX_TEXTURE_RT_WRITE_ONLY` for depth/stencil and via the Metal backend's `MTLStoreActionDontCare` path.
+
+Depth buffer after the opaque pass: if SSAO is disabled (default on mobile), the depth buffer is never read by post-processing. Mark it transient — the tile resolve is skipped entirely.
+
+### SSAO on TBDR
+
+SSAO needs to sample the depth buffer from the previous pass. On IMR, depth is already in GPU memory — free. On TBDR, it forces a tile resolve (flush depth SRAM to main memory) before SSAO can sample it. This is why SSAO defaults off on mobile — the bandwidth cost exists even before the ALU cost.
+
+The proper solution is **Vulkan subpasses**: a subsequent pass reads the previous pass's tile output directly from on-chip SRAM, no resolve required. bgfx does not expose Vulkan subpasses (see bgfx limitations below). Until it does, SSAO on mobile requires a full resolve and is only worth enabling on high-end devices that can absorb the bandwidth cost.
+
+### Platform Map
+
+| Device | GPU | Architecture | Depth prepass | SSAO default |
+|---|---|---|---|---|
+| Pixel 7 | Mali-G710 (ARM) | TBDR | off | off |
+| Pixel 8 Pro | Tensor G3 / Mali-G715 | TBDR | off | off |
+| iPhone 15 | Apple A16 | TBDR | off | off |
+| Samsung S24 | Adreno 750 | TBDR | off | off |
+| Mac (M-series) | Apple GPU | TBDR | off | configurable |
+| Mac (Intel/AMD discrete) | IMR | IMR | on | on |
+| Windows PC | Nvidia / AMD | IMR | on | on |
+
+Apple Silicon Macs are TBDR. `isTBDR` is set based on the active Metal device type (`MTLGPUFamilyApple*` vs `MTLGPUFamilyMac*`) — not platform alone.
+
+---
+
 ## bgfx Limitations and Modification Assessment
 
-bgfx covers everything needed for the base architecture without modification. Two features would require forking bgfx and are deferred until profiling justifies the cost:
+bgfx covers everything needed for the base architecture without modification. Three features would require forking bgfx and are deferred until profiling justifies the cost:
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -460,26 +537,32 @@ bgfx covers everything needed for the base architecture without modification. Tw
 | Per-GPU feature caps | **Supported natively** | `bgfx::getCaps()` covers all needed flags |
 | Multi-stream vertex buffers | **Supported natively** | Multiple `bgfx::setVertexBuffer` calls per draw |
 | Compressed texture formats | **Supported natively** | `BGFX_TEXTURE_FORMAT_BC*`, `ASTC*`, `ETC2*` |
+| Transient attachments (`WRITE_ONLY`) | **Supported natively** | `BGFX_TEXTURE_RT_WRITE_ONLY` → `DontCare` store on Metal/Vulkan |
+| **Vulkan subpasses** | **Not exposed** | Needed for efficient SSAO and post-effects on TBDR — reading previous pass output from tile SRAM without a resolve. Workaround: SSAO off by default on mobile; accept resolve cost on high-end mobile if enabled. Trigger: mobile post-effects become a shipping priority |
 | **Bindless textures** | **Not supported** | Would need bgfx fork + Vulkan `VK_EXT_descriptor_indexing` + Metal argument buffers. Workaround: sort draw calls by material (already in sort key). Trigger: profiling shows material rebinding is a CPU bottleneck |
 | **Push constants / root constants** | **Not exposed** | bgfx uses UBO path for all uniforms. Push constants would reduce per-draw CPU overhead on mobile. Trigger: profiling shows uniform binding is a bottleneck at high draw counts |
 | GPU-driven indirect draw with variable count | **Partial** | `BGFX_CAPS_DRAW_INDIRECT` exists; `drawIndirectCount` (variable GPU-generated count) not supported. Needed for full GPU-driven culling. Trigger: instance count exceeds ~100k |
 
-**No bgfx modifications are needed to ship the base renderer.** The bindless and push-constant gaps are real but only matter at draw counts and material counts well above the initial target. Both are profiling-triggered decisions.
+**No bgfx modifications are needed to ship the base renderer.** The Vulkan subpass gap is the most relevant for mobile quality; the bindless and push-constant gaps only matter at draw/material counts well above the initial target.
 
 ---
 
 ## Render Pipeline
 
+**Desktop (IMR):** full 6-pass pipeline.
+**Mobile (TBDR):** depth prepass removed; TBDR's HSR replaces it at no cost.
+
 ```mermaid
 graph LR
     V0["View 0\nShadow Maps\n(directional + spot)"]
-    V1["View 1\nDepth Prepass\n(opaque only)"]
+    V1["View 1\nDepth Prepass\nIMR only\n(disabled on TBDR)"]
     V2["View 2\nOpaque Pass\nForward+ PBR"]
     V3["View 3\nTransparency Pass\nback-to-front sorted"]
     V4["View 4\nPost-Processing\nbloom · SSAO · tonemap · FXAA"]
     V5["View 5\nUI / HUD\northographic · sprites · ImGui"]
 
     V0 --> V1 --> V2 --> V3 --> V4 --> V5
+    V0 -.->|"TBDR: skip V1"| V2
 ```
 
 ### View 0 — Shadow Maps
@@ -491,11 +574,12 @@ graph LR
 - Depth-only render: no color attachment.
 - Output: shadow map textures sampled in the opaque pass.
 
-### View 1 — Depth Prepass
+### View 1 — Depth Prepass (IMR / desktop only)
 
-- Renders only opaque geometry to populate the depth buffer.
-- Eliminates overdraw in the opaque pass (especially important for dense foliage/terrain).
-- Can be disabled on mobile if the prepass cost exceeds the overdraw cost (GPU-dependent, profile-driven).
+- **Disabled on all TBDR platforms** (mobile, Apple Silicon Mac). TBDR's HSR/FPK provides the same overdraw elimination in hardware at no cost; a prepass would double vertex work and force an expensive tile resolve.
+- On IMR (discrete GPU desktop), renders only opaque geometry to pre-populate the depth buffer so early-Z kills occluded fragments in the main pass.
+- Controlled by `RenderSettings.depthPrepassEnabled`, set automatically by `platformDefault()` via `GpuFeatures.isTBDR`.
+- **Exception — `depthPrepassAlphaTestedOnly`:** An optional narrow prepass covering only alpha-tested geometry (foliage, fences) can help even on TBDR, since HSR cannot pre-kill masked fragments. Off by default; enable per-game if foliage overdraw is measured as a bottleneck.
 
 ### View 2 — Opaque Pass (Forward+)
 
@@ -509,7 +593,7 @@ graph LR
 
 - Alpha-blended and alpha-tested geometry.
 - Sorted back-to-front by depth (camera distance) each frame.
-- No depth writes. Reads depth buffer from View 1/2 for soft particle depth tests.
+- No depth writes. Reads depth buffer from View 2 (opaque pass) for soft particle depth tests. On TBDR, this read forces a tile resolve if the depth attachment wasn't already stored — mark the depth attachment as non-transient if transparency is in use.
 
 ### View 4 — Post-Processing Chain
 
@@ -752,9 +836,11 @@ struct RenderSettings
     ShadowSettings      shadows;
     LightingSettings    lighting;
     PostProcessSettings postProcess;
-    bool                depthPrepassEnabled  = true;
-    uint8_t             anisotropicFiltering = 8;   // 1 / 4 / 8 / 16
-    float               renderScale          = 1.0f; // 0.5 – 1.0 (internal resolution)
+    bool                depthPrepassEnabled          = true;  // false on TBDR via platformDefault()
+    bool                depthPrepassAlphaTestedOnly  = false; // TBDR exception: depth-only pass for
+                                                              // masked geometry only (foliage, fences)
+    uint8_t             anisotropicFiltering         = 8;   // 1 / 4 / 8 / 16
+    float               renderScale                  = 1.0f; // 0.5 – 1.0 (internal resolution)
 
     // Factory: returns appropriate defaults for the current platform.
     static RenderSettings platformDefault();
@@ -907,17 +993,22 @@ Called by the asset system when a mesh/texture/shader finishes loading. Release 
 
 ## Draw Call Sort Order
 
-Within each pass, draw calls are sorted to minimise GPU state changes:
+Sort keys are packed into bgfx's 64-bit `submit()` sort key directly.
 
-**Opaque pass sort key (64-bit, most significant first):**
-1. Shader program ID — state changes are most expensive
-2. Texture set hash — texture binding changes
-3. Depth (front-to-back) — early-z rejection (less important after depth prepass, still useful)
+**Opaque pass — sort key priority differs by GPU architecture:**
+
+| Bit field (MSB → LSB) | IMR (desktop) | TBDR (mobile) |
+|---|---|---|
+| Highest | Shader program ID | Depth front-to-back |
+| Middle | Texture set hash | Shader program ID |
+| Lowest | Depth front-to-back | Texture set hash |
+
+On IMR, minimising shader/texture switches is most important because the depth prepass already handles overdraw. On TBDR, front-to-back order is the primary input to HSR/FPK — submitting geometry front-to-back lets the hardware kill more occluded fragments early. Shader switches are secondary because TBDR processes geometry in tile bins where each tile is small enough that switch cost is lower.
+
+`DrawCallBuildSystem` reads `GpuFeatures.isTBDR` once at startup and packs sort keys with the appropriate field order.
 
 **Transparency pass sort key:**
-1. Depth (back-to-front) — required for correct blending
-
-bgfx accepts a 64-bit sort key on `bgfx::submit()`; we pack our sort key into it directly.
+1. Depth (back-to-front) — required for correct alpha blending, same on all platforms.
 
 ---
 
