@@ -350,6 +350,87 @@ The question is whether the engine should be 2D-first, 3D-first, or dual from th
 
 ---
 
+## Deferred Work
+
+A consolidated index of everything intentionally left for later. Grouped by what would trigger revisiting it. Each item links back to the section of NOTES.md or an architecture doc where the original decision and tradeoffs are recorded.
+
+---
+
+### Trigger: profiling shows a real bottleneck
+
+These are not premature optimisations — they have a clear cost (complexity, code size, fork maintenance) and should only be done when a profiler confirms they are the bottleneck.
+
+| Item | Trigger | Where decided |
+|---|---|---|
+| Custom ARM NEON SIMD layer (`SimdMat4` / `SimdVec4`) | Mobile profiling shows `TransformSystem` world-matrix updates are the bottleneck | NOTES.md → Math Library; `engine/math/Simd.h` stub ready |
+| Intra-system worker parallelism (data-parallel within one system) | A single system's wall time exceeds the frame budget on high-end targets | NOTES.md → Threading Model |
+| Splitting conflicting ECS system writes (ownership refactor) | Two systems serialised by the DAG become a combined bottleneck | NOTES.md → Threading Model |
+| GPU-driven rendering — compute culling + `drawIndirectCount` | Instanced mesh count exceeds ~100k and CPU culling is confirmed bottleneck | RENDERING_ARCHITECTURE.md → bgfx Limitations; meshlets already generated at import |
+| bgfx fork: bindless textures (`VK_EXT_descriptor_indexing` + Metal argument buffers) | Profiling shows material rebinding is a CPU bottleneck at high draw counts | RENDERING_ARCHITECTURE.md → bgfx Limitations |
+| bgfx fork: push constants / root constants for per-draw uniforms | Profiling shows uniform binding is a bottleneck at high draw counts on mobile | RENDERING_ARCHITECTURE.md → bgfx Limitations |
+| Archetype-based ECS (replace sparse set) | Multi-component query performance becomes measurable bottleneck at scale | NOTES.md → ECS |
+| PhysX integration (behind `IPhysicsEngine`) | Racing game vehicle fidelity demands it over Jolt | NOTES.md → Physics |
+
+---
+
+### Trigger: a specific game feature is needed
+
+These have no value until a concrete game requires them. Build when the requirement lands.
+
+| Item | Trigger | Where decided |
+|---|---|---|
+| Box2D 2D physics (`IPhysics2DEngine`) | First game concept requiring rigid-body 2D physics | NOTES.md → 2D Support |
+| Terrain renderer (heightfield + clipmap LOD) | First game with open-world terrain | RENDERING_ARCHITECTURE.md → Open Decisions |
+| Decals | First game requiring projected decals (bullet holes, dirt splashes) | RENDERING_ARCHITECTURE.md → Open Decisions |
+| Lightmaps + light probe volumes | First game with significant static geometry needing baked GI | RENDERING_ARCHITECTURE.md → Open Decisions |
+| TAA (Temporal Anti-Aliasing) | Game requires higher image quality than FXAA provides (requires jitter + reprojection) | RENDERING_ARCHITECTURE.md → Open Decisions |
+| Ray tracing | Game explicitly targets high-end desktop/console RT-capable hardware; evaluate bgfx RT support at that time | NOTES.md → Rendering; RENDERING_ARCHITECTURE.md → bgfx Limitations |
+| Multiplayer / real-time networking | Game requires multiplayer — entirely separate system from asset streaming | NOTES.md → Networking → Deferred |
+| Paid DLC / in-app purchases | Business model requires it | NOTES.md → Networking → Deferred |
+| Lua scripting bridge | Non-programmer authoring needed, or hot-reload-without-recompile becomes a priority | NOTES.md → Editor → Scripting |
+| Depth prepass for alpha-tested geometry on TBDR | Game has dense foliage and mobile profiling shows masked overdraw is a bottleneck | RENDERING_ARCHITECTURE.md → View 1; `depthPrepassAlphaTestedOnly` flag already in `RenderSettings` |
+| Skeletal animation system | First game with animated characters or creatures | Not yet designed |
+| FMOD audio (replaces SoLoud) | Game requires AAA audio polish: HRTF, geometry-aware reverb, sound designer workflow, or revenue exceeds $200k | NOTES.md → Audio |
+
+---
+
+### Trigger: scale or team size grows
+
+These only make sense at a larger codebase or team than currently planned.
+
+| Item | Trigger | Where decided |
+|---|---|---|
+| C++20 Modules (replace `#pragma once`) | Compiler/toolchain support matures and is consistent across MSVC, Clang, Android NDK | NOTES.md → C++ Standard |
+| Unity builds or precompiled headers | Compile times become painful at scale (benchmark first) | NOTES.md → Compile Time |
+| Explicit ECS system ordering without data dependencies (`dependsOn()`) | Systems need sequencing for non-data reasons (e.g. frame budget ordering) | NOTES.md → Threading Model → Future Consideration |
+| Render graph (replace hardcoded linear pipeline) | Pass count grows beyond ~6 or resource dependency management becomes error-prone | RENDERING_ARCHITECTURE.md → Design Principles |
+| Runtime-registered ECS systems (scripting layer) | Scripting or hot-reload game systems need a dynamic system registration path | NOTES.md → Threading Model |
+| bgfx fork: Vulkan subpasses for TBDR post-effects | Mobile post-effects (SSAO on TBDR) become a shipping priority | RENDERING_ARCHITECTURE.md → bgfx Limitations; SSAO on TBDR currently requires full depth resolve |
+
+---
+
+### Trigger: upstream / external contributions
+
+Side projects to improve third-party libraries used by the engine.
+
+| Item | Trigger | Notes |
+|---|---|---|
+| Jolt soft body upstream contributions | After Jolt is integrated and real usage surfaces the most painful gaps | Open GitHub discussion with jrouwe before writing code. Priority gaps: mesh/heightfield hair collision, GPU-accelerated soft body. See NOTES.md → Physics → Side Projects |
+
+---
+
+### Pending decisions (not yet resolved)
+
+One architectural decision is still open and blocks implementation of the scene graph serialization system.
+
+| Item | Blocked by | Notes |
+|---|---|---|
+| JSON parser choice: nlohmann/json vs rapidjson | External library policy evaluation | nlohmann/json: header-only, ~1MB, easy to use. rapidjson: faster parse, smaller binary. Evaluate at integration time per external library policy. See NOTES.md → Scene Graph |
+| Post-MVP editor features: material editor, animation timeline, node graph | MVP editor ships first | See NOTES.md → Editor → Deferred |
+| In-editor asset import pipeline | MVP editor ships first; assets currently pre-processed externally | See NOTES.md → Editor → Deferred |
+
+---
+
 ## External Library Policy
 
 ### Approach: Case-by-Case, Evaluated at Integration Time
