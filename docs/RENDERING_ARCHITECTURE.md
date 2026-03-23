@@ -13,6 +13,7 @@ The renderer sits on top of **bgfx** (Metal + Vulkan backends only) and is drive
 - **bgfx views = passes.** Each render pass is a bgfx view. View IDs are fixed constants so pass ordering is explicit and easy to change.
 - **Assets behind handles.** All GPU resources (meshes, textures, materials, shaders) are referenced by a typed `AssetHandle<T>`. The `RenderResources` registry maps handles to live bgfx handles.
 - **Two levels of parallelism.** System-level: non-conflicting render systems run concurrently via the DAG scheduler. Data-level: individual systems (frustum cull, draw call recording) split their work across thread pool workers. bgfx encoders allow multiple threads to record draw calls simultaneously.
+- **Configurable quality.** Every feature is individually toggleable and every scalable parameter (shadow resolution, cascade count, light budget, post-process quality) lives in a single `RenderSettings` struct. Systems read settings — nothing is hardcoded. Presets provide sensible per-platform defaults; games can override any value.
 
 ---
 
@@ -190,8 +191,10 @@ graph LR
 
 ### View 0 — Shadow Maps
 
-- One shadow map per directional light (CSM — 3 cascades), one per active spot light.
-- Resolution: 2048² directional, 1024² spot (configurable).
+- Skipped entirely if `ShadowSettings.enabled = false`.
+- One shadow map per directional light (CSM), one per active spot light.
+- Resolution: `ShadowSettings.directionalRes` × `ShadowSettings.directionalRes` for directional (default 2048²), `ShadowSettings.spotRes` for spot (default 1024²). Both are power-of-two and configurable at runtime.
+- Cascade count: `ShadowSettings.cascadeCount` (1–4, default 3).
 - Depth-only render: no color attachment.
 - Output: shadow map textures sampled in the opaque pass.
 
@@ -217,14 +220,14 @@ graph LR
 
 ### View 4 — Post-Processing Chain
 
-Each post effect is a full-screen quad blit in its own sub-pass (or chained into a single shader):
+Each post effect is a full-screen quad blit in its own sub-pass. Each is independently toggled by `PostProcessSettings`:
 
-| Effect | When | Notes |
+| Effect | Controlled by | Default (desktop / mobile) |
 |---|---|---|
-| SSAO | optional, desktop only | Reconstructed from depth + normals |
-| Bloom | always | Threshold → downsample → upsample → composite |
-| Tonemapping | always | ACES filmic |
-| FXAA | always | Temporal AA deferred to future |
+| SSAO | `ssao.enabled`, `ssao.sampleCount` | on 16 samples / off |
+| Bloom | `bloom.enabled`, `bloom.intensity`, `bloom.downsampleSteps` | on / off |
+| Tonemapping | `toneMapper`, `exposure` | ACES, 1.0 / same |
+| FXAA | `fxaaEnabled` | on / on |
 
 ### View 5 — UI / HUD
 
@@ -398,13 +401,155 @@ graph TD
 
 ---
 
+## Render Settings & Quality Scaling
+
+All rendering behaviour is controlled by a single `RenderSettings` struct passed by `const` reference to every render system. Nothing in the renderer is hardcoded. Features can be toggled per-frame; scalable parameters take effect on the next frame with no GPU work except where noted.
+
+### The RenderSettings Struct
+
+```cpp
+// engine/rendering/RenderSettings.h
+
+enum class ShadowFilter { Hard, PCF4x4, PCF8x8 };
+enum class ToneMapper   { ACES, Reinhard, Uncharted2 };
+
+struct ShadowSettings
+{
+    bool     enabled              = true;
+    uint16_t directionalRes       = 2048;  // power of two: 512 / 1024 / 2048 / 4096
+    uint16_t spotRes              = 1024;
+    uint8_t  cascadeCount         = 3;     // 1 – 4
+    float    maxDistance          = 150.0f;
+    ShadowFilter filter           = ShadowFilter::PCF4x4;
+};
+
+struct SsaoSettings
+{
+    bool    enabled     = true;
+    float   radius      = 0.5f;
+    float   bias        = 0.025f;
+    uint8_t sampleCount = 16;   // 8 / 16 / 32
+};
+
+struct BloomSettings
+{
+    bool    enabled        = true;
+    float   threshold      = 1.0f;
+    float   intensity      = 0.04f;
+    uint8_t downsampleSteps = 5;   // 3 / 4 / 5
+};
+
+struct PostProcessSettings
+{
+    SsaoSettings  ssao;
+    BloomSettings bloom;
+    bool          fxaaEnabled  = true;
+    ToneMapper    toneMapper   = ToneMapper::ACES;
+    float         exposure     = 1.0f;
+};
+
+struct LightingSettings
+{
+    uint16_t maxActiveLights = 256;   // capped by cluster uniform buffer size
+    bool     iblEnabled      = true;
+};
+
+struct RenderSettings
+{
+    ShadowSettings      shadows;
+    LightingSettings    lighting;
+    PostProcessSettings postProcess;
+    bool                depthPrepassEnabled  = true;
+    uint8_t             anisotropicFiltering = 8;   // 1 / 4 / 8 / 16
+    float               renderScale          = 1.0f; // 0.5 – 1.0 (internal resolution)
+
+    // Factory: returns appropriate defaults for the current platform.
+    static RenderSettings platformDefault();
+};
+```
+
+Sub-structs group related knobs so systems only take the slice they need (e.g. `ShadowCullSystem` takes `const ShadowSettings&`).
+
+### Quality Presets
+
+Presets are plain factory functions returning a `RenderSettings` value. They are not an enum the struct carries — the game starts from a preset and overrides individual fields freely.
+
+```cpp
+namespace RenderPresets
+{
+    RenderSettings ultraDesktop();    // 4096 shadows, 4 cascades, PCF8x8, SSAO 32 samples
+    RenderSettings highDesktop();     // 2048 shadows, 3 cascades, PCF4x4, SSAO 16 samples
+    RenderSettings mediumDesktop();   // 1024 shadows, 2 cascades, PCF4x4, SSAO off
+    RenderSettings lowDesktop();      // 512 shadows,  1 cascade,  Hard,   SSAO off, no bloom
+    RenderSettings highMobile();      // 1024 shadows, 2 cascades, Hard,   SSAO off
+    RenderSettings mediumMobile();    // 512 shadows,  1 cascade,  Hard,   SSAO off, bloom off
+    RenderSettings lowMobile();       // shadows off, SSAO off, bloom off, render scale 0.75
+}
+```
+
+**Platform defaults** (returned by `RenderSettings::platformDefault()`):
+
+| Platform | Default preset | Rationale |
+|---|---|---|
+| Mac (desktop) | `highDesktop` | Metal, capable GPU |
+| Windows | `highDesktop` | Vulkan, capable GPU |
+| iOS | `highMobile` | Metal, thermal constraints |
+| Android | `mediumMobile` | Wide hardware variance; conservative default |
+
+Games can override at startup and expose a quality menu to players:
+
+```cpp
+RenderSettings settings = RenderSettings::platformDefault();
+settings.shadows.directionalRes = 1024;  // this game has close-range combat, lower res is fine
+settings.postProcess.bloom.intensity = 0.08f;
+renderer.applySettings(settings);
+```
+
+### How Systems Consume Settings
+
+Each system receives a `const RenderSettings&` (or the relevant sub-struct) on its `update()` call. The struct is owned by the `Renderer` and does not live in the ECS.
+
+```mermaid
+graph LR
+    RS["RenderSettings\n(owned by Renderer)"]
+    SCS2["ShadowCullSystem\nconst ShadowSettings&"]
+    DCBS2["DrawCallBuildSystem\nconst RenderSettings&"]
+    PPS2["PostProcessSystem\nconst PostProcessSettings&"]
+    LCS2["LightCullSystem\nconst LightingSettings&"]
+
+    RS --> SCS2
+    RS --> DCBS2
+    RS --> PPS2
+    RS --> LCS2
+```
+
+If a feature is disabled, the system that owns it short-circuits immediately and does no work — no special-casing at the call site.
+
+### Settings Changes at Runtime
+
+Most changes take effect on the next frame with no GPU work. Two settings require GPU resource re-allocation and trigger a brief one-frame stall:
+
+| Setting changed | GPU impact | Handled by |
+|---|---|---|
+| `shadows.directionalRes` / `spotRes` | Shadow map textures must be re-created | `RenderResources` detects size mismatch, destroys and recreates on next frame |
+| `renderScale` | Internal framebuffer must be re-created | Same — framebuffer resize |
+| All other settings | No GPU work | Take effect next `update()` call |
+
+Re-allocations are done at the start of the frame before any views are set up, so the frame that applies the change renders correctly.
+
+### Serialization
+
+`RenderSettings` serializes to / from JSON so settings can be saved to a player config file and reloaded on next launch. JSON parser to be decided under the external library policy (nlohmann/json or rapidjson — see Scene Graph section in NOTES.md). Binary format is not needed here — settings files are small and only read at startup.
+
+---
+
 ## Lighting Model
 
 **Ambient:** Image-based lighting (IBL) — a prefiltered environment cubemap + BRDF LUT. One IBL per scene; blended between two IBLs in transition zones.
 
-**Directional:** Sun light. One per scene. Casts cascaded shadow maps (3 cascades, configurable split lambda).
+**Directional:** Sun light. One per scene. Casts cascaded shadow maps. Cascade count and shadow distance come from `ShadowSettings` — 1–4 cascades, configurable split lambda.
 
-**Point / Spot:** Dynamic, clustered. Up to 256 active lights total. The clustered grid is 16×9×24 tiles (matches 16:9 viewport, 24 depth slices). Per-tile light lists are computed on CPU and uploaded as a uniform buffer before the opaque pass.
+**Point / Spot:** Dynamic, clustered. Active light budget set by `LightingSettings.maxActiveLights` (default 256, lower on mobile). The clustered grid is 16×9×24 tiles (matches 16:9 viewport, 24 depth slices). Per-tile light lists are computed on CPU and uploaded as a uniform buffer before the opaque pass.
 
 **Emissive:** Materials can have an emissive color + intensity. No light is emitted (no lightmaps), purely a visual additive contribution.
 
@@ -426,7 +571,7 @@ graph LR
     Opaque --> SSAO --> Bloom --> Tonemap --> FXAA --> Out
 ```
 
-Each effect is a full-screen pass. The chain is configurable at runtime (effects can be toggled via the in-game visualiser). On mobile, SSAO is disabled by default.
+Each effect is a full-screen pass. `PostProcessSystem` skips any disabled pass entirely — no GPU draw call is issued. The in-game visualiser can toggle passes live via `RenderSettings` without restarting.
 
 ---
 
@@ -490,6 +635,7 @@ The renderer is built in phases, each independently shippable:
 | Phase | What | Dependency |
 |---|---|---|
 | 1 | bgfx init + window integration, clear screen | Platform layer |
+| 1b | `RenderSettings` struct, presets, `platformDefault()` | Phase 1 |
 | 2 | Mesh upload, unlit draw call, camera | Math library ✓ |
 | 3 | PBR material + directional light (no shadows) | Phase 2 |
 | 4 | Shadow maps (directional, single cascade) | Phase 3 |
