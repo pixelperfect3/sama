@@ -58,6 +58,8 @@ FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake)
 # Wraps bgfx init/shutdown/frame and the GLFW window backend.
 add_library(engine_rendering STATIC
     engine/rendering/Renderer.cpp
+    engine/rendering/GpuFeatures.cpp
+    engine/rendering/RenderSettings.cpp
     engine/platform/desktop/GlfwWindow.cpp
 )
 
@@ -88,6 +90,7 @@ add_executable(engine_tests
     tests/math/TestFrustum.cpp
     tests/math/TestTransform.cpp
     tests/rendering/TestRenderer.cpp
+    tests/rendering/TestRenderSettings.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)
