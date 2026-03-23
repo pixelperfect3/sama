@@ -70,69 +70,147 @@ Within `FrustumCullSystem` and `DrawCallBuildSystem`, the thread pool is used fo
 
 ## ECS Components
 
-```mermaid
-classDiagram
-    class CameraComponent {
-        ProjectionType type
-        float fovY
-        float nearPlane
-        float farPlane
-        float aspectRatio
-        uint8_t viewLayer
-    }
+Every component is laid out to eliminate implicit padding. Fields are ordered to satisfy alignment naturally (largest alignment first, small fields grouped at the end). `static_assert` on `sizeof` and `offsetof` catches accidental regressions at compile time.
 
-    class MeshComponent {
-        AssetHandle~Mesh~ mesh
-    }
+`AssetHandle<T>` is a `uint32_t` — 4 bytes, supports 4 billion unique assets.
 
-    class MaterialComponent {
-        AssetHandle~Material~ material
-    }
+### Tag Components
 
-    class DirectionalLightComponent {
-        Vec3 direction
-        Vec3 color
-        float intensity
-        bool castShadows
-    }
+Tag components carry no data — entity presence in the SparseSet is the signal. The SparseSet specialises for empty types and allocates no dense array, so storing a tag on 50k entities costs only the sparse index array (50k × 4 bytes = 200 KB), not a dense data array.
 
-    class PointLightComponent {
-        Vec3 color
-        float intensity
-        float radius
-    }
+```cpp
+// Presence = visible to the main camera. Added/removed by FrustumCullSystem each frame.
+struct VisibleTag {};
+static_assert(sizeof(VisibleTag) == 1);
 
-    class SpotLightComponent {
-        Vec3 direction
-        Vec3 color
-        float intensity
-        float innerAngle
-        float outerAngle
-        float radius
-    }
-
-    class InstancedMeshComponent {
-        AssetHandle~Mesh~ mesh
-        AssetHandle~Material~ material
-        uint32_t instanceGroupId
-    }
-
-    class VisibleTag {
-        +empty tag component
-    }
-
-    class ShadowVisibleTag {
-        uint8_t cascadeMask
-    }
+// cascadeMask: bit N set = entity is visible to shadow cascade N (up to 8 cascades).
+// Set by ShadowCullSystem. DrawCallBuildSystem tests the relevant bit before recording
+// a shadow draw call, avoiding work for entities not visible to a given cascade.
+struct ShadowVisibleTag
+{
+    uint8_t cascadeMask;
+};
+static_assert(sizeof(ShadowVisibleTag) == 1);
 ```
+
+### Camera
+
+`ProjectionType` uses an explicit `uint8_t` underlying type. Without it the compiler defaults to `int` (4 bytes), creating a 3-byte hole between the floats and `viewLayer`.
+
+```cpp
+enum class ProjectionType : uint8_t { Perspective, Orthographic };
+
+struct CameraComponent              // offset  size
+{
+    float          fovY;            //  0       4
+    float          nearPlane;       //  4       4
+    float          farPlane;        //  8       4
+    float          aspectRatio;     // 12       4
+    ProjectionType type;            // 16       1
+    uint8_t        viewLayer;       // 17       1
+    uint8_t        _pad[2];         // 18       2  (explicit — documents intent)
+};                                  // total:  20 bytes
+static_assert(sizeof(CameraComponent)         == 20);
+static_assert(offsetof(CameraComponent, type) == 16);
+```
+
+### Mesh & Material
+
+Handle-only components — one `uint32_t` each. Deliberately split so `FrustumCullSystem` can query `MeshComponent` for AABB bounds without touching `MaterialComponent`.
+
+```cpp
+struct MeshComponent     { uint32_t mesh;     }; // 4 bytes
+struct MaterialComponent { uint32_t material; }; // 4 bytes
+static_assert(sizeof(MeshComponent)     == 4);
+static_assert(sizeof(MaterialComponent) == 4);
+```
+
+### Lights
+
+`bool` has size 1 but alignment 1, so `bool castShadows` at offset 28 leaves 3 bytes of implicit padding to reach the next 4-byte boundary. Replacing it with `uint8_t flags` makes the padding explicit and reserves the remaining 7 bits for future toggles (receive shadows, affect specular, etc.).
+
+```cpp
+// Directional — one per scene (sun).
+struct DirectionalLightComponent        // offset  size
+{
+    Vec3    direction;                  //  0      12
+    Vec3    color;                      // 12      12
+    float   intensity;                  // 24       4
+    uint8_t flags;                      // 28       1  bit 0: castShadows
+    uint8_t _pad[3];                    // 29       3
+};                                      // total:  32 bytes
+static_assert(sizeof(DirectionalLightComponent) == 32);
+
+// Point — no angular attenuation.
+struct PointLightComponent              // offset  size
+{
+    Vec3  color;                        //  0      12
+    float intensity;                    // 12       4
+    float radius;                       // 16       4
+};                                      // total:  20 bytes
+static_assert(sizeof(PointLightComponent) == 20);
+
+// Spot — stores cos(innerAngle) and cos(outerAngle), not the raw angles.
+// The shader computes dot(lightDir, fragDir) and compares to the precomputed cosines.
+// Storing raw angles would require acos() per pixel on every lit fragment — eliminated here.
+struct SpotLightComponent               // offset  size
+{
+    Vec3    direction;                  //  0      12
+    Vec3    color;                      // 12      12
+    float   intensity;                  // 24       4
+    float   cosInnerAngle;              // 28       4  precomputed: cos(innerAngle)
+    float   cosOuterAngle;              // 32       4  precomputed: cos(outerAngle)
+    float   radius;                     // 36       4
+};                                      // total:  40 bytes
+static_assert(sizeof(SpotLightComponent) == 40);
+```
+
+### Instanced Mesh
+
+```cpp
+struct InstancedMeshComponent           // offset  size
+{
+    uint32_t mesh;                      //  0       4
+    uint32_t material;                  //  4       4
+    uint32_t instanceGroupId;           //  8       4
+};                                      // total:  12 bytes
+static_assert(sizeof(InstancedMeshComponent) == 12);
+```
+
+### Scene Graph (TransformSystem — not rendering-specific but used by all render systems)
+
+`WorldTransformComponent` is 64 bytes / 16-byte aligned — one `Mat4`. This is the single hot read for `DrawCallBuildSystem`; keeping it at 64 bytes means exactly one cache line per entity's world transform.
+
+```cpp
+// Local TRS — written by game code, read by TransformSystem.
+// dirty flag in bit 0 of flags; set when position/rotation/scale changes.
+struct TransformComponent               // offset  size
+{
+    Vec3    position;                   //  0      12
+    Quat    rotation;                   // 12      16
+    Vec3    scale;                      // 28      12
+    uint8_t flags;                      // 40       1  bit 0: dirty
+    uint8_t _pad[3];                    // 41       3
+};                                      // total:  44 bytes
+static_assert(sizeof(TransformComponent)             == 44);
+static_assert(offsetof(TransformComponent, rotation) == 12);
+
+// World matrix — written by TransformSystem, read by all render systems.
+// Mat4 is 16-byte aligned — SIMD-friendly, one cache line per entity.
+struct WorldTransformComponent
+{
+    Mat4 matrix;                        // 64 bytes, offset 0
+};
+static_assert(sizeof(WorldTransformComponent) == 64);
+```
+
+---
 
 **Renderable entity** = `MeshComponent` + `MaterialComponent` + `WorldTransformComponent`.
 **Camera entity** = `CameraComponent` + `WorldTransformComponent`.
 **Light entity** = one of the light components.
 
-`WorldTransformComponent` is written by `TransformSystem` (scene graph). All render systems read it — no transform logic lives in the renderer.
-
-`VisibleTag` is added/removed by `FrustumCullSystem` each frame. `DrawCallBuildSystem` only processes entities that carry it — entities outside the frustum are never touched by the draw call path. `ShadowVisibleTag.cascadeMask` is a bitmask (bit 0 = cascade 0, etc.) set by `ShadowCullSystem`; shadow draw calls are only recorded for entities with the relevant bit set.
+`WorldTransformComponent` is written by `TransformSystem`. All render systems read it — no transform logic lives in the renderer.
 
 ---
 
