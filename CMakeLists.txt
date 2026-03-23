@@ -24,8 +24,57 @@ FetchContent_Declare(
     GIT_TAG        1.0.1
 )
 
-FetchContent_MakeAvailable(Catch2 glm)
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG        3.3.9
+)
 
+# bgfx.cmake wraps bgfx/bx/bimg with proper CMake targets.
+# We disable all backends except Metal (macOS) and Vulkan.
+set(BGFX_BUILD_TOOLS      ON  CACHE BOOL "" FORCE) # build shaderc
+set(BGFX_BUILD_EXAMPLES   OFF CACHE BOOL "" FORCE)
+set(BGFX_INSTALL          OFF CACHE BOOL "" FORCE)
+set(BGFX_CUSTOM_TARGETS   OFF CACHE BOOL "" FORCE)
+
+# Disable unused backends to keep the binary lean
+set(BGFX_USE_DEBUG_SUFFIX OFF CACHE BOOL "" FORCE)
+
+# GLFW: disable unneeded sub-targets
+set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    bgfx_cmake
+    GIT_REPOSITORY https://github.com/widberg/bgfx.cmake.git
+    GIT_TAG        eebff97af2a34c695cdc058c63ba527c6ebebc76
+)
+
+FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake)
+
+# --- engine_rendering static library ---
+# Wraps bgfx init/shutdown/frame and the GLFW window backend.
+add_library(engine_rendering STATIC
+    engine/rendering/Renderer.cpp
+    engine/platform/desktop/GlfwWindow.cpp
+)
+
+target_include_directories(engine_rendering PUBLIC ${CMAKE_SOURCE_DIR})
+
+target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw)
+
+if(APPLE)
+    target_link_libraries(engine_rendering PUBLIC
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+endif()
+
+# --- engine_tests executable ---
 add_executable(engine_tests
     engine/ecs/Registry.cpp
     engine/threading/ThreadPool.cpp
@@ -38,9 +87,10 @@ add_executable(engine_tests
     tests/math/TestMath.cpp
     tests/math/TestFrustum.cpp
     tests/math/TestTransform.cpp
+    tests/rendering/TestRenderer.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)
 
 # GLM compile flags — set here so they take effect before any GLM header is included,
 # regardless of include order inside translation units.
