@@ -1012,6 +1012,211 @@ On IMR, minimising shader/texture switches is most important because the depth p
 
 ---
 
+## Profiling
+
+The profiling system has two tiers. Tier 0 is always present with effectively zero overhead — bgfx view names and `bgfx::Stats` give per-pass timing with no instrumentation code in hot paths. Tier 1 is opt-in for profiling builds and enables deep CPU+GPU tracing via **Tracy**, which integrates directly with bgfx's callback interface to get per-draw-call GPU timing without manual instrumentation.
+
+### Strategy Overview
+
+```
+Tier 0 — always on, zero overhead in release
+    bgfx view names          → pass labels in RenderDoc, Instruments, Android GPU Inspector
+    bgfx::Stats (post-frame) → per-view CPU+GPU time, draw counts → in-game visualiser
+
+Tier 1 — profiling builds only (NIMBUS_PROFILING=ON)
+    NIMBUS_CPU_ZONE macros   → CPU timeline in Tracy viewer
+    Tracy bgfx callback      → per-draw GPU timeline in Tracy, sourced from bgfx profiler API
+    NIMBUS_GPU_ZONE macros   → explicit GPU zones for sub-pass work not covered by bgfx
+```
+
+### CPU Zone Macros
+
+All engine systems instrument their work with zone macros. In non-profiling builds these expand to nothing — no overhead, no binary size cost.
+
+```cpp
+// engine/profiling/Profiler.h
+
+#ifdef NIMBUS_PROFILING
+  #include <tracy/Tracy.hpp>
+  #define NIMBUS_FRAME_MARK         FrameMark
+  #define NIMBUS_CPU_ZONE(name)     ZoneScopedN(name)
+  #define NIMBUS_CPU_ZONE_COLOR(name, color) ZoneScopedNC(name, color)
+#else
+  #define NIMBUS_FRAME_MARK
+  #define NIMBUS_CPU_ZONE(name)
+  #define NIMBUS_CPU_ZONE_COLOR(name, color)
+#endif
+```
+
+Every render system uses these at the start of its `update()`:
+
+```cpp
+void FrustumCullSystem::update(Registry& reg, float dt)
+{
+    NIMBUS_CPU_ZONE("FrustumCull");
+    // worker tasks also zone themselves:
+    pool.submit([chunk] {
+        NIMBUS_CPU_ZONE("FrustumCull::worker");
+        // ...
+    });
+}
+
+void DrawCallBuildSystem::update(Registry& reg, float dt)
+{
+    NIMBUS_CPU_ZONE("DrawCallBuild");
+    // ...
+}
+
+void PostProcessSystem::update(Registry& reg, float dt)
+{
+    NIMBUS_CPU_ZONE("PostProcess");
+    { NIMBUS_CPU_ZONE("PostProcess::SSAO");  submitSsao();  }
+    { NIMBUS_CPU_ZONE("PostProcess::Bloom"); submitBloom(); }
+    { NIMBUS_CPU_ZONE("PostProcess::Tonemap+FXAA"); submitTonemapFxaa(); }
+}
+```
+
+Thread pool workers inherit the Tracy fiber context automatically, so the CPU timeline shows which thread executed each worker task.
+
+### GPU Timing — bgfx::Stats (Tier 0)
+
+After every `bgfx::frame()`, `bgfx::getStats()` returns `bgfx::Stats` containing per-view (per-pass) GPU and CPU timing. No instrumentation required — bgfx records these automatically.
+
+```cpp
+// Called once per frame after bgfx::frame(), feeds the in-game visualiser.
+void Renderer::readStats()
+{
+    const bgfx::Stats* s = bgfx::getStats();
+
+    // Per-frame totals
+    const double gpuMs = 1000.0 * double(s->gpuTimeEnd - s->gpuTimeBegin)
+                       / double(s->gpuTimerFreq);
+    const double cpuMs = 1000.0 * double(s->cpuTimeEnd - s->cpuTimeBegin)
+                       / double(s->cpuTimerFreq);
+
+    // Per-pass breakdown (one entry per bgfx view)
+    for (uint16_t i = 0; i < s->numViews; ++i)
+    {
+        const bgfx::ViewStats& v = s->viewStats[i];
+        const double passGpuMs = 1000.0 * double(v.gpuTimeEnd - v.gpuTimeBegin)
+                               / double(s->gpuTimerFreq);
+        const double passCpuMs = 1000.0 * double(v.cpuTimeEnd - v.cpuTimeBegin)
+                               / double(s->cpuTimerFreq);
+        // v.name is the string set by bgfx::setViewName()
+        // v.numDraw, v.numPrims also available
+    }
+
+    // Resource counts
+    // s->numDraw, s->numCompute, s->numPrims[]
+    // s->textureMemoryUsed, s->rtMemoryUsed
+}
+```
+
+**What bgfx::Stats covers per view:**
+
+| Field | Description |
+|---|---|
+| `gpuTimeBegin` / `gpuTimeEnd` | GPU start/end timestamp for the entire pass |
+| `cpuTimeBegin` / `cpuTimeEnd` | CPU time spent encoding commands for the pass |
+| `numDraw` | Draw call count |
+| `numPrims[topology]` | Primitive count by topology type |
+
+### GPU Timing — Tracy (Tier 1)
+
+Tracy integrates with bgfx via `bgfx::CallbackI` — bgfx calls `profilerBegin` / `profilerEnd` internally for every region it profiles, and Tracy's implementation records these as GPU zones on the Tracy timeline. This gives sub-pass GPU timing (e.g. individual draw call batches) without any per-draw instrumentation in engine code.
+
+```cpp
+// engine/profiling/TracyBgfxCallback.h  (profiling builds only)
+#ifdef NIMBUS_PROFILING
+#include <tracy/TracyBgfx.hpp>
+
+// Pass to bgfx::init() in profiling builds.
+// Tracy handles the rest — records GPU timestamps for every bgfx profiler region.
+struct TracyBgfxCallback : public bgfx::CallbackI { /* ... */ };
+#endif
+```
+
+```cpp
+// Renderer::init()
+bgfx::Init init;
+init.type     = bgfx::RendererType::Vulkan; // or Metal
+init.vendorId = BGFX_PCI_ID_NONE;
+#ifdef NIMBUS_PROFILING
+init.callback = &m_tracyCallback;  // Tracy hooks in here
+#endif
+bgfx::init(init);
+```
+
+With this in place, the Tracy desktop viewer shows:
+- **CPU timeline**: all `NIMBUS_CPU_ZONE` zones across all threads, including thread pool workers
+- **GPU timeline**: per-pass zones from bgfx's internal profiler regions, aligned with the CPU timeline
+- **Frame markers**: frame boundaries from `NIMBUS_FRAME_MARK`
+- **Memory**: optional heap tracking via Tracy's overridden `new`/`delete`
+
+### Debug Markers and View Names (Tier 0)
+
+View names set via `bgfx::setViewName()` appear as pass labels in every GPU debugger and profiler — RenderDoc, Apple Instruments, Android GPU Inspector, and the Tracy GPU timeline. Set once at startup:
+
+```cpp
+bgfx::setViewName(kViewShadow,       "Shadow Maps");
+bgfx::setViewName(kViewDepthPrepass, "Depth Prepass");
+bgfx::setViewName(kViewOpaque,       "Opaque Forward+");
+bgfx::setViewName(kViewTransparent,  "Transparency");
+bgfx::setViewName(kViewPostProcess,  "Post-Process");
+bgfx::setViewName(kViewUi,           "UI / HUD");
+```
+
+`bgfx::setMarker(label)` adds a point marker visible in RenderDoc and Instruments — used to label individual draw call groups within a pass (e.g. "Instanced vegetation", "Skinned characters") for easier GPU capture navigation:
+
+```cpp
+bgfx::setMarker("Vegetation instances");
+bgfx::submit(kViewOpaque, vegetationProgram);
+bgfx::setMarker("Skinned characters");
+bgfx::submit(kViewOpaque, skinnedProgram);
+```
+
+### External Profiler Compatibility
+
+| Tool | Platform | How to use | What you get |
+|---|---|---|---|
+| **Tracy** | Win / Mac / Linux / iOS / Android | Enable `NIMBUS_PROFILING`, pass `TracyBgfxCallback` | Full CPU+GPU timeline, per-draw zones, memory tracking |
+| **RenderDoc** | Win / Mac / Linux / Android | Launch via RenderDoc or `BGFX_DEBUG_IFH`; view names + markers appear automatically | Frame capture, per-draw state inspection, resource viewer |
+| **Apple Instruments** (Metal GPU Trace) | Mac / iOS | Run from Xcode with Metal GPU Trace template | Full GPU timeline, per-encoder timing, shader execution stats, bandwidth |
+| **Android GPU Inspector** | Android | `adb` + AGI; Vulkan debug labels from view names appear automatically | GPU timeline, shader profiling, memory heatmaps |
+| **PIX** | Windows | `WinPixEventRuntime`; wire into `bgfx::setMarker()` on Vulkan backend | GPU capture, per-draw timing, pipeline state |
+| **Xcode Organizer / MetricKit** | iOS (production) | Automatic — no engine changes | On-device frame time, GPU hang reports from real users |
+
+No code changes are required to use RenderDoc, Instruments, or Android GPU Inspector beyond setting view names (already done). Tracy and PIX require the profiling build flag.
+
+### In-Game Visualiser
+
+`bgfx::Stats` is read every frame and shown in the in-game visualiser panel (visible in both editor and play mode). Displayed per pass:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Frame  CPU 4.2ms   GPU 8.7ms   Draw 1,243           │
+├──────────────────┬──────────┬──────────┬────────────┤
+│ Pass             │ CPU (ms) │ GPU (ms) │ Draw calls │
+├──────────────────┼──────────┼──────────┼────────────┤
+│ Shadow Maps      │  0.8     │  2.1     │ 312        │
+│ Depth Prepass    │  0.3     │  0.6     │ 201        │
+│ Opaque Forward+  │  1.4     │  3.8     │ 587        │
+│ Transparency     │  0.2     │  0.9     │  87        │
+│ Post-Process     │  0.1     │  1.0     │   4        │
+│ UI / HUD         │  0.1     │  0.3     │  52        │
+└──────────────────┴──────────┴──────────┴────────────┘
+│ Textures 312 MB   RT 48 MB   Primitives 2.4M        │
+└─────────────────────────────────────────────────────┘
+```
+
+The visualiser also exposes the `RenderSettings` toggles (SSAO, bloom, depth prepass, shadow quality) so individual passes can be disabled live to isolate their cost.
+
+### What Requires a bgfx Fork
+
+Nothing. bgfx's `bgfx::CallbackI` profiler API, `bgfx::Stats`, `bgfx::setViewName`, and `bgfx::setMarker` are all part of the public stable API. Tracy's bgfx integration uses only these. No modifications to bgfx are needed for any part of this profiling system.
+
+---
+
 ## Implementation Plan
 
 The renderer is built in phases, each independently shippable:
