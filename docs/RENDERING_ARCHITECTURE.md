@@ -1,6 +1,6 @@
 # Rendering Architecture
 
-The renderer sits on top of **bgfx** (Metal + Vulkan backends only) and is driven by the ECS. It is not a self-contained subsystem — it is a set of systems and components that live in the same registry as everything else. A `RenderSystem` reads transform and mesh/material data from the ECS each frame, frustum-culls it, sorts it, and submits draw calls to bgfx.
+The renderer sits on top of **bgfx** (Metal + Vulkan backends only) and is driven by the ECS. It is not a self-contained subsystem — it is a set of systems and components that live in the same registry as everything else. The work is split across several focused systems that execute in ECS phases: transforms are updated, then visibility is culled and lights are assigned in parallel, then draw calls are recorded in parallel using bgfx encoders, then post-processing runs sequentially. bgfx's internal render thread consumes the resulting command buffer independently.
 
 ---
 
@@ -12,30 +12,58 @@ The renderer sits on top of **bgfx** (Metal + Vulkan backends only) and is drive
 - **PBR materials.** Physically-based rendering (albedo, roughness, metallic, normal, AO). One material format engine-wide.
 - **bgfx views = passes.** Each render pass is a bgfx view. View IDs are fixed constants so pass ordering is explicit and easy to change.
 - **Assets behind handles.** All GPU resources (meshes, textures, materials, shaders) are referenced by a typed `AssetHandle<T>`. The `RenderResources` registry maps handles to live bgfx handles.
+- **Two levels of parallelism.** System-level: non-conflicting render systems run concurrently via the DAG scheduler. Data-level: individual systems (frustum cull, draw call recording) split their work across thread pool workers. bgfx encoders allow multiple threads to record draw calls simultaneously.
 
 ---
 
 ## System Overview
 
+The render workload is split across five systems that map onto ECS phases. The DAG scheduler serializes phases with data dependencies and runs independent systems within a phase in parallel.
+
 ```mermaid
 graph TD
-    ECS["ECS Registry\nCameraComponent\nMeshComponent\nMaterialComponent\nWorldTransformComponent\nLightComponents\nInstancedMeshComponent"]
-    RS["RenderSystem\n(runs each frame)"]
-    FC["Frustum Culling\n(engine/math/Frustum.h)"]
-    Sort["Draw Call Sort\n(material → depth)"]
-    Inst["Instance Buffer\nBuilder"]
-    bgfx["bgfx\nMetal / Vulkan"]
-    RR["RenderResources\nMesh → bgfx::VertexBufferHandle\nTexture → bgfx::TextureHandle\nShader → bgfx::ProgramHandle"]
+    subgraph "Phase N — Scene Graph"
+        TS["TransformSystem\nWrites: WorldTransformComponent"]
+    end
 
-    ECS -->|query renderables| RS
-    RS --> FC
-    FC --> Sort
-    Sort --> bgfx
-    RS --> Inst
-    Inst --> bgfx
-    RS -->|look up GPU handles| RR
-    RR --> bgfx
+    subgraph "Phase N+1 — Parallel cull + light prep"
+        FCS["FrustumCullSystem\nReads: WorldTransform, Mesh\nWrites: VisibleTag"]
+        LCS["LightCullSystem\nReads: LightComponents, CameraComponent\nWrites: LightClusterBuffer"]
+    end
+
+    subgraph "Phase N+2 — Parallel shadow cull"
+        SCS["ShadowCullSystem\nReads: WorldTransform, VisibleTag\nWrites: ShadowVisibleTag\n(one task per cascade / spot light)"]
+    end
+
+    subgraph "Phase N+3 — Parallel draw call recording"
+        DCBS["DrawCallBuildSystem\nReads: Visible, WorldTransform,\nMesh, Material, LightClusterBuffer\nWorkers record via bgfx encoders"]
+        IBBS["InstanceBufferBuildSystem\nReads: InstancedMeshComponent,\nWorldTransform, VisibleTag\nBuilds per-group instance buffers"]
+        UIS["UiRenderSystem\nReads: SpriteComponent\nView 5 — independent of 3D views"]
+    end
+
+    subgraph "Phase N+4 — Sequential"
+        PPS["PostProcessSystem\nFull-screen passes — each depends\non previous pass output"]
+    end
+
+    subgraph "Main thread only"
+        FRAME["bgfx::frame()\nFlushes all encoder command buffers\nto bgfx internal render thread"]
+    end
+
+    TS --> FCS
+    TS --> LCS
+    FCS --> SCS
+    LCS --> SCS
+    SCS --> DCBS
+    SCS --> IBBS
+    DCBS --> PPS
+    IBBS --> PPS
+    PPS --> FRAME
+    UIS --> FRAME
 ```
+
+`FrustumCullSystem` and `LightCullSystem` have disjoint Writes so the DAG scheduler places them in the same phase and runs them concurrently. `UiRenderSystem` targets a different bgfx view and has no data conflict with `PostProcessSystem`, so they also run in parallel.
+
+Within `FrustumCullSystem` and `DrawCallBuildSystem`, the thread pool is used for data-level parallelism — entity lists are partitioned across workers for culling and draw call encoding respectively.
 
 ---
 
@@ -87,13 +115,23 @@ classDiagram
         AssetHandle~Material~ material
         uint32_t instanceGroupId
     }
+
+    class VisibleTag {
+        +empty tag component
+    }
+
+    class ShadowVisibleTag {
+        uint8_t cascadeMask
+    }
 ```
 
 **Renderable entity** = `MeshComponent` + `MaterialComponent` + `WorldTransformComponent`.
 **Camera entity** = `CameraComponent` + `WorldTransformComponent`.
 **Light entity** = one of the light components.
 
-`WorldTransformComponent` is written by `TransformSystem` (scene graph). `RenderSystem` reads it — no transform logic lives in the renderer.
+`WorldTransformComponent` is written by `TransformSystem` (scene graph). All render systems read it — no transform logic lives in the renderer.
+
+`VisibleTag` is added/removed by `FrustumCullSystem` each frame. `DrawCallBuildSystem` only processes entities that carry it — entities outside the frustum are never touched by the draw call path. `ShadowVisibleTag.cascadeMask` is a bitmask (bit 0 = cascade 0, etc.) set by `ShadowCullSystem`; shadow draw calls are only recorded for entities with the relevant bit set.
 
 ---
 
@@ -200,33 +238,97 @@ Each post effect is a full-screen quad blit in its own sub-pass (or chained into
 
 ```mermaid
 sequenceDiagram
-    participant App
-    participant RenderSystem
+    participant Main
+    participant Workers
     participant bgfx
+    participant RenderThread as bgfx Render Thread
 
-    App->>bgfx: bgfx::init(Metal/Vulkan, windowHandle)
+    Main->>bgfx: bgfx::init(Metal/Vulkan, windowHandle)
 
     loop Every frame
-        App->>RenderSystem: runFrame(registry, dt)
-        RenderSystem->>bgfx: bgfx::setViewRect / setViewClear (all views)
-        RenderSystem->>bgfx: bgfx::touch(viewId) for each active view
+        Main->>bgfx: setViewRect / setViewClear / touch (all views)
+        Note over Main: Phase N+1: FrustumCullSystem + LightCullSystem (parallel)
+        Note over Main: Phase N+2: ShadowCullSystem (parallel per cascade)
 
-        RenderSystem->>bgfx: submit shadow geometry (view 0)
-        RenderSystem->>bgfx: submit depth prepass (view 1)
-        RenderSystem->>bgfx: submit opaque + instanced (view 2)
-        RenderSystem->>bgfx: submit transparent (view 3)
-        RenderSystem->>bgfx: submit post-process quads (view 4)
-        RenderSystem->>bgfx: submit UI + ImGui (view 5)
+        Main->>Workers: Phase N+3: dispatch draw call workers
+        Workers->>bgfx: bgfx::begin(true) → Encoder per worker
+        Workers->>bgfx: encoder→setTransform / setVertexBuffer / submit (views 0–3)
+        Workers->>bgfx: bgfx::end(encoder)
+        Note over Workers: UiRenderSystem runs in parallel (view 5)
+        Main->>Workers: join all workers
 
-        App->>bgfx: bgfx::frame()
+        Main->>bgfx: Phase N+4: PostProcessSystem (views 4, main thread)
+        Main->>bgfx: bgfx::frame()
+        bgfx->>RenderThread: flush command buffer → Metal / Vulkan draw calls
     end
 
-    App->>bgfx: bgfx::shutdown()
+    Main->>bgfx: bgfx::shutdown()
 ```
 
-**bgfx threading model:** bgfx is called from the main thread only. bgfx internally manages a render thread that consumes the command buffer produced by `bgfx::frame()`. This matches our ECS threading model: `RenderSystem` runs on the main thread in its assigned phase; it never overlaps with thread-pool workers touching the same data.
+### bgfx Encoder Rules
 
-**Platform-specific init:**
+bgfx encoders allow worker threads to record draw calls concurrently into separate command buffers that bgfx merges before `bgfx::frame()`.
+
+| Operation | Thread | Reason |
+|---|---|---|
+| `bgfx::init` / `bgfx::shutdown` | Main only | One-time lifecycle |
+| `bgfx::frame()` | Main only | Synchronization point |
+| `bgfx::setViewRect` / `setViewClear` / `touch` | Main only | View state is global |
+| GPU resource creation (`createVertexBuffer`, `createTexture`, …) | Main only | bgfx resource API not thread-safe |
+| `bgfx::begin(true)` / encoder calls / `bgfx::end` | Any worker thread | Safe — each encoder is independent |
+| Post-process full-screen submits (views 4) | Main thread encoder | Sequential dependency on prior passes |
+
+---
+
+## Threading Model
+
+### Two Levels of Parallelism
+
+```mermaid
+graph LR
+    subgraph "Level 1 — System-level (DAG scheduler)"
+        FCS2["FrustumCullSystem"]
+        LCS2["LightCullSystem"]
+        FCS2 ~~~ LCS2
+        Note1["Same phase → run concurrently\n(disjoint Writes)"]
+    end
+
+    subgraph "Level 2 — Data-level (thread pool within a system)"
+        W1["Worker 0\nentities 0..12k\nbgfx::Encoder A"]
+        W2["Worker 1\nentities 12k..24k\nbgfx::Encoder B"]
+        W3["Worker 2\nentities 24k..36k\nbgfx::Encoder C"]
+        W4["Worker 3\nentities 36k..50k\nbgfx::Encoder D"]
+    end
+
+    FCS2 --> W1
+    FCS2 --> W2
+    FCS2 --> W3
+    FCS2 --> W4
+```
+
+**Level 1** is handled by the DAG scheduler automatically from the Reads/Writes declarations on each system. No manual coordination needed — systems with disjoint writes land in the same phase and run on separate thread pool threads.
+
+**Level 2** is explicit within a system. `FrustumCullSystem` and `DrawCallBuildSystem` partition their entity lists into N chunks (N = thread count) and submit tasks to the `ThreadPool`. Each draw call worker holds its own `bgfx::Encoder` for the duration of its task.
+
+### What Is and Isn't Parallelized
+
+| Work | Parallel? | How |
+|---|---|---|
+| Frustum cull (main camera) | Yes | Data-parallel — entity list split across workers |
+| Shadow frustum cull | Yes | One task per cascade + spot light (system-level) |
+| Clustered light list building | Yes | Data-parallel — tile grid split across workers |
+| Instance buffer construction | Yes | One task per instance group |
+| Draw call recording (opaque, shadow, transparent) | Yes | N workers, each with a bgfx::Encoder |
+| Post-processing passes | No | Each pass reads the previous pass output |
+| UI / sprite rendering | Yes (with post-process) | Different bgfx view — no data conflict |
+| GPU resource upload (mesh, texture) | No | bgfx resource API is main-thread only; use staging queue |
+| bgfx::frame() | No | Main-thread synchronization point |
+
+### Staging Queue for Async Asset Upload
+
+GPU resource creation (`bgfx::createVertexBuffer`, `bgfx::createTexture`) is main-thread only. When the asset system finishes loading a mesh or texture on a background thread, it pushes a `PendingUpload` to a thread-safe queue. At the start of each frame (before view setup), the main thread drains this queue and calls the bgfx create functions. This keeps worker threads free of main-thread-only bgfx calls while still feeding the GPU promptly.
+
+### Platform-specific init:
 
 | Platform | Backend | Window handle |
 |---|---|---|
@@ -291,6 +393,7 @@ graph TD
 
 - Instances are grouped by `(mesh, material)` pair — one draw call per unique pair.
 - The instance buffer is rebuilt from ECS data each frame (dynamic, CPU-side).
+- Buffer construction is parallel: `InstanceBufferBuildSystem` submits one thread pool task per group — groups are fully independent.
 - Once GPU-driven culling is needed (1M+ instances), this becomes a compute shader — noted as future work.
 
 ---
