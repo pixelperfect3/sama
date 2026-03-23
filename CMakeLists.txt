@@ -130,6 +130,22 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT ANDROID ""   fs_unlit_essl COMPILED_SHADERS)
 
+# Instanced — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   OSX     metal  vs_instanced_mtl  COMPILED_SHADERS)
+
+# Instanced — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   LINUX   spirv  vs_instanced_spv  COMPILED_SHADERS)
+
+# Instanced — GLSL (OpenGL)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   LINUX   120    vs_instanced_glsl COMPILED_SHADERS)
+
+# Instanced — ESSL (OpenGLES / Android)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   ANDROID ""     vs_instanced_essl COMPILED_SHADERS)
+
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
 # --- engine_rendering static library ---
@@ -143,6 +159,7 @@ add_library(engine_rendering STATIC
     engine/rendering/ShaderLoader.cpp
     engine/rendering/systems/FrustumCullSystem.cpp
     engine/rendering/systems/DrawCallBuildSystem.cpp
+    engine/rendering/systems/InstanceBufferBuildSystem.cpp
     engine/platform/desktop/GlfwWindow.cpp
 )
 
@@ -190,6 +207,7 @@ add_executable(engine_tests
     tests/rendering/TestRenderer.cpp
     tests/rendering/TestRenderSettings.cpp
     tests/rendering/TestMesh.cpp
+    tests/rendering/TestInstancing.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)
