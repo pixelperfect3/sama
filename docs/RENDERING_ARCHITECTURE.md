@@ -588,6 +588,7 @@ graph LR
 - Clustered culling: view frustum divided into a 3D grid of tiles; each tile knows which lights affect it. Computed once on CPU per frame before submission.
 - Reads shadow maps from View 0 for shadow-receiving surfaces.
 - PBR shader: GGX specular, Lambert diffuse, IBL ambient, shadow PCF.
+- **Shadow guard:** The PBR shader defaults `shadow = 1.0` (fully lit) when `u_shadowMatrix[0]` is unset (all zeros, i.e. `shadowCoord.w ≤ 0.0001`) or when the shadow coordinate falls outside the shadow map's `[0,1]³` UV range. Without this guard, an unset shadow matrix produces `shadowCoord.w = 0` → division by zero → NaN → `Lo *= NaN = 0` → surfaces render black even with shadows disabled. The guard ensures the shadow map is only sampled when a real shadow pass has been submitted.
 
 ### View 3 — Transparency Pass
 
@@ -712,10 +713,12 @@ GPU resource creation (`bgfx::createVertexBuffer`, `bgfx::createTexture`) is mai
 
 | Platform | Backend | Window handle |
 |---|---|---|
-| Mac | Metal | `NSWindow*` (wrapped in `bgfx::PlatformData`) |
+| Mac | Metal | `CAMetalLayer*` — must be explicitly created and attached to the NSView; bgfx Metal does not accept `NSView*` or `NSWindow*` |
 | iOS | Metal | `CAMetalLayer*` |
 | Windows | Vulkan | `HWND` |
 | Android | Vulkan | `ANativeWindow*` |
+
+**Mac / bgfx Metal note:** GLFW with `GLFW_NO_API` does not automatically attach a `CAMetalLayer` to the NSView. The layer must be created and attached explicitly via the ObjC runtime before passing it to bgfx. Passing `NSView*` directly will compile but produce no rendered output (bgfx silently fails to create the Metal surface).
 
 ---
 
@@ -958,7 +961,13 @@ Each effect is a full-screen pass. `PostProcessSystem` skips any disabled pass e
 
 Rendered last, on top of everything. Orthographic projection — no depth test.
 
-**Sprites:** A sprite is a quad mesh (two triangles) with a texture region. The `SpriteComponent` holds a texture handle + UV rect. `SpriteRenderSystem` batches all sprites sharing the same texture atlas into a single draw call per atlas.
+**Sprites:** A sprite is a quad mesh (two triangles) with a texture region. The `SpriteComponent` holds a `textureId` (0 = white/tint-only), `uvRect`, RGBA `color`, and `sortZ`. `UiRenderSystem` collects all `SpriteComponent` + `WorldTransformComponent` entities each frame and forwards them to `SpriteBatcher`.
+
+`SpriteBatcher::flush()` sorts sprites by `(textureId, sortZ)`, groups contiguous runs with the same `textureId` into one batch, and emits one transient vertex+index buffer draw per batch via a `bgfx::Encoder`. Blend state: `SRC_ALPHA / INV_SRC_ALPHA`, no depth write.
+
+**`textureId == 0` — white texture fallback:** No texture sampling — the vertex color is the output. `SpriteBatcher` binds `RenderResources::whiteTexture()` (a 1×1 RGBA8 opaque-white texture) for these batches. The sprite fragment shader does `texColor * v_color0`, so a white texture passes the vertex color through unchanged. Binding an invalid handle instead would return `(0,0,0,0)` on Metal and make all tinted sprites transparent.
+
+**`UiRenderSystem` clears view state:** `UiRenderSystem::update()` calls `bgfx::setViewClear(kViewUi, BGFX_CLEAR_NONE)` to configure the UI view for production use (UI overlays the 3D scene). Any caller that wants a solid background for the UI view (e.g. tests) must re-apply `setViewClear` and `setViewFrameBuffer` *after* calling `update()`.
 
 **ImGui:** Rendered in View 5 in editor mode. In shipped builds, the ImGui render step is compiled out (`#ifndef NIMBUS_EDITOR`).
 
@@ -966,28 +975,39 @@ Rendered last, on top of everything. Orthographic projection — no depth test.
 
 ## RenderResources Registry
 
-Maps typed asset handles to live bgfx handles. Owns all GPU resource lifetime.
+Integer-keyed registry for live bgfx GPU handles. Owns all GPU resource lifetime. IDs are 1-based (`0` is the invalid sentinel) and allocated from a slot free-list so slots are reused after removal.
 
 ```cpp
 // engine/rendering/RenderResources.h
 class RenderResources
 {
 public:
-    bgfx::VertexBufferHandle  getMesh(AssetHandle<Mesh>) const noexcept;
-    bgfx::TextureHandle       getTexture(AssetHandle<Texture>) const noexcept;
-    bgfx::ProgramHandle       getShader(AssetHandle<Shader>) const noexcept;
+    // Mesh registry — takes ownership, returns stable uint32_t ID.
+    uint32_t         addMesh(Mesh mesh);
+    const Mesh*      getMesh(uint32_t id) const;   // nullptr if id not live
+    void             removeMesh(uint32_t id);
 
-    void uploadMesh(AssetHandle<Mesh>, const MeshData&);
-    void uploadTexture(AssetHandle<Texture>, const TextureData&);
-    void uploadShader(AssetHandle<Shader>, const ShaderData&);
+    // Material registry — plain value type, no GPU handles.
+    uint32_t         addMaterial(Material mat);
+    const Material*  getMaterial(uint32_t id) const;
+    void             removeMaterial(uint32_t id);
 
-    void release(AssetHandle<Mesh>);
-    void release(AssetHandle<Texture>);
-    void release(AssetHandle<Shader>);
+    // Destroy all live GPU handles and reset the registry.
+    void             destroyAll();
+
+    // White texture fallback — a borrowed 1×1 RGBA8 opaque-white texture.
+    // Used by SpriteBatcher when SpriteComponent::textureId == 0 (tint-only sprites).
+    // NOT owned by RenderResources; destroyAll() does not destroy it.
+    // The caller (ScreenshotFixture, Renderer init) must set this before
+    // any sprite rendering occurs and keep the texture alive.
+    void                    setWhiteTexture(bgfx::TextureHandle h);
+    bgfx::TextureHandle     whiteTexture() const;
 };
 ```
 
-Called by the asset system when a mesh/texture/shader finishes loading. Release called when the asset is evicted from the cache.
+**ID convention:** `addMesh` returns a 1-based ID. `getMesh(0)` returns `nullptr`. Components (e.g. `MeshComponent`) store the ID as `uint32_t`.
+
+**White texture:** `SpriteComponent::textureId == 0` means "no texture — tint the vertex color only." `SpriteBatcher::flush()` checks for `textureId == 0` and binds `res.whiteTexture()` instead of an invalid handle. On Metal, an invalid texture sampler returns `(0,0,0,0)`, which would make all sprites transparent regardless of vertex color. The white texture is set by the Renderer during init and persists for the entire renderer lifetime.
 
 ---
 
