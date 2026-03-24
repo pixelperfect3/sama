@@ -48,6 +48,9 @@ TEST_CASE("screenshot: postprocess scene", "[screenshot]")
     float lightData[8] = {lightDir.x, lightDir.y, lightDir.z, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f};
     bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
 
+    bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+    bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
+
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bgfx::setTransform(identity);
     bgfx::setVertexBuffer(0, mesh.positionVbh);

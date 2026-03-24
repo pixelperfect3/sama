@@ -71,11 +71,18 @@ public:
     // until the readback is ready, and returns RGBA8 pixels (width*height*4 bytes).
     std::vector<uint8_t> captureFrame();
 
+    // 1×1 RGBA8 white texture (all channels = 1.0).
+    // Bind to sampler slots that require a texture but have no real asset
+    // (e.g. s_albedo slot 0, s_orm slot 2) so the shader sees white defaults
+    // rather than undefined/zero values from an unbound sampler.
+    bgfx::TextureHandle whiteTex() const { return whiteTex_; }
+
 private:
     bgfx::TextureHandle rtTex_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle depthTex_ = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle captureFb_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle blitTex_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle whiteTex_ = BGFX_INVALID_HANDLE;
 };
 
 }  // namespace engine::screenshot

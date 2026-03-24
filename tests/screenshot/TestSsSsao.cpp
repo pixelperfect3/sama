@@ -49,6 +49,8 @@ TEST_CASE("screenshot: SSAO scene", "[screenshot]")
 
     // Upright cube at origin
     {
+        bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+        bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
         float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, mesh.positionVbh);
@@ -60,6 +62,8 @@ TEST_CASE("screenshot: SSAO scene", "[screenshot]")
 
     // Flat ground cube (scale wide and thin)
     {
+        bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+        bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
         auto model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.6f, 0.0f)),
                                 glm::vec3(3.0f, 0.2f, 3.0f));
         float mtx[16] = {};

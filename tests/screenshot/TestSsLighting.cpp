@@ -48,6 +48,9 @@ TEST_CASE("screenshot: clustered lights scene", "[screenshot]")
                           1.0f,       0.9f,       0.8f,       0.0f};  // warm white
     bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
 
+    bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+    bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
+
     // Draw cube
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bgfx::setTransform(identity);

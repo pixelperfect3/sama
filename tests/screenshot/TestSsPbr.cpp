@@ -43,6 +43,11 @@ TEST_CASE("screenshot: PBR lit cube", "[screenshot]")
                           1.0f,       1.0f,       1.0f,       0.0f};  // white light
     bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
 
+    // Bind white defaults for unset texture slots so unbound samplers
+    // don't produce zero (black albedo, zero AO) on Metal.
+    bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+    bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
+
     // Draw cube
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bgfx::setTransform(identity);

@@ -33,6 +33,7 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
 
     engine::ecs::Registry reg;
     engine::rendering::RenderResources res;
+    res.setWhiteTexture(fx.whiteTex());
     engine::rendering::UiRenderSystem uiSys;
 
     // Helper to create a quad entity with a colored sprite
@@ -64,8 +65,14 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
     makeSprite(120.0f, 80.0f, 80.0f, 80.0f, 0.0f, 1.0f, 0.0f, 1.0f);  // green
     makeSprite(230.0f, 80.0f, 80.0f, 80.0f, 0.0f, 0.0f, 1.0f, 2.0f);  // blue
 
+    // UiRenderSystem resets kViewUi clear to BGFX_CLEAR_NONE (UI renders on top
+    // of the 3D scene in production).  For the screenshot test we want a solid
+    // background, so restore the clear and framebuffer after the system runs.
     uiSys.update(reg, res, spriteProgram, uniforms.s_albedo, static_cast<uint16_t>(fx.width()),
                  static_cast<uint16_t>(fx.height()));
+    bgfx::setViewFrameBuffer(engine::rendering::kViewUi, fx.captureFb());
+    bgfx::setViewClear(engine::rendering::kViewUi, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+                       0x202020ff, 1.0f, 0);
 
     auto pixels = fx.captureFrame();
 

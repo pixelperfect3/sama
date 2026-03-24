@@ -139,17 +139,28 @@ void main()
 
     // -----------------------------------------------------------------------
     // Shadow — PCF 2x2, cascade 0 (Phase 4: single directional cascade).
+    // Default shadow = 1.0 (fully lit) when:
+    //   - u_shadowMatrix[0] is the zero matrix (w = 0 after transform), or
+    //   - shadow UV is outside the [0,1]^3 frustum (fragment beyond shadow coverage).
+    // Both cases occur in tests and scenes without an active shadow pass.
     // -----------------------------------------------------------------------
+    float shadow = 1.0;
     vec4 shadowCoord = mul(u_shadowMatrix[0], vec4(v_worldPos, 1.0));
-    shadowCoord.xyz /= shadowCoord.w;
-
-    float texelSize = 1.0 / 2048.0;
-    float shadow = 0.0;
-    shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowCoord.z));
-    shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowCoord.z));
-    shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowCoord.z));
-    shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowCoord.z));
-    shadow *= 0.25;
+    if (shadowCoord.w > 0.0001)
+    {
+        shadowCoord.xyz /= shadowCoord.w;
+        if (shadowCoord.x >= 0.0 && shadowCoord.x <= 1.0 &&
+            shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0 &&
+            shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
+        {
+            float texelSize = 1.0 / 2048.0;
+            shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowCoord.z));
+            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowCoord.z));
+            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowCoord.z));
+            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowCoord.z));
+            shadow *= 0.25;
+        }
+    }
 
     Lo *= shadow;
 

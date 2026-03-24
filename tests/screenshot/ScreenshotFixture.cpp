@@ -141,6 +141,11 @@ ScreenshotFixture::ScreenshotFixture()
                                          BGFX_SAMPLER_MIP_POINT | BGFX_SAMPLER_U_CLAMP |
                                          BGFX_SAMPLER_V_CLAMP);
 
+    // 1×1 white texture for default sampler bindings (albedo, ORM, etc.).
+    const uint8_t white[4] = {255, 255, 255, 255};
+    whiteTex_ = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8,
+                                      BGFX_TEXTURE_NONE, bgfx::copy(white, sizeof(white)));
+
     // Process all deferred texture creation commands.
     bgfx::frame();
 }
@@ -150,6 +155,8 @@ ScreenshotFixture::~ScreenshotFixture()
     // Flush any pending commands before destroying resources.
     bgfx::frame();
 
+    if (bgfx::isValid(whiteTex_))
+        bgfx::destroy(whiteTex_);
     if (bgfx::isValid(blitTex_))
         bgfx::destroy(blitTex_);
     if (bgfx::isValid(captureFb_))

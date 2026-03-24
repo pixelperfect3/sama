@@ -157,13 +157,14 @@ void SpriteBatcher::flush(bgfx::Encoder* enc, bgfx::ProgramHandle program,
             idx[i * 6 + 5] = v + 3;
         }
 
-        // 5. Bind texture if available.
+        // 5. Bind texture.
+        // textureId == 0 → white (tint-only) texture; other IDs are future
+        // work once a full texture registry is added to RenderResources.
         if (bgfx::isValid(s_texture))
         {
-            // Use white texture (ID 0) as fallback; actual texture lookup not
-            // implemented until texture registry lands in RenderResources.
-            // For now bind an invalid handle — the shader samples a default.
-            enc->setTexture(0, s_texture, BGFX_INVALID_HANDLE);
+            bgfx::TextureHandle invalid = BGFX_INVALID_HANDLE;
+            bgfx::TextureHandle tex = (batchTexId == 0) ? res.whiteTexture() : invalid;
+            enc->setTexture(0, s_texture, tex);
         }
 
         // 6. Set render state: alpha blend, no depth write.

@@ -48,6 +48,8 @@ TEST_CASE("screenshot: CSM scene", "[screenshot]")
     {
         float matData[8] = {0.5f, 0.45f, 0.4f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f};
         bgfx::setUniform(uniforms.u_material, matData, 2);
+        bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+        bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
 
         auto model = glm::scale(glm::mat4(1.0f), glm::vec3(20.0f, 0.2f, 20.0f));
         float mtx[16] = {};
@@ -64,6 +66,8 @@ TEST_CASE("screenshot: CSM scene", "[screenshot]")
     {
         float matData[8] = {0.6f, 0.5f, 0.4f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f};
         bgfx::setUniform(uniforms.u_material, matData, 2);
+        bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+        bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
 
         auto model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.5f, 0.0f)),
                                 glm::vec3(1.0f, 3.0f, 1.0f));
