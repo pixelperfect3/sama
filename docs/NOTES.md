@@ -131,19 +131,21 @@ Tracks all decisions and progress made during development.
 ### Implementation Progress
 - [x] Phase 1 — bgfx init, GLFW window, Renderer lifecycle (committed)
 - [x] Phase 1b — RenderSettings quality structs, GpuFeatures, presets, 42 tests (committed)
-- [ ] Phase 2 — mesh upload, vertex layouts, unlit draw, frustum cull (in progress)
-- [ ] Phase 3 — PBR material + directional light
-- [ ] Phase 4 — shadow maps (single cascade)
-- [ ] Phase 5 — instanced mesh rendering
-- [ ] Phase 6 — clustered point + spot lights
-- [ ] Phase 7 — post-processing (bloom, tonemap, FXAA)
-- [ ] Phase 8 — SSAO
-- [ ] Phase 9 — CSM (3 cascades)
-- [ ] Phase 10 — 2D sprite batching + UI pass
-- [ ] Phase 11 — IBL (environment cubemap)
+- [x] Phase 2 — mesh upload, vertex layouts, unlit draw, frustum cull (committed)
+- [x] Phase 3 — PBR material + directional light, GGX shaders (committed)
+- [x] Phase 4 — shadow maps, ShadowRenderer, ShadowCullSystem (committed)
+- [x] Phase 5 — GPU instanced mesh rendering (committed)
+- [x] Phase 6 — clustered point + spot lights, LightClusterBuilder (committed)
+- [x] Phase 7 — bloom, ACES tonemap, FXAA post-process chain (committed)
+- [x] Phase 8 — SSAO screen-space ambient occlusion (committed)
+- [x] Phase 9 — CSM 3-cascade shadows, CsmSplitCalculator (committed)
+- [x] Phase 10 — 2D sprite batching + UI pass (committed)
+- [x] Phase 11 — IBL: irradiance, prefiltered specular, BRDF LUT (committed)
+
+All 235 test cases pass (4472 assertions).
 
 ### Status
-- [ ] Rendering implementation in progress (Phase 2)
+- [x] All 11 rendering phases complete and committed
 
 ---
 
