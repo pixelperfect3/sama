@@ -295,6 +295,16 @@ compile_shader_pp(
 compile_shader_pp(
     ${SHADER_SRC_DIR}/fs_fxaa.sc FRAGMENT ANDROID ""    fs_fxaa_essl COMPILED_SHADERS)
 
+# SSAO × 4 platforms
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_ssao.sc FRAGMENT OSX     metal fs_ssao_mtl  COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_ssao.sc FRAGMENT LINUX   spirv fs_ssao_spv  COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_ssao.sc FRAGMENT LINUX   120   fs_ssao_glsl COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_ssao.sc FRAGMENT ANDROID ""    fs_ssao_essl COMPILED_SHADERS)
+
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
 # --- engine_rendering static library ---
@@ -309,11 +319,13 @@ add_library(engine_rendering STATIC
     engine/rendering/ShaderUniforms.cpp
     engine/rendering/IblResources.cpp
     engine/rendering/ShadowRenderer.cpp
+    engine/rendering/CsmSplitCalculator.cpp
     engine/rendering/systems/FrustumCullSystem.cpp
     engine/rendering/systems/DrawCallBuildSystem.cpp
     engine/rendering/systems/InstanceBufferBuildSystem.cpp
     engine/rendering/systems/ShadowCullSystem.cpp
     engine/rendering/systems/PostProcessSystem.cpp
+    engine/rendering/systems/SsaoSystem.cpp
     engine/rendering/PostProcessResources.cpp
     engine/rendering/SpriteBatcher.cpp
     engine/rendering/systems/UiRenderSystem.cpp
@@ -369,9 +381,11 @@ add_executable(engine_tests
     tests/rendering/TestUi.cpp
     tests/rendering/TestPbr.cpp
     tests/rendering/TestShadow.cpp
+    tests/rendering/TestCsm.cpp
     tests/rendering/TestIbl.cpp
     tests/rendering/TestLighting.cpp
     tests/rendering/TestPostProcess.cpp
+    tests/rendering/TestSsao.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)
