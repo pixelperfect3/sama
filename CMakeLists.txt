@@ -62,6 +62,7 @@ set(SHADER_SRC_DIR     ${CMAKE_SOURCE_DIR}/engine/shaders)
 set(SHADER_INCLUDE_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/src)
 set(SHADER_OUT_DIR     ${CMAKE_CURRENT_BINARY_DIR}/include/generated/shaders)
 set(VARYING_DEF        ${SHADER_SRC_DIR}/varying.def.sc)
+set(VARYING_PP_DEF     ${SHADER_SRC_DIR}/varying_pp.def.sc)
 
 # Helper: compile one shader via shaderc --bin2c and append its output header
 # to a list variable.
@@ -98,6 +99,38 @@ function(compile_shader FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
         COMMAND $<TARGET_FILE:shaderc> ${CLI}
         MAIN_DEPENDENCY ${FILE}
         DEPENDS ${VARYING_DEF} shaderc
+        COMMENT "Compiling shader ${BIN2C_NAME}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set(${OUT_LIST} ${${OUT_LIST}} ${OUT_FILE} PARENT_SCOPE)
+endfunction()
+
+# Variant that uses the post-process varying def (varying_pp.def.sc).
+# Identical to compile_shader() but references VARYING_PP_DEF.
+function(compile_shader_pp FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
+    set(OUT_FILE ${SHADER_OUT_DIR}/${BIN2C_NAME}.bin.h)
+
+    set(_PARSE_ARGS
+        FILE       ${FILE}
+        OUTPUT     ${OUT_FILE}
+        BIN2C      ${BIN2C_NAME}
+        ${PLATFORM}
+        ${TYPE}
+        VARYINGDEF ${VARYING_PP_DEF}
+        INCLUDES   ${SHADER_INCLUDE_DIR}
+    )
+    if(NOT "${PROFILE}" STREQUAL "")
+        list(APPEND _PARSE_ARGS PROFILE ${PROFILE})
+    endif()
+
+    shaderc_parse(CLI ${_PARSE_ARGS})
+
+    add_custom_command(
+        OUTPUT  ${OUT_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUT_DIR}
+        COMMAND $<TARGET_FILE:shaderc> ${CLI}
+        MAIN_DEPENDENCY ${FILE}
+        DEPENDS ${VARYING_PP_DEF} shaderc
         COMMENT "Compiling shader ${BIN2C_NAME}"
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
@@ -194,6 +227,74 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT ANDROID ""     fs_sprite_essl COMPILED_SHADERS)
 
+# Shadow — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   OSX     metal  vs_shadow_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_shadow.sc FRAGMENT OSX     metal  fs_shadow_mtl  COMPILED_SHADERS)
+
+# Shadow — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   LINUX   spirv  vs_shadow_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_shadow.sc FRAGMENT LINUX   spirv  fs_shadow_spv  COMPILED_SHADERS)
+
+# Shadow — GLSL (OpenGL; required by BGFX_EMBEDDED_SHADER on macOS/Linux)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   LINUX   120    vs_shadow_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_shadow.sc FRAGMENT LINUX   120    fs_shadow_glsl COMPILED_SHADERS)
+
+# Shadow — ESSL (OpenGLES / Android; required by BGFX_EMBEDDED_SHADER on macOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   ANDROID ""     vs_shadow_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_shadow.sc FRAGMENT ANDROID ""     fs_shadow_essl COMPILED_SHADERS)
+
+# Post-process fullscreen vertex × 4 platforms
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/vs_fullscreen.sc VERTEX OSX     metal vs_fullscreen_mtl  COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/vs_fullscreen.sc VERTEX LINUX   spirv vs_fullscreen_spv  COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/vs_fullscreen.sc VERTEX LINUX   120   vs_fullscreen_glsl COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/vs_fullscreen.sc VERTEX ANDROID ""    vs_fullscreen_essl COMPILED_SHADERS)
+
+# Bloom threshold
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_threshold.sc FRAGMENT OSX     metal  fs_bloom_threshold_mtl  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_threshold.sc FRAGMENT LINUX   spirv  fs_bloom_threshold_spv  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_threshold.sc FRAGMENT LINUX   120    fs_bloom_threshold_glsl COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_threshold.sc FRAGMENT ANDROID ""     fs_bloom_threshold_essl COMPILED_SHADERS)
+
+# Bloom downsample
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_downsample.sc FRAGMENT OSX     metal  fs_bloom_downsample_mtl  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_downsample.sc FRAGMENT LINUX   spirv  fs_bloom_downsample_spv  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_downsample.sc FRAGMENT LINUX   120    fs_bloom_downsample_glsl COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_downsample.sc FRAGMENT ANDROID ""     fs_bloom_downsample_essl COMPILED_SHADERS)
+
+# Bloom upsample
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_upsample.sc FRAGMENT OSX     metal  fs_bloom_upsample_mtl  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_upsample.sc FRAGMENT LINUX   spirv  fs_bloom_upsample_spv  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_upsample.sc FRAGMENT LINUX   120    fs_bloom_upsample_glsl COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_bloom_upsample.sc FRAGMENT ANDROID ""     fs_bloom_upsample_essl COMPILED_SHADERS)
+
+# Tonemap
+compile_shader_pp(${SHADER_SRC_DIR}/fs_tonemap.sc FRAGMENT OSX     metal  fs_tonemap_mtl  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_tonemap.sc FRAGMENT LINUX   spirv  fs_tonemap_spv  COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_tonemap.sc FRAGMENT LINUX   120    fs_tonemap_glsl COMPILED_SHADERS)
+compile_shader_pp(${SHADER_SRC_DIR}/fs_tonemap.sc FRAGMENT ANDROID ""     fs_tonemap_essl COMPILED_SHADERS)
+
+# FXAA × 4 platforms
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_fxaa.sc FRAGMENT OSX     metal fs_fxaa_mtl  COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_fxaa.sc FRAGMENT LINUX   spirv fs_fxaa_spv  COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_fxaa.sc FRAGMENT LINUX   120   fs_fxaa_glsl COMPILED_SHADERS)
+compile_shader_pp(
+    ${SHADER_SRC_DIR}/fs_fxaa.sc FRAGMENT ANDROID ""    fs_fxaa_essl COMPILED_SHADERS)
+
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
 # --- engine_rendering static library ---
@@ -206,11 +307,17 @@ add_library(engine_rendering STATIC
     engine/rendering/RenderResources.cpp
     engine/rendering/ShaderLoader.cpp
     engine/rendering/ShaderUniforms.cpp
+    engine/rendering/IblResources.cpp
+    engine/rendering/ShadowRenderer.cpp
     engine/rendering/systems/FrustumCullSystem.cpp
     engine/rendering/systems/DrawCallBuildSystem.cpp
     engine/rendering/systems/InstanceBufferBuildSystem.cpp
+    engine/rendering/systems/ShadowCullSystem.cpp
+    engine/rendering/systems/PostProcessSystem.cpp
+    engine/rendering/PostProcessResources.cpp
     engine/rendering/SpriteBatcher.cpp
     engine/rendering/systems/UiRenderSystem.cpp
+    engine/rendering/LightClusterBuilder.cpp
     engine/platform/desktop/GlfwWindow.cpp
 )
 
@@ -261,6 +368,10 @@ add_executable(engine_tests
     tests/rendering/TestInstancing.cpp
     tests/rendering/TestUi.cpp
     tests/rendering/TestPbr.cpp
+    tests/rendering/TestShadow.cpp
+    tests/rendering/TestIbl.cpp
+    tests/rendering/TestLighting.cpp
+    tests/rendering/TestPostProcess.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)

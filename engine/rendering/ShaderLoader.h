@@ -29,4 +29,9 @@ namespace engine::rendering
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadSpriteProgram();
 
+// Shadow program — depth-only, Stream 0 (position) only.
+// Used by the shadow pass to render scene geometry into the shadow atlas.
+// Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadShadowProgram();
+
 }  // namespace engine::rendering

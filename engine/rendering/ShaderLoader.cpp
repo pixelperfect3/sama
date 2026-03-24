@@ -13,6 +13,10 @@
 #include "generated/shaders/fs_pbr_glsl.bin.h"
 #include "generated/shaders/fs_pbr_mtl.bin.h"
 #include "generated/shaders/fs_pbr_spv.bin.h"
+#include "generated/shaders/fs_shadow_essl.bin.h"
+#include "generated/shaders/fs_shadow_glsl.bin.h"
+#include "generated/shaders/fs_shadow_mtl.bin.h"
+#include "generated/shaders/fs_shadow_spv.bin.h"
 #include "generated/shaders/fs_sprite_essl.bin.h"
 #include "generated/shaders/fs_sprite_glsl.bin.h"
 #include "generated/shaders/fs_sprite_mtl.bin.h"
@@ -25,6 +29,10 @@
 #include "generated/shaders/vs_pbr_glsl.bin.h"
 #include "generated/shaders/vs_pbr_mtl.bin.h"
 #include "generated/shaders/vs_pbr_spv.bin.h"
+#include "generated/shaders/vs_shadow_essl.bin.h"
+#include "generated/shaders/vs_shadow_glsl.bin.h"
+#include "generated/shaders/vs_shadow_mtl.bin.h"
+#include "generated/shaders/vs_shadow_spv.bin.h"
 #include "generated/shaders/vs_sprite_essl.bin.h"
 #include "generated/shaders/vs_sprite_glsl.bin.h"
 #include "generated/shaders/vs_sprite_mtl.bin.h"
@@ -57,6 +65,12 @@ static const bgfx::EmbeddedShader kPbrShaders[] = {
 static const bgfx::EmbeddedShader kSpriteShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_sprite),
     BGFX_EMBEDDED_SHADER(fs_sprite),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+static const bgfx::EmbeddedShader kShadowShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_shadow),
+    BGFX_EMBEDDED_SHADER(fs_shadow),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -121,6 +135,28 @@ bgfx::ProgramHandle loadSpriteProgram()
         return BGFX_INVALID_HANDLE;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSpriteShaders, renderer, "fs_sprite");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadShadowProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    // The Noop renderer (headless unit tests) cannot run real shaders.
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kShadowShaders, renderer, "vs_shadow");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kShadowShaders, renderer, "fs_shadow");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);

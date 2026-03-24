@@ -48,6 +48,14 @@ public:
     // before this call because it is frame-level, not per-draw.
     void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program,
                 ShaderUniforms* uniforms);
+
+    // Phase 4 — depth-only shadow pass.
+    // For each entity with ShadowVisibleTag where cascadeMask & (1 << cascadeIndex):
+    //   - Bind only Stream 0 (positionVbh) — no Stream 1, no material.
+    //   - Set depth-write + depth-test state, CCW culling.
+    //   - Submit to view kViewShadowBase + cascadeIndex.
+    void submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
+                               bgfx::ProgramHandle shadowProgram, uint32_t cascadeIndex);
 };
 
 }  // namespace engine::rendering

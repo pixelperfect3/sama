@@ -20,8 +20,8 @@ namespace engine::rendering
 // init() / destroy() — never create transient uniforms per-frame.
 //
 // Sampler slot assignments (fixed, documented to avoid conflicts):
-//   slot 0  — s_albedo
-//   slot 1  — s_normal
+//   slot 0  — s_albedo / s_hdrColor / s_ldrColor (context-dependent)
+//   slot 1  — s_normal / s_bloomTex / s_bloomPrev (context-dependent)
 //   slot 2  — s_orm
 //   slot 5  — s_shadowMap     (Phase 4)
 //   slot 6  — s_irradiance    (Phase 11)
@@ -81,11 +81,20 @@ struct ShaderUniforms
     bgfx::UniformHandle s_shadowMap;  // slot 5
 
     // -----------------------------------------------------------------------
-    // Bloom (Phase 7)
+    // Bloom / post-process (Phase 7)
     // -----------------------------------------------------------------------
 
     // vec4: {threshold, intensity, 0, 0}
     bgfx::UniformHandle u_bloomParams;
+
+    // vec4: {1/width, 1/height, 0, 0} — source texel size for bloom passes
+    bgfx::UniformHandle u_texelSize;
+
+    // Post-process samplers (slot assignments match shader SAMPLER2D declarations):
+    bgfx::UniformHandle s_hdrColor;   // slot 0 — HDR scene color
+    bgfx::UniformHandle s_bloomTex;   // slot 1 — bloom accumulation for tonemap
+    bgfx::UniformHandle s_bloomPrev;  // slot 1 — larger bloom level during upsample
+    bgfx::UniformHandle s_ldrColor;   // slot 0 — LDR tonemapped color for FXAA
 
     // -----------------------------------------------------------------------
     // SSAO (Phase 8)
@@ -118,6 +127,9 @@ struct ShaderUniforms
     bgfx::UniformHandle s_irradiance;   // slot 6
     bgfx::UniformHandle s_prefiltered;  // slot 7
     bgfx::UniformHandle s_brdfLut;      // slot 8
+
+    // vec4: .x=maxMipLevels, .y=iblEnabled (1.0=on, 0.0=off), .zw=unused
+    bgfx::UniformHandle u_iblParams;
 
     // -----------------------------------------------------------------------
     // Lifecycle

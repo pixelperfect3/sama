@@ -2,6 +2,10 @@
 
 #include <cstdint>
 
+#include "engine/rendering/RenderSettings.h"
+#include "engine/rendering/ShaderUniforms.h"
+#include "engine/rendering/systems/PostProcessSystem.h"
+
 namespace engine::rendering
 {
 
@@ -24,9 +28,24 @@ public:
     void resize(uint32_t w, uint32_t h);
     bool isHeadless() const;
 
+    // Access the post-process system (e.g. to retrieve sceneFb for the
+    // opaque and transparent passes, or to call submit() at end of frame).
+    PostProcessSystem& postProcess()
+    {
+        return postProcess_;
+    }
+
+    const PostProcessSystem& postProcess() const
+    {
+        return postProcess_;
+    }
+
 private:
     bool initialized_ = false;
     bool headless_ = false;
+
+    ShaderUniforms uniforms_;
+    PostProcessSystem postProcess_;
 };
 
 }  // namespace engine::rendering

@@ -3,6 +3,8 @@
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
 
+#include "engine/rendering/ViewIds.h"
+
 namespace engine::rendering
 {
 
@@ -50,6 +52,16 @@ bool Renderer::init(const RendererDesc& desc)
     bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(desc.width),
                       static_cast<uint16_t>(desc.height));
 
+    uniforms_.init();
+
+    // PostProcessSystem allocates GPU framebuffers that the Noop renderer
+    // cannot create.  Skip in headless mode to avoid bgfx debug assertions.
+    if (!desc.headless)
+    {
+        postProcess_.init(
+            static_cast<uint16_t>(desc.width), static_cast<uint16_t>(desc.height));
+    }
+
     initialized_ = true;
     return true;
 }
@@ -59,6 +71,15 @@ void Renderer::beginFrame()
     if (!initialized_)
     {
         return;
+    }
+
+    // Redirect opaque and transparent passes into the HDR scene framebuffer
+    // so that the post-process chain can read it.  Skip in headless mode
+    // where postProcess_ was not initialised and sceneFb() is invalid.
+    if (!headless_)
+    {
+        bgfx::setViewFrameBuffer(kViewOpaque, postProcess_.resources().sceneFb());
+        bgfx::setViewFrameBuffer(kViewTransparent, postProcess_.resources().sceneFb());
     }
 
     // Touch view 0 to ensure it is submitted even when the frame has no draw calls
@@ -82,6 +103,12 @@ void Renderer::shutdown()
         return;
     }
 
+    if (!headless_)
+    {
+        postProcess_.shutdown();
+    }
+    uniforms_.destroy();
+
     bgfx::shutdown();
     initialized_ = false;
     headless_ = false;
@@ -96,6 +123,11 @@ void Renderer::resize(uint32_t w, uint32_t h)
 
     bgfx::reset(w, h, BGFX_RESET_VSYNC);
     bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(w), static_cast<uint16_t>(h));
+
+    if (!headless_)
+    {
+        postProcess_.resize(static_cast<uint16_t>(w), static_cast<uint16_t>(h));
+    }
 }
 
 bool Renderer::isHeadless() const

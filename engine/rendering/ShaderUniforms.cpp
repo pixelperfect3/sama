@@ -28,8 +28,13 @@ void ShaderUniforms::init()
     u_cascadeSplits = bgfx::createUniform("u_cascadeSplits", bgfx::UniformType::Vec4);
     s_shadowMap = bgfx::createUniform("s_shadowMap", bgfx::UniformType::Sampler);
 
-    // Bloom — Phase 7
+    // Bloom / post-process — Phase 7
     u_bloomParams = bgfx::createUniform("u_bloomParams", bgfx::UniformType::Vec4);
+    u_texelSize = bgfx::createUniform("u_texelSize", bgfx::UniformType::Vec4);
+    s_hdrColor = bgfx::createUniform("s_hdrColor", bgfx::UniformType::Sampler);
+    s_bloomTex = bgfx::createUniform("s_bloomTex", bgfx::UniformType::Sampler);
+    s_bloomPrev = bgfx::createUniform("s_bloomPrev", bgfx::UniformType::Sampler);
+    s_ldrColor = bgfx::createUniform("s_ldrColor", bgfx::UniformType::Sampler);
 
     // SSAO — Phase 8
     u_ssaoKernel = bgfx::createUniform("u_ssaoKernel", bgfx::UniformType::Vec4, 16);
@@ -47,6 +52,7 @@ void ShaderUniforms::init()
     s_irradiance = bgfx::createUniform("s_irradiance", bgfx::UniformType::Sampler);
     s_prefiltered = bgfx::createUniform("s_prefiltered", bgfx::UniformType::Sampler);
     s_brdfLut = bgfx::createUniform("s_brdfLut", bgfx::UniformType::Sampler);
+    u_iblParams = bgfx::createUniform("u_iblParams", bgfx::UniformType::Vec4);
 }
 
 void ShaderUniforms::destroy()
@@ -80,8 +86,13 @@ void ShaderUniforms::destroy()
     safeDestroy(u_cascadeSplits);
     safeDestroy(s_shadowMap);
 
-    // Bloom — Phase 7
+    // Bloom / post-process — Phase 7
     safeDestroy(u_bloomParams);
+    safeDestroy(u_texelSize);
+    safeDestroy(s_hdrColor);
+    safeDestroy(s_bloomTex);
+    safeDestroy(s_bloomPrev);
+    safeDestroy(s_ldrColor);
 
     // SSAO — Phase 8
     safeDestroy(u_ssaoKernel);
@@ -99,6 +110,7 @@ void ShaderUniforms::destroy()
     safeDestroy(s_irradiance);
     safeDestroy(s_prefiltered);
     safeDestroy(s_brdfLut);
+    safeDestroy(u_iblParams);
 }
 
 }  // namespace engine::rendering

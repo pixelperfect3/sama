@@ -111,4 +111,44 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
         });
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — depth-only shadow draw calls.
+// ---------------------------------------------------------------------------
+
+void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
+                                                bgfx::ProgramHandle shadowProgram,
+                                                uint32_t cascadeIndex)
+{
+    if (!bgfx::isValid(shadowProgram))
+        return;
+
+    const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
+    const bgfx::ViewId shadowView = static_cast<bgfx::ViewId>(kViewShadowBase + cascadeIndex);
+
+    auto shadowView_ = reg.view<ShadowVisibleTag, WorldTransformComponent, MeshComponent>();
+
+    shadowView_.each(
+        [&](ecs::EntityID /*entity*/, const ShadowVisibleTag& tag,
+            const WorldTransformComponent& wtc, const MeshComponent& mc)
+        {
+            if (!(tag.cascadeMask & cascadeBit))
+                return;
+
+            const Mesh* mesh = res.getMesh(mc.mesh);
+            if (!mesh || !bgfx::isValid(mesh->positionVbh) || !bgfx::isValid(mesh->ibh))
+                return;
+
+            bgfx::setTransform(&wtc.matrix[0][0]);
+
+            // Stream 0 only — no surface attributes needed for depth-only pass.
+            bgfx::setVertexBuffer(0, mesh->positionVbh);
+            bgfx::setIndexBuffer(mesh->ibh);
+
+            // Depth write + depth test + back-face cull (CCW winding).
+            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW);
+
+            bgfx::submit(shadowView, shadowProgram);
+        });
+}
+
 }  // namespace engine::rendering
