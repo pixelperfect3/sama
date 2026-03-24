@@ -69,6 +69,67 @@ void RenderResources::destroyAll()
     }
     slots_.clear();
     freeList_.clear();
+
+    // Materials carry no GPU handles — just clear the slots.
+    materialSlots_.clear();
+    materialFreeList_.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Material registry
+// ---------------------------------------------------------------------------
+
+uint32_t RenderResources::addMaterial(Material mat)
+{
+    uint32_t index{};
+
+    if (!materialFreeList_.empty())
+    {
+        index = materialFreeList_.back();
+        materialFreeList_.pop_back();
+        materialSlots_[index].material = mat;
+        materialSlots_[index].occupied = true;
+    }
+    else
+    {
+        index = static_cast<uint32_t>(materialSlots_.size());
+        materialSlots_.push_back({mat, true});
+    }
+
+    return toId(index);
+}
+
+const Material* RenderResources::getMaterial(uint32_t id) const
+{
+    if (id == 0)
+        return nullptr;
+
+    const uint32_t index = toIndex(id);
+    if (index >= materialSlots_.size())
+        return nullptr;
+
+    const MaterialSlot& slot = materialSlots_[index];
+    if (!slot.occupied)
+        return nullptr;
+
+    return &slot.material;
+}
+
+void RenderResources::removeMaterial(uint32_t id)
+{
+    if (id == 0)
+        return;
+
+    const uint32_t index = toIndex(id);
+    if (index >= materialSlots_.size())
+        return;
+
+    MaterialSlot& slot = materialSlots_[index];
+    if (!slot.occupied)
+        return;
+
+    slot.occupied = false;
+    materialFreeList_.push_back(index);
 }
 
 }  // namespace engine::rendering

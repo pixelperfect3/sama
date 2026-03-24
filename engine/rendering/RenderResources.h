@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 
 namespace engine::rendering
@@ -53,6 +54,21 @@ public:
     // Called during renderer shutdown.
     void destroyAll();
 
+    // -----------------------------------------------------------------------
+    // Material registry
+    // -----------------------------------------------------------------------
+
+    // Store a Material and return its stable ID (1-based, 0 = invalid).
+    // ID is valid until removeMaterial() is called with it.
+    uint32_t addMaterial(Material mat);
+
+    // Returns a pointer to the Material with the given ID, or nullptr if the
+    // ID is not live.  Pointer is valid until the next add/remove call.
+    [[nodiscard]] const Material* getMaterial(uint32_t id) const;
+
+    // Free the material slot for reuse.  No-op if the ID is not live.
+    void removeMaterial(uint32_t id);
+
 private:
     // -----------------------------------------------------------------------
     // Slot-based free-list allocation.
@@ -70,6 +86,20 @@ private:
 
     std::vector<Slot> slots_;
     std::vector<uint32_t> freeList_;
+
+    // -----------------------------------------------------------------------
+    // Material slots — same free-list pattern as meshes.
+    // Materials carry no GPU handles; they are plain value types.
+    // -----------------------------------------------------------------------
+
+    struct MaterialSlot
+    {
+        Material material;
+        bool occupied = false;
+    };
+
+    std::vector<MaterialSlot> materialSlots_;
+    std::vector<uint32_t> materialFreeList_;
 
     // Convert between external ID (1-based) and internal index (0-based).
     static constexpr uint32_t toIndex(uint32_t id)
