@@ -409,3 +409,63 @@ if(ENABLE_CLANG_TIDY)
         set_target_properties(engine_tests PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
     endif()
 endif()
+
+# --- stb (header-only, for PNG read/write in screenshot tests) ---
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master
+)
+FetchContent_GetProperties(stb)
+if(NOT stb_POPULATED)
+    FetchContent_Populate(stb)
+endif()
+
+# --- engine_screenshot_tests executable ---
+add_executable(engine_screenshot_tests
+    engine/ecs/Registry.cpp
+    tests/screenshot/main.cpp
+    tests/screenshot/ScreenshotFixture.cpp
+    tests/screenshot/GoldenCompare.cpp
+    tests/screenshot/TestSsUnlit.cpp
+    tests/screenshot/TestSsPbr.cpp
+    tests/screenshot/TestSsShadow.cpp
+    tests/screenshot/TestSsInstancing.cpp
+    tests/screenshot/TestSsLighting.cpp
+    tests/screenshot/TestSsPostProcess.cpp
+    tests/screenshot/TestSsIbl.cpp
+    tests/screenshot/TestSsSsao.cpp
+    tests/screenshot/TestSsCsm.cpp
+    tests/screenshot/TestSsUi.cpp
+)
+
+target_link_libraries(engine_screenshot_tests PRIVATE
+    engine
+    engine_rendering
+    glm::glm
+    glfw
+    Catch2::Catch2   # NOT Catch2WithMain — we supply our own main
+)
+
+target_include_directories(engine_screenshot_tests PRIVATE
+    ${stb_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/tests/screenshot
+)
+
+target_compile_definitions(engine_screenshot_tests PRIVATE
+    GLM_FORCE_INTRINSICS
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+    GLM_FORCE_XYZW_ONLY
+    GLM_ENABLE_EXPERIMENTAL
+    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+if(APPLE)
+    target_link_libraries(engine_screenshot_tests PRIVATE
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+endif()

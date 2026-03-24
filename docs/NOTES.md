@@ -147,6 +147,27 @@ All 235 test cases pass (4472 assertions).
 ### Status
 - [x] All 11 rendering phases complete and committed
 
+### Screenshot Tests
+
+**Infrastructure:**
+- `engine_screenshot_tests` — separate binary from `engine_tests`. Requires a real GPU (Metal on macOS, Vulkan on Linux). Headless `engine_tests` remains GPU-free.
+- `tests/screenshot/ScreenshotFixture` — creates a hidden GLFW window (`GLFW_VISIBLE=false`), initializes bgfx with Metal/Vulkan, owns a 320x240 BGRA8 render target and a separate BGRA8 blit/readback texture (following bgfx 30-picking example pattern). After drawing, `captureFrame()` blits RT to readback, pumps `bgfx::frame()` until async readback completes, returns RGBA pixels.
+- `tests/screenshot/GoldenCompare` — loads/saves PNGs via stb_image. Comparison: per-pixel max-channel delta, fails if >1% of pixels differ by more than tolerance=8. On first run or missing golden: saves golden automatically (test passes). Run with `--update-goldens` to overwrite existing goldens.
+- Golden images: `tests/golden/<name>.png` (committed to repo). Path baked in via `ENGINE_SOURCE_DIR` CMake define.
+
+**Running:**
+```bash
+cd build && ./engine_screenshot_tests                     # compare against goldens
+cd build && ./engine_screenshot_tests --update-goldens    # regenerate goldens
+cd build && ./engine_screenshot_tests -# "[screenshot]"   # all screenshot tests
+```
+
+**CI:** Not configured yet (requires GPU runner). Local-only for now.
+
+**Tolerance:** Per-channel max delta <= 8. Loose enough for minor GPU-driver differences across machines.
+
+**Simplification notes:** Shadow (TestSsShadow), SSAO (TestSsSsao), CSM (TestSsCsm), and post-process (TestSsPostProcess) tests render simplified scenes without their respective multi-pass setups. Each still produces a meaningful visible output for golden comparison. Full integration is future work once the fixture supports multi-view and multi-framebuffer pass chains.
+
 ---
 
 ## Physics
