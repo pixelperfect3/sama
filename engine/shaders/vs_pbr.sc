@@ -1,5 +1,5 @@
 $input a_position, a_normal, a_tangent, a_texcoord0
-$output v_worldPos, v_normal, v_tangent, v_bitangent, v_texcoord0
+$output v_worldPos, v_normal, v_tangent, v_bitangent, v_texcoord0, v_viewPos
 
 #include <bgfx_shader.sh>
 
@@ -49,4 +49,7 @@ void main()
     v_bitangent = cross(v_normal, v_tangent) * bitangentSign;
 
     v_texcoord0 = a_texcoord0;
+
+    // View-space position — used by fs_pbr.sc to compute the cluster depth slice.
+    v_viewPos = mul(u_view, worldPos).xyz;
 }
