@@ -113,6 +113,7 @@ void submitFullscreenPass(bgfx::ViewId viewId, bgfx::FrameBufferHandle targetFb,
 bool PostProcessSystem::init(uint16_t w, uint16_t h)
 {
     resources_.validate(w, h, /*downsampleSteps=*/5);
+    ssaoSystem_.init(w, h);
 
     // -----------------------------------------------------------------
     // Build the fullscreen triangle vertex buffer (clip-space positions).
@@ -162,6 +163,8 @@ void PostProcessSystem::shutdown()
     safeDestroyProgram(tonemapProgram_);
     safeDestroyProgram(fxaaProgram_);
 
+    ssaoSystem_.shutdown();
+
     if (bgfx::isValid(fsTriVb_))
     {
         bgfx::destroy(fsTriVb_);
@@ -174,6 +177,7 @@ void PostProcessSystem::shutdown()
 void PostProcessSystem::resize(uint16_t w, uint16_t h)
 {
     resources_.validate(w, h, resources_.steps());
+    ssaoSystem_.init(w, h);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +191,16 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
     const uint16_t w = resources_.width();
     const uint16_t h = resources_.height();
     const uint8_t steps = resources_.steps();
+
+    // ------------------------------------------------------------------
+    // SSAO pass (optional) — runs first, before bloom, using the scene depth.
+    // Writes occlusion to ssaoSystem_.ssaoMap(); the PBR shader samples this.
+    // ------------------------------------------------------------------
+    if (settings.ssao.enabled)
+    {
+        ssaoSystem_.submit(settings.ssao, uniforms, resources_.sceneDepth(), viewId, fsTriVb_);
+        ++viewId;
+    }
 
     // Bloom params reused across multiple passes — set once per draw call below.
     const float bloomParamsData[4] = {

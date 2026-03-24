@@ -8,6 +8,7 @@
 #include "engine/rendering/RenderSettings.h"
 #include "engine/rendering/ShaderUniforms.h"
 #include "engine/rendering/ViewIds.h"
+#include "engine/rendering/systems/SsaoSystem.h"
 
 namespace engine::rendering
 {
@@ -56,13 +57,21 @@ public:
 
     // Submit all post-process passes.
     // firstViewId is typically kViewPostProcessBase.
+    // SSAO (if settings.ssao.enabled) runs on firstViewId; bloom and tonemap
+    // follow on subsequent view IDs.
     // Returns the next available view ID after all submitted passes.
-    bgfx::ViewId submit(const PostProcessSettings& settings,
-                        const ShaderUniforms& uniforms,
+    bgfx::ViewId submit(const PostProcessSettings& settings, const ShaderUniforms& uniforms,
                         bgfx::ViewId firstViewId = kViewPostProcessBase);
+
+    // Read-only access to the SSAO sub-system (e.g. to bind ssaoMap to PBR).
+    const SsaoSystem& ssaoSystem() const
+    {
+        return ssaoSystem_;
+    }
 
 private:
     PostProcessResources resources_;
+    SsaoSystem ssaoSystem_;
 
     // Fullscreen triangle vertex buffer (3 vertices, clip-space positions).
     bgfx::VertexBufferHandle fsTriVb_ = BGFX_INVALID_HANDLE;

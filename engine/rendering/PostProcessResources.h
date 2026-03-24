@@ -54,6 +54,13 @@ public:
         return hdrColor_;
     }
 
+    // Scene depth buffer (D24, packed with hdrColor_ in sceneFb_).
+    // Used by the SSAO pass to reconstruct view-space positions.
+    bgfx::TextureHandle sceneDepth() const
+    {
+        return sceneDepth_;
+    }
+
     // Framebuffer that combines hdrColor_ + sceneDepth_.
     bgfx::FrameBufferHandle sceneFb() const
     {
