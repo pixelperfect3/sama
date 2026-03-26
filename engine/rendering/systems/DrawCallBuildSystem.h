@@ -19,9 +19,13 @@ namespace engine::rendering
 
 struct PbrFrameParams
 {
-    const float*        lightData;    // 8 floats: u_dirLight[2]  {dir.xyz,0} + {col*intensity,0}
-    const float*        shadowMatrix; // 16 floats: u_shadowMatrix[0]  world → shadow UV
+    const float* lightData;           // 8 floats: u_dirLight[2]  {dir.xyz,0} + {col*intensity,0}
+    const float* shadowMatrix;        // 16 floats: u_shadowMatrix[0]  world → shadow UV
     bgfx::TextureHandle shadowAtlas;  // s_shadowMap slot 5; BGFX_INVALID_HANDLE = no shadows
+    uint16_t viewportW = 0;           // screen width  — drives u_lightParams/u_frameParams
+    uint16_t viewportH = 0;           // screen height — drives u_lightParams/u_frameParams
+    float nearPlane = 0.05f;          // camera near plane (world units)
+    float farPlane = 100.0f;          // camera far plane  (world units)
 };
 
 // ---------------------------------------------------------------------------

@@ -124,6 +124,24 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
         return;
 
     bgfx::TextureHandle whiteTex = res.whiteTexture();
+    bgfx::TextureHandle whiteCubeTex = res.whiteCubeTexture();
+
+    // Frame-level uniforms — must be re-uploaded before every submit() because
+    // bgfx resets all per-draw state after each submit().
+    const float frameW = static_cast<float>(frame.viewportW);
+    const float frameH = static_cast<float>(frame.viewportH);
+
+    // u_frameParams[0] = {viewportW, viewportH, near, far}
+    // u_frameParams[1] = {time, dt, 0, 0} — unused here, set to 0
+    const float frameParamsData[8] = {frameW, frameH, frame.nearPlane, frame.farPlane, 0.0f, 0.0f,
+                                      0.0f,   0.0f};
+
+    // u_lightParams = {numLights, screenW, screenH, 0}
+    // numLights=0 disables the clustered loop; screenW/H prevent tile div-by-zero.
+    const float lightParamsData[4] = {0.0f, frameW, frameH, 0.0f};
+
+    // u_iblParams = {maxMipLevels, iblEnabled=0, 0, 0} — IBL disabled, uses flat ambient.
+    const float iblParamsData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     auto visibleView =
         reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
@@ -149,15 +167,30 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             bgfx::setUniform(uniforms.u_material, materialData, 2);
 
             // Per-draw: directional light + shadow matrix
-            // bgfx resets all state after submit(), so these must be re-set each draw.
             bgfx::setUniform(uniforms.u_dirLight, frame.lightData, 2);
             bgfx::setUniform(uniforms.u_shadowMatrix, frame.shadowMatrix, 4);
 
-            // Per-draw: textures
+            // Per-draw: frame / cluster / IBL uniforms
+            bgfx::setUniform(uniforms.u_frameParams, frameParamsData, 2);
+            bgfx::setUniform(uniforms.u_lightParams, lightParamsData);
+            bgfx::setUniform(uniforms.u_iblParams, iblParamsData);
+
+            // Per-draw: bind all texture slots declared in fs_pbr.sc.
+            // Slots without real data use whiteTex/whiteCubeTex as safe defaults
+            // so Metal validation never sees a nil texture argument.
             bgfx::setTexture(0, uniforms.s_albedo, whiteTex);
             bgfx::setTexture(2, uniforms.s_orm, whiteTex);
+            bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
+            bgfx::setTexture(12, uniforms.s_lightData, whiteTex);
+            bgfx::setTexture(13, uniforms.s_lightGrid, whiteTex);
+            bgfx::setTexture(14, uniforms.s_lightIndex, whiteTex);
             if (bgfx::isValid(frame.shadowAtlas))
                 bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+            if (bgfx::isValid(whiteCubeTex))
+            {
+                bgfx::setTexture(6, uniforms.s_irradiance, whiteCubeTex);
+                bgfx::setTexture(7, uniforms.s_prefiltered, whiteCubeTex);
+            }
 
             bgfx::setTransform(&wtc.matrix[0][0]);
             bgfx::setVertexBuffer(0, mesh->positionVbh);

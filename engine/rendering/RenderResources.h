@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bgfx/bgfx.h>
+
 #include <cstdint>
 #include <vector>
 
@@ -62,8 +63,25 @@ public:
     // for its lifetime.  destroyAll() does not destroy it.
     // -----------------------------------------------------------------------
 
-    void setWhiteTexture(bgfx::TextureHandle h) { whiteTexture_ = h; }
-    [[nodiscard]] bgfx::TextureHandle whiteTexture() const { return whiteTexture_; }
+    void setWhiteTexture(bgfx::TextureHandle h)
+    {
+        whiteTexture_ = h;
+    }
+    [[nodiscard]] bgfx::TextureHandle whiteTexture() const
+    {
+        return whiteTexture_;
+    }
+
+    // 1×1 white cube texture — fallback for unbound IBL cube samplers (slots 6, 7).
+    // The handle is NOT owned by RenderResources; caller is responsible for its lifetime.
+    void setWhiteCubeTexture(bgfx::TextureHandle h)
+    {
+        whiteCubeTexture_ = h;
+    }
+    [[nodiscard]] bgfx::TextureHandle whiteCubeTexture() const
+    {
+        return whiteCubeTexture_;
+    }
 
     // -----------------------------------------------------------------------
     // Material registry
@@ -96,6 +114,7 @@ private:
     };
 
     bgfx::TextureHandle whiteTexture_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle whiteCubeTexture_ = BGFX_INVALID_HANDLE;
 
     std::vector<Slot> slots_;
     std::vector<uint32_t> freeList_;

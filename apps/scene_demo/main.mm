@@ -204,6 +204,14 @@ int main()
                               bgfx::copy(kWhite, sizeof(kWhite)));
     res.setWhiteTexture(whiteTex);
 
+    uint8_t cubeFaces[6 * 4];
+    for (int i = 0; i < 6 * 4; ++i)
+        cubeFaces[i] = 255;
+    bgfx::TextureHandle whiteCubeTex =
+        bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                                bgfx::copy(cubeFaces, sizeof(cubeFaces)));
+    res.setWhiteCubeTexture(whiteCubeTex);
+
     ShadowRenderer shadow;
     {
         ShadowDesc sd;
@@ -359,9 +367,7 @@ int main()
 
         const glm::mat4 shadowMat = shadow.shadowMatrix(0);
         const PbrFrameParams frame{
-            lightData,
-            glm::value_ptr(shadowMat),
-            shadow.atlasTexture(),
+            lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), W, H, 0.1f, 200.f,
         };
         drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
 
@@ -402,6 +408,10 @@ int main()
         bgfx::destroy(shadowProg);
     if (bgfx::isValid(pbrProg))
         bgfx::destroy(pbrProg);
+    if (bgfx::isValid(whiteTex))
+        bgfx::destroy(whiteTex);
+    if (bgfx::isValid(whiteCubeTex))
+        bgfx::destroy(whiteCubeTex);
     res.destroyAll();
 
     renderer.endFrame();  // flush pending destroy commands
