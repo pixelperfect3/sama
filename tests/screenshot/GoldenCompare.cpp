@@ -1,5 +1,5 @@
-// STB implementations — define here, not in a separate file
-#define STB_IMAGE_IMPLEMENTATION
+// STB_IMAGE_IMPLEMENTATION is provided by engine_assets (TextureLoader.cpp).
+// STB_IMAGE_WRITE_IMPLEMENTATION is defined here — only needed in this file.
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "GoldenCompare.h"
 

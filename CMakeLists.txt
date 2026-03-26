@@ -455,6 +455,23 @@ if(ENABLE_CLANG_TIDY)
     endif()
 endif()
 
+# --- DamagedHelmet.glb — download once at configure time ---
+set(HELMET_GLB "${CMAKE_SOURCE_DIR}/assets/DamagedHelmet.glb")
+if(NOT EXISTS "${HELMET_GLB}")
+    message(STATUS "Downloading DamagedHelmet.glb...")
+    file(DOWNLOAD
+        "https://github.com/KhronosGroup/glTF-Sample-Assets/raw/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
+        "${HELMET_GLB}"
+        SHOW_PROGRESS
+        STATUS HELMET_DL_STATUS
+    )
+    list(GET HELMET_DL_STATUS 0 HELMET_DL_CODE)
+    if(NOT HELMET_DL_CODE EQUAL 0)
+        message(WARNING "DamagedHelmet.glb download failed — helmet_demo and helmet screenshot test will not work.")
+        set(HELMET_GLB "")
+    endif()
+endif()
+
 # --- engine_screenshot_tests executable ---
 add_executable(engine_screenshot_tests
     tests/screenshot/main.cpp
@@ -470,10 +487,12 @@ add_executable(engine_screenshot_tests
     tests/screenshot/TestSsSsao.cpp
     tests/screenshot/TestSsCsm.cpp
     tests/screenshot/TestSsUi.cpp
+    tests/screenshot/TestSsHelmet.cpp
 )
 
 target_link_libraries(engine_screenshot_tests PRIVATE
     engine
+    engine_assets
     engine_rendering
     glm::glm
     glfw
@@ -556,6 +575,40 @@ target_link_libraries(engine_input_tests PRIVATE
     engine_input_glfw
     Catch2::Catch2WithMain
 )
+
+# --- helmet_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(helmet_demo apps/helmet_demo/main.mm)
+
+    target_include_directories(helmet_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(helmet_demo PRIVATE
+        engine_assets
+        engine_rendering
+        engine_input_glfw
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(helmet_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+
+    # Copy the GLB next to the binary so StdFileSystem(".")/load("DamagedHelmet.glb") finds it.
+    if(HELMET_GLB)
+        add_custom_command(TARGET helmet_demo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${HELMET_GLB}"
+                "$<TARGET_FILE_DIR:helmet_demo>/DamagedHelmet.glb"
+            COMMENT "Copying DamagedHelmet.glb to build directory"
+        )
+    endif()
+endif()
 
 # --- scene_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")

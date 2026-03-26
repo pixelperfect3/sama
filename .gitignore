@@ -31,3 +31,6 @@ Makefile
 # clang tools
 compile_commands.json
 .clang-cache/
+
+# Downloaded binary assets (fetched at CMake configure time via file(DOWNLOAD))
+assets/DamagedHelmet.glb
