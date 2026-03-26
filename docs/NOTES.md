@@ -86,6 +86,15 @@ Tracks all decisions and progress made during development.
   - Chosen over IGL (Meta): bgfx has stronger game engine track record, more documentation/examples, includes shader tooling (shaderc)
   - IGL noted as stronger for Android long-tail device fragmentation — revisit if that becomes a pain point
   - Chosen over custom HAL: binary size savings (~1–2MB) do not justify months of low-level Vulkan/Metal boilerplate
+- **glTF parser: cgltf**
+  - Single C header (~7,500 lines), MIT license — smallest viable option
+  - Parses glTF 2.0 JSON and binary GLB; handles meshes, materials, textures, scene node trees
+  - Parser only — no image loading, no tangent generation. Those are handled separately by stb_image (already in the project) and mikktspace respectively. This keeps each piece independently replaceable.
+  - **Rejected: tinygltf** — bundles nlohmann/json internally, which was already rejected for binary size. The ergonomics advantage doesn't justify the 3× size penalty.
+  - **Rejected: fastgltf** — strongest technical option (simdjson, C++20, cleanest API) but is a multi-file CMake dependency that brings in simdjson; size overhead is not justified on mobile at this stage. Revisit if cgltf parse performance becomes a bottleneck.
+  - **Rejected: assimp** — ~10 MB, ruled out by the same logic as FMOD. Multi-format support is not needed yet.
+  - cgltf is used internally in bgfx's own examples, confirming it is a known quantity in this stack.
+
 - **Ray tracing: tabled as long-term**
   - bgfx does not expose RT APIs (no DXR, no VK_KHR_ray_tracing_pipeline, no Metal RT)
   - Adding RT to bgfx would require forking it: new resource types (BLAS, TLAS, shader binding tables), new shader stages (raygen, miss, hit), shaderc changes, and separate Metal/Vulkan backend implementations — not a clean fit into bgfx's abstraction model
