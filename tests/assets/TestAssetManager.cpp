@@ -23,7 +23,6 @@ using namespace engine::threading;
 class FakeFileSystem : public IFileSystem
 {
 public:
-    // Register a path → content mapping.
     void put(std::string path, std::vector<uint8_t> data)
     {
         files_[std::move(path)] = std::move(data);
@@ -44,7 +43,6 @@ public:
 
     [[nodiscard]] std::string resolve(std::string_view base, std::string_view relative) override
     {
-        // Trivial join for test purposes.
         return std::string(base) + "/" + std::string(relative);
     }
 
@@ -53,11 +51,15 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Fake IAssetLoader — returns a fixed CpuTextureData (1×1 RGBA8 pixel).
-// Uses a recognisable extension so findLoader() matches.
+// FakeEmptyLoader — returns an empty CpuTextureData (width=0, height=0).
+//
+// AssetManager::upload() detects pixels.empty() and marks the asset Failed
+// without calling any bgfx API, making this safe to use in tests that run
+// without a bgfx context. Use this whenever a loader must be registered but
+// a successful GPU upload is not the goal of the test.
 // ---------------------------------------------------------------------------
 
-class FakeTextureLoader : public IAssetLoader
+class FakeEmptyLoader : public IAssetLoader
 {
 public:
     [[nodiscard]] std::span<const std::string_view> extensions() const override
@@ -66,19 +68,15 @@ public:
         return kExts;
     }
 
-    [[nodiscard]] CpuAssetData decode(std::span<const uint8_t> /*bytes*/, std::string_view /*path*/,
-                                      IFileSystem& /*fs*/) override
+    [[nodiscard]] CpuAssetData decode(std::span<const uint8_t>, std::string_view,
+                                      IFileSystem&) override
     {
-        CpuTextureData tex;
-        tex.pixels = {255, 0, 128, 255};  // one RGBA8 pixel
-        tex.width = 1;
-        tex.height = 1;
-        return tex;
+        return CpuTextureData{};  // empty — upload() rejects without touching bgfx
     }
 };
 
 // ---------------------------------------------------------------------------
-// Fake loader that always throws.
+// ThrowingLoader — always throws from decode(), producing a Failed asset.
 // ---------------------------------------------------------------------------
 
 class ThrowingLoader : public IAssetLoader
@@ -98,16 +96,22 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// drainUntilDone — spin calling processUploads() until the handle leaves
+// Pending/Loading, or until the deadline (max ~2 s).
+//
+// Unlike a bare state poll, this drives the main-thread upload drain so that
+// worker errors pushed to the upload queue are actually processed.
+// bgfx is not initialised in tests, so only error paths (Failed) are safe
+// to drain; callers must ensure no loader returns valid pixel data.
 // ---------------------------------------------------------------------------
 
-// Spin-wait until the handle leaves Pending/Loading state (max ~2 s).
 template <typename T>
-static void waitUntilUploading(AssetManager& am, AssetHandle<T> handle)
+static void drainUntilDone(AssetManager& am, AssetHandle<T> handle)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (std::chrono::steady_clock::now() < deadline)
     {
+        am.processUploads();
         const auto s = am.state(handle);
         if (s != AssetState::Pending && s != AssetState::Loading)
             return;
@@ -127,7 +131,7 @@ TEST_CASE("AssetManager — load unknown extension → immediately Failed", "[as
 
     auto handle = am.load<Texture>("rock.unknownext");
 
-    // No loader registered — should be Failed synchronously.
+    // No loader registered — fails synchronously before any worker is launched.
     CHECK(am.state(handle) == AssetState::Failed);
     CHECK_FALSE(am.error(handle).empty());
 }
@@ -137,12 +141,12 @@ TEST_CASE("AssetManager — load missing file → Failed after decode attempt", 
     ThreadPool pool(1);
     FakeFileSystem fs;  // no files registered
     AssetManager am(pool, fs);
-    am.registerLoader(std::make_unique<FakeTextureLoader>());
+    am.registerLoader(std::make_unique<FakeEmptyLoader>());
 
     auto handle = am.load<Texture>("missing.faketex");
 
-    waitUntilUploading(am, handle);
-    // File not found → worker pushes error.
+    // Worker sees empty read() → pushes error → processUploads() sets Failed.
+    drainUntilDone(am, handle);
     CHECK(am.state(handle) == AssetState::Failed);
     CHECK_FALSE(am.error(handle).empty());
 }
@@ -152,15 +156,18 @@ TEST_CASE("AssetManager — get() returns nullptr before Ready", "[assets][manag
     ThreadPool pool(1);
     FakeFileSystem fs;
     AssetManager am(pool, fs);
-    am.registerLoader(std::make_unique<FakeTextureLoader>());
+    am.registerLoader(std::make_unique<FakeEmptyLoader>());
 
-    // Register a file so the worker won't fail on read.
+    // File exists so the worker proceeds to decode; FakeEmptyLoader returns
+    // empty pixels so upload() fails without calling any bgfx API.
     fs.put("tex.faketex", {0x00});
     auto handle = am.load<Texture>("tex.faketex");
 
-    // Asset is loading asynchronously — get() must return nullptr until Ready.
-    // (It reaches Uploading, not Ready, without bgfx — that's acceptable.)
+    // Immediately after load() the asset is not yet Ready — get() must return nullptr.
     CHECK(am.get(handle) == nullptr);
+
+    // Drain so the destructor has nothing left to process.
+    drainUntilDone(am, handle);
 }
 
 TEST_CASE("AssetManager — decode exception → Failed state", "[assets][manager]")
@@ -173,7 +180,7 @@ TEST_CASE("AssetManager — decode exception → Failed state", "[assets][manage
     fs.put("bad.throwme", {0x01});
     auto handle = am.load<Texture>("bad.throwme");
 
-    waitUntilUploading(am, handle);
+    drainUntilDone(am, handle);
     CHECK(am.state(handle) == AssetState::Failed);
     CHECK_FALSE(am.error(handle).empty());
 }
@@ -212,20 +219,21 @@ TEST_CASE("AssetManager — release() nullifies the handle", "[assets][manager]"
     CHECK_FALSE(h.isValid());
 }
 
-TEST_CASE("AssetManager — duplicate load() returns same slot with incremented refcount",
-          "[assets][manager]")
+TEST_CASE("AssetManager — duplicate load() returns same slot", "[assets][manager]")
 {
     ThreadPool pool(1);
     FakeFileSystem fs;
     AssetManager am(pool, fs);
-    am.registerLoader(std::make_unique<FakeTextureLoader>());
+    am.registerLoader(std::make_unique<FakeEmptyLoader>());
     fs.put("dup.faketex", {0x00});
 
     auto h1 = am.load<Texture>("dup.faketex");
     auto h2 = am.load<Texture>("dup.faketex");
 
-    // Same slot — same handle value.
     CHECK(h1 == h2);
+
+    // Drain before destruction (FakeEmptyLoader → Failed, no bgfx).
+    drainUntilDone(am, h1);
 }
 
 TEST_CASE("AssetManager — state() on stale handle returns Failed", "[assets][manager]")
@@ -239,7 +247,7 @@ TEST_CASE("AssetManager — state() on stale handle returns Failed", "[assets][m
     const uint32_t gen = h.generation;
 
     am.release(h);
-    am.processUploads();  // frees the slot, bumps generation on reuse
+    am.processUploads();  // frees the slot
 
     // Manufacture a stale handle pointing to the old (idx, gen) pair.
     AssetHandle<Texture> stale{idx, gen};
@@ -247,17 +255,18 @@ TEST_CASE("AssetManager — state() on stale handle returns Failed", "[assets][m
     CHECK(am.get(stale) == nullptr);
 }
 
-TEST_CASE("AssetManager — error() returns empty string for valid non-failed handle",
-          "[assets][manager]")
+TEST_CASE("AssetManager — error() is empty for non-failed handle", "[assets][manager]")
 {
     ThreadPool pool(1);
     FakeFileSystem fs;
     AssetManager am(pool, fs);
-    am.registerLoader(std::make_unique<FakeTextureLoader>());
+    am.registerLoader(std::make_unique<FakeEmptyLoader>());
     fs.put("ok.faketex", {0x00});
 
     auto h = am.load<Texture>("ok.faketex");
-    // May be Loading or Uploading, not Failed.
-    // error() should be empty regardless.
+    // Immediately after load(), state is Loading — error() must be empty.
     CHECK(am.error(h).empty());
+
+    // Drain before destruction.
+    drainUntilDone(am, h);
 }
