@@ -42,8 +42,11 @@ TEST_CASE("screenshot: clustered lights scene", "[screenshot]")
                         0.0f, 0.0f, 0.0f, 0.0f};  // metallic + emissive
     bgfx::setUniform(uniforms.u_material, matData, 2);
 
-    // Warm directional light from upper-left (simulating two colored lights)
-    glm::vec3 lightDir = glm::normalize(glm::vec3(-1.0f, -1.0f, -0.5f));
+    // Warm directional light from upper-right-front (toward surface from light).
+    // u_dirLight[0].xyz must point FROM the surface TOWARD the light (see fs_pbr.sc).
+    // Using (1,1,0.5) lights the three camera-facing faces of the unit cube:
+    //   front (+Z) NdotL≈0.41, top (+Y) NdotL≈0.82, right (+X) NdotL≈0.41.
+    glm::vec3 lightDir = glm::normalize(glm::vec3(1.0f, 1.0f, 0.5f));
     float lightData[8] = {lightDir.x, lightDir.y, lightDir.z, 0.0f,
                           1.0f,       0.9f,       0.8f,       0.0f};  // warm white
     bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
