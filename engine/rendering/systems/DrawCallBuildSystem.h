@@ -10,6 +10,21 @@ namespace engine::rendering
 {
 
 // ---------------------------------------------------------------------------
+// PbrFrameParams — frame-level data for the PBR + shadow draw pass.
+//
+// bgfx resets all per-draw state (uniforms, textures) after every submit(),
+// so these values must be re-uploaded before each draw call alongside
+// the per-object u_material.
+// ---------------------------------------------------------------------------
+
+struct PbrFrameParams
+{
+    const float*        lightData;    // 8 floats: u_dirLight[2]  {dir.xyz,0} + {col*intensity,0}
+    const float*        shadowMatrix; // 16 floats: u_shadowMatrix[0]  world → shadow UV
+    bgfx::TextureHandle shadowAtlas;  // s_shadowMap slot 5; BGFX_INVALID_HANDLE = no shadows
+};
+
+// ---------------------------------------------------------------------------
 // DrawCallBuildSystem — single-threaded draw call submission.
 //
 // Phase 2 (unlit):
@@ -17,43 +32,39 @@ namespace engine::rendering
 //   Reads:  VisibleTag, WorldTransformComponent, MeshComponent
 //   Submits draw calls to bgfx view kViewOpaque.
 //
-// Phase 3 (PBR):
-//   update(reg, res, program, uniforms)
-//   Also reads MaterialComponent and fetches Material from RenderResources.
-//   Uploads per-draw material uniforms (u_material, u_dirLight) via the
-//   provided ShaderUniforms.  DirectionalLightComponent is NOT consumed here
-//   — the caller is responsible for uploading u_dirLight before calling update.
+// Phase 3 (PBR, no shadows):
+//   update(reg, res, program, uniforms*)
+//   Also reads MaterialComponent; uploads per-draw u_material.
+//   Frame-level uniforms (u_dirLight) must be set by the caller.
 //
-// For each visible entity:
-//   1. Fetch Mesh from RenderResources.
-//   2. Set the world-space transform: bgfx::setTransform(mat4ptr).
-//   3. Bind stream 0 (positions):  bgfx::setVertexBuffer(0, positionVbh).
-//   4. Bind stream 1 (surface):    bgfx::setVertexBuffer(1, surfaceVbh) if valid.
-//   5. Bind index buffer:          bgfx::setIndexBuffer(ibh).
-//   6. Set default state:          bgfx::setState(BGFX_STATE_DEFAULT).
-//   7. Submit to kViewOpaque:      bgfx::submit(kViewOpaque, program).
+// Phase 3 (PBR + directional shadow):
+//   update(reg, res, program, uniforms, PbrFrameParams)
+//   Sets u_material, u_dirLight, u_shadowMatrix, s_albedo, s_orm, s_shadowMap
+//   before each submit — no caller pre-setup required.
 //
-// Phase 4 will replace single-thread submission with per-thread bgfx encoders.
+// Phase 4 (shadows):
+//   submitShadowDrawCalls(reg, res, shadowProgram, cascadeIndex)
+//   Depth-only pass: stream 0 only, no material, CCW cull.
 // ---------------------------------------------------------------------------
 
 class DrawCallBuildSystem
 {
 public:
-    // Phase 2 — unlit, no material uniforms.
+    // Phase 2 — unlit.
     void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program);
 
-    // Phase 3 — PBR, uploads per-draw u_material uniform.
-    // uniforms must not be nullptr; the caller owns the ShaderUniforms lifetime.
-    // The directional light uniform (u_dirLight) must be set by the caller
-    // before this call because it is frame-level, not per-draw.
+    // Phase 3 — PBR, per-draw u_material only.
+    // Caller must set frame-level uniforms (u_dirLight) before this call.
     void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program,
                 ShaderUniforms* uniforms);
 
+    // Phase 3 — PBR + directional shadow.
+    // Sets all required per-draw state: material, light, shadow matrix, and
+    // all texture slots.  No caller pre-setup needed.
+    void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program,
+                const ShaderUniforms& uniforms, const PbrFrameParams& frame);
+
     // Phase 4 — depth-only shadow pass.
-    // For each entity with ShadowVisibleTag where cascadeMask & (1 << cascadeIndex):
-    //   - Bind only Stream 0 (positionVbh) — no Stream 1, no material.
-    //   - Set depth-write + depth-test state, CCW culling.
-    //   - Submit to view kViewShadowBase + cascadeIndex.
     void submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
                                bgfx::ProgramHandle shadowProgram, uint32_t cascadeIndex);
 };

@@ -112,6 +112,64 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3 — PBR + directional shadow.
+// Sets all per-draw state: material, light, shadow matrix, all textures.
+// ---------------------------------------------------------------------------
+
+void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
+                                 bgfx::ProgramHandle program, const ShaderUniforms& uniforms,
+                                 const PbrFrameParams& frame)
+{
+    if (!bgfx::isValid(program))
+        return;
+
+    bgfx::TextureHandle whiteTex = res.whiteTexture();
+
+    auto visibleView =
+        reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
+
+    visibleView.each(
+        [&](ecs::EntityID /*entity*/, const VisibleTag& /*tag*/, const WorldTransformComponent& wtc,
+            const MeshComponent& mc, const MaterialComponent& matc)
+        {
+            const Mesh* mesh = res.getMesh(mc.mesh);
+            if (!mesh || !mesh->isValid())
+                return;
+
+            const Material* mat = res.getMaterial(matc.material);
+            Material defaultMat{};
+            if (mat == nullptr)
+                mat = &defaultMat;
+
+            // Per-draw: material
+            float materialData[8] = {
+                mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
+                mat->metallic, mat->emissiveScale, 0.0f,          0.0f,
+            };
+            bgfx::setUniform(uniforms.u_material, materialData, 2);
+
+            // Per-draw: directional light + shadow matrix
+            // bgfx resets all state after submit(), so these must be re-set each draw.
+            bgfx::setUniform(uniforms.u_dirLight, frame.lightData, 2);
+            bgfx::setUniform(uniforms.u_shadowMatrix, frame.shadowMatrix, 4);
+
+            // Per-draw: textures
+            bgfx::setTexture(0, uniforms.s_albedo, whiteTex);
+            bgfx::setTexture(2, uniforms.s_orm, whiteTex);
+            if (bgfx::isValid(frame.shadowAtlas))
+                bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+
+            bgfx::setTransform(&wtc.matrix[0][0]);
+            bgfx::setVertexBuffer(0, mesh->positionVbh);
+            if (bgfx::isValid(mesh->surfaceVbh))
+                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+            bgfx::setIndexBuffer(mesh->ibh);
+            bgfx::setState(BGFX_STATE_DEFAULT);
+            bgfx::submit(kViewOpaque, program);
+        });
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4 — depth-only shadow draw calls.
 // ---------------------------------------------------------------------------
 
