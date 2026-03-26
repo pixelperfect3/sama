@@ -428,9 +428,12 @@ add_executable(engine_tests
     tests/rendering/TestLighting.cpp
     tests/rendering/TestPostProcess.cpp
     tests/rendering/TestSsao.cpp
+    tests/assets/TestAssetHandle.cpp
+    tests/assets/TestAssetManager.cpp
+    tests/assets/TestStdFileSystem.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_rendering glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_assets engine_rendering glm::glm Catch2::Catch2WithMain)
 
 # GLM compile flags — set here so they take effect before any GLM header is included,
 # regardless of include order inside translation units.
