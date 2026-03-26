@@ -43,8 +43,11 @@ TEST_CASE("screenshot: postprocess scene", "[screenshot]")
                         0.0f, 1.0f, 0.0f, 0.0f};  // non-metallic, emissiveScale=1
     bgfx::setUniform(uniforms.u_material, matData, 2);
 
-    // Strong directional light
-    glm::vec3 lightDir = glm::normalize(glm::vec3(0.0f, -1.0f, -1.0f));
+    // Strong directional light from above-right-front.
+    // u_dirLight[0].xyz must point FROM the surface TOWARD the light (see fs_pbr.sc).
+    // normalize(0.5,1,0.5) lights front (+Z, NdotL≈0.41) and top (+Y, NdotL≈0.82),
+    // adding visible shading variation on top of the emissive contribution.
+    glm::vec3 lightDir = glm::normalize(glm::vec3(0.5f, 1.0f, 0.5f));
     float lightData[8] = {lightDir.x, lightDir.y, lightDir.z, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f};
     bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
 
