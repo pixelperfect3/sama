@@ -307,10 +307,15 @@ compile_shader_pp(
 
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
+# --- engine_ecs static library ---
+add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
+target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR})
+
 # --- engine_rendering static library ---
 # Wraps bgfx init/shutdown/frame and the GLFW window backend.
 add_library(engine_rendering STATIC
     engine/rendering/Renderer.cpp
+    engine/rendering/RenderPass.cpp
     engine/rendering/GpuFeatures.cpp
     engine/rendering/RenderSettings.cpp
     engine/rendering/MeshBuilder.cpp
@@ -340,7 +345,7 @@ target_include_directories(engine_rendering PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
-target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm)
+target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm engine_ecs)
 
 # Same GLM flags as engine_tests to ensure consistent behaviour when rendering
 # code includes GLM headers directly.
@@ -363,7 +368,6 @@ endif()
 
 # --- engine_tests executable ---
 add_executable(engine_tests
-    engine/ecs/Registry.cpp
     engine/threading/ThreadPool.cpp
     tests/ecs/TestEntity.cpp
     tests/ecs/TestSparseSet.cpp
@@ -423,7 +427,6 @@ endif()
 
 # --- engine_screenshot_tests executable ---
 add_executable(engine_screenshot_tests
-    engine/ecs/Registry.cpp
     tests/screenshot/main.cpp
     tests/screenshot/ScreenshotFixture.cpp
     tests/screenshot/GoldenCompare.cpp
@@ -467,5 +470,82 @@ if(APPLE)
         "-framework QuartzCore"
         "-framework Metal"
         "-framework MetalKit"
+    )
+endif()
+
+# --- engine_input static library ---
+add_library(engine_input STATIC
+    engine/input/ActionMap.cpp
+    engine/input/InputState.cpp
+    engine/input/InputSystem.cpp
+)
+
+target_include_directories(engine_input PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_input PUBLIC engine)
+
+# Desktop GLFW backend
+add_library(engine_input_glfw STATIC
+    engine/input/desktop/GlfwInputBackend.cpp
+)
+target_include_directories(engine_input_glfw PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_input_glfw PUBLIC engine_input glfw)
+
+# iOS backend — .mm requires Objective-C++ compilation; only built on iOS.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_library(engine_input_ios STATIC
+        engine/input/ios/IosInputBackend.mm
+    )
+    target_include_directories(engine_input_ios PUBLIC ${CMAKE_SOURCE_DIR})
+    target_link_libraries(engine_input_ios PUBLIC engine_input)
+    target_link_libraries(engine_input_ios PUBLIC "-framework UIKit")
+endif()
+
+# Android backend — only built when targeting Android.
+if(ANDROID)
+    add_library(engine_input_android STATIC
+        engine/input/android/AndroidInputBackend.cpp
+    )
+    target_include_directories(engine_input_android PUBLIC ${CMAKE_SOURCE_DIR})
+    target_link_libraries(engine_input_android PUBLIC engine_input android)
+endif()
+
+# --- engine_input_tests executable ---
+add_executable(engine_input_tests
+    tests/input/TestActionMap.cpp
+    tests/input/TestInputState.cpp
+    tests/input/TestInputSystemTransitions.cpp
+    tests/input/TestAxisResolution.cpp
+    tests/input/TestMouseDelta.cpp
+    tests/input/TestTouchInput.cpp
+    tests/input/integration/TestGlfwBackend.cpp
+)
+
+target_include_directories(engine_input_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_input_tests PRIVATE
+    engine_input
+    engine_input_glfw
+    Catch2::Catch2WithMain
+)
+
+# --- scene_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(scene_demo apps/scene_demo/main.mm)
+
+    target_include_directories(scene_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(scene_demo PRIVATE
+        engine_rendering
+        engine_input_glfw
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(scene_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
     )
 endif()
