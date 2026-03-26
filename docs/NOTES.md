@@ -180,6 +180,24 @@ Shadow (TestSsShadow) is **not simplified** — it runs a real two-pass setup: a
 
 - **`u_dirLight[0].xyz` direction convention:** The PBR shader treats this as pointing **from the surface toward the light** (not the direction light travels). Passing the light-travel direction produces NdotL=0 on all visible faces → geometry appears black except for emissive/ambient. Verified in `fs_pbr.sc` comment: "dir points from the surface toward the light source (normalised, away from surface)."
 
+### Scene Demo (`apps/scene_demo`)
+
+End-to-end sample app exercising platform, rendering, input, and ECS abstractions together.
+
+**Design decisions resolved during scene demo development:**
+
+**Sample apps must not call bgfx or GLFW directly** — only the engine abstractions (`IWindow`, `Renderer`, `RenderPass`, ECS systems). Direct bgfx/GLFW calls in app code bypass the abstractions and duplicate what the engine already encapsulates. The only GLFW exception is mouse capture (`glfwSetInputMode`), which requires the raw `GLFWwindow*` from `GlfwWindow::glfwHandle()` — there is no engine-level mouse-capture API yet.
+
+**`RenderPass` fluent builder** — wraps all `bgfx::setView*` calls for one pass into a single chain (`RenderPass(id).framebuffer(...).rect(...).clearColorAndDepth(...).transform(...)`). This prevents the class of bug where a later pass accidentally overrides an earlier pass's view state — bgfx view state is last-write-wins per frame. The shadow viewport bug (shadow atlas rendered at screen resolution instead of 2048×2048) was caused by a stray `bgfx::setViewRect(0, ...)` elsewhere in the frame; `RenderPass` scoping makes this impossible by construction.
+
+**`bgfx::renderFrame()` belongs in `Renderer::init()`** — it must be called exactly once before `bgfx::init()` to prevent bgfx from spawning its own render thread (single-threaded mode). Previously it was called manually in the app. Moving it into `Renderer::init()` means app code can never forget it and cannot call it at the wrong time.
+
+**`GlfwWindow::nativeWindowHandle()` must return `CAMetalLayer*`** — bgfx Metal requires `CAMetalLayer*` as `nwh`, not `NSView*`. `NSView*` passes silently but produces no rendered output. The layer must be created and attached to the view before `bgfx::init()` via the ObjC C runtime (`objc_msgSend`), keeping the `.cpp` file free of ObjC syntax.
+
+**`DrawCallBuildSystem` PBR+shadow overload (`PbrFrameParams`)** — bgfx resets all per-draw state (uniforms, textures) after every `submit()`. The existing PBR overload only uploaded `u_material`; `u_dirLight`, `u_shadowMatrix`, and the three texture slots (`s_albedo`, `s_orm`, `s_shadowMap`) had to be set by the caller before the loop, which means they would only be set once and then silently dropped after the first submit. The `PbrFrameParams` struct (`lightData`, `shadowMatrix`, `shadowAtlas`) lets the new overload re-set all frame-level state per draw inside the system, with no caller pre-setup needed.
+
+**`engine_ecs` static library** — `Registry.cpp` was compiled inline in each test executable rather than into `engine_rendering`. Creating `engine_ecs` as a named static library and linking it to `engine_rendering` as `PUBLIC` means any consumer of `engine_rendering` (including `scene_demo`) gets `Registry` automatically, and the duplicate compilations in test targets are removed.
+
 ---
 
 ## Physics
