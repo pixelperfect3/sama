@@ -3,6 +3,7 @@
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
 
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 
 namespace engine::rendering
@@ -16,6 +17,11 @@ bool Renderer::init(const RendererDesc& desc)
     }
 
     headless_ = desc.headless;
+
+    // Single-threaded mode: bgfx::renderFrame() must be called exactly once
+    // before bgfx::init() to prevent bgfx from spawning its own render thread.
+    if (!desc.headless)
+        bgfx::renderFrame();
 
     bgfx::Init init;
 
@@ -58,8 +64,7 @@ bool Renderer::init(const RendererDesc& desc)
     // cannot create.  Skip in headless mode to avoid bgfx debug assertions.
     if (!desc.headless)
     {
-        postProcess_.init(
-            static_cast<uint16_t>(desc.width), static_cast<uint16_t>(desc.height));
+        postProcess_.init(static_cast<uint16_t>(desc.width), static_cast<uint16_t>(desc.height));
     }
 
     initialized_ = true;
@@ -78,12 +83,22 @@ void Renderer::beginFrame()
     // where postProcess_ was not initialised and sceneFb() is invalid.
     if (!headless_)
     {
-        bgfx::setViewFrameBuffer(kViewOpaque, postProcess_.resources().sceneFb());
-        bgfx::setViewFrameBuffer(kViewTransparent, postProcess_.resources().sceneFb());
+        RenderPass(kViewOpaque).framebuffer(postProcess_.resources().sceneFb());
+        RenderPass(kViewTransparent).framebuffer(postProcess_.resources().sceneFb());
     }
 
-    // Touch view 0 to ensure it is submitted even when the frame has no draw calls
-    bgfx::touch(0);
+    // Ensure view 0 is submitted even when the frame has no shadow draw calls.
+    RenderPass(kViewShadowBase).touch();
+}
+
+void Renderer::beginFrameDirect()
+{
+    if (!initialized_)
+        return;
+
+    // kViewOpaque writes directly to the backbuffer — bypass post-processing.
+    RenderPass(kViewOpaque).framebuffer(BGFX_INVALID_HANDLE);
+    RenderPass(kViewShadowBase).touch();
 }
 
 void Renderer::endFrame()
