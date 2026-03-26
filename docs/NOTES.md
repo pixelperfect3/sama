@@ -166,7 +166,19 @@ cd build && ./engine_screenshot_tests -# "[screenshot]"   # all screenshot tests
 
 **Tolerance:** Per-channel max delta <= 8. Loose enough for minor GPU-driver differences across machines.
 
-**Simplification notes:** Shadow (TestSsShadow), SSAO (TestSsSsao), CSM (TestSsCsm), and post-process (TestSsPostProcess) tests render simplified scenes without their respective multi-pass setups. Each still produces a meaningful visible output for golden comparison. Full integration is future work once the fixture supports multi-view and multi-framebuffer pass chains.
+**Simplification notes:** SSAO (TestSsSsao), CSM (TestSsCsm), and post-process (TestSsPostProcess) tests render simplified scenes without their respective multi-pass setups. Each still produces a meaningful visible output for golden comparison. Full integration is future work once the fixture supports multi-view and multi-framebuffer pass chains.
+
+Shadow (TestSsShadow) is **not simplified** — it runs a real two-pass setup: a depth-only shadow pass into a 512×512 `ShadowRenderer` atlas (kViewShadowBase, orthographic light projection from (-4,8,-4)), followed by a PBR pass (kViewOpaque) that reads `u_shadowMatrix[0]` and `s_shadowMap`. The occluder cube at (0,2,0) casts a visible shadow on the ground plane.
+
+**Metal platform gotchas discovered during screenshot test development:**
+
+- **`CAMetalLayer*` required, not `NSView*`:** GLFW with `GLFW_NO_API` does not attach a `CAMetalLayer` to the NSView. bgfx Metal expects `CAMetalLayer*` as `nwh`. Passing `NSView*` compiles silently but produces no rendered output. Must create and attach `CAMetalLayer` explicitly via ObjC C runtime before `bgfx::init()`.
+
+- **Unbound samplers return `(0,0,0,0)` on Metal:** Unlike desktop GL/Vulkan which may return a default color, Metal returns black-transparent for every unbound sampler. In the PBR shader: unbound `s_albedo` → `albedo *= 0 = black`; unbound `s_orm` → `ao = 0` (kills ambient); unbound `s_shadowMap` with zero shadow matrix → `shadow *= 0` → all geometry black. Always bind a 1×1 white texture to unused sampler slots.
+
+- **`bgfx::renderFrame()` single-thread mode:** Must be called exactly once before `bgfx::init()`, then never again. Calling it after init double-processes command buffers → SIGSEGV in Metal texture creation. In the readback loop, use only `bgfx::frame()`.
+
+- **`u_dirLight[0].xyz` direction convention:** The PBR shader treats this as pointing **from the surface toward the light** (not the direction light travels). Passing the light-travel direction produces NdotL=0 on all visible faces → geometry appears black except for emissive/ambient. Verified in `fs_pbr.sc` comment: "dir points from the surface toward the light source (normalised, away from surface)."
 
 ---
 
