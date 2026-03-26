@@ -23,6 +23,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "engine/assets/AssetManager.h"
+#include "engine/assets/GltfLoader.h"
+#include "engine/assets/StdFileSystem.h"
+#include "engine/assets/TextureLoader.h"
 #include "engine/ecs/Registry.h"
 #include "engine/input/InputState.h"
 #include "engine/input/InputSystem.h"
@@ -40,11 +44,14 @@
 #include "engine/rendering/ShadowRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/threading/ThreadPool.h"
 
+using namespace engine::assets;
 using namespace engine::ecs;
 using namespace engine::input;
 using namespace engine::platform;
 using namespace engine::rendering;
+using namespace engine::threading;
 
 // =============================================================================
 // Camera
@@ -171,6 +178,15 @@ int main()
         if (!renderer.init(rd))
             return 1;
     }
+
+    // -------------------------------------------------------------------------
+    // Asset system — ThreadPool + StdFileSystem + AssetManager
+    // -------------------------------------------------------------------------
+    ThreadPool threadPool(2);
+    StdFileSystem fileSystem(".");
+    AssetManager assets(threadPool, fileSystem);
+    assets.registerLoader(std::make_unique<TextureLoader>());
+    assets.registerLoader(std::make_unique<GltfLoader>());
 
     // -------------------------------------------------------------------------
     // GPU resources
@@ -370,6 +386,9 @@ int main()
 
             bgfx::dbgTextPrintf(1, 4, 0x07, "WASD = move   Q/E = down/up   Shift = fast");
         }
+
+        // -- Asset uploads (after endFrame so bgfx has processed previous frame) --
+        assets.processUploads();
 
         // -- Flip -------------------------------------------------------------
         renderer.endFrame();
