@@ -52,7 +52,26 @@ FetchContent_Declare(
     GIT_TAG        eebff97af2a34c695cdc058c63ba527c6ebebc76
 )
 
-FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake)
+# cgltf — single-header glTF 2.0 parser (MIT).
+FetchContent_Declare(
+    cgltf
+    GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
+    GIT_TAG        v1.14
+)
+
+FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf)
+
+# stb — header-only, used by engine_assets (TextureLoader) and screenshot tests.
+# FetchContent_Populate avoids creating unused CMake targets for a header-only lib.
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master
+)
+FetchContent_GetProperties(stb)
+if(NOT stb_POPULATED)
+    FetchContent_Populate(stb)
+endif()
 
 # ---------------------------------------------------------------------------
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
@@ -307,6 +326,26 @@ compile_shader_pp(
 
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
+# --- engine_threading static library ---
+add_library(engine_threading STATIC engine/threading/ThreadPool.cpp)
+target_include_directories(engine_threading PUBLIC ${CMAKE_SOURCE_DIR})
+
+# --- engine_assets static library ---
+add_library(engine_assets STATIC
+    engine/assets/AssetManager.cpp
+    engine/assets/StdFileSystem.cpp
+    engine/assets/TextureLoader.cpp
+    engine/assets/GltfLoader.cpp
+    engine/assets/GltfSceneSpawner.cpp
+)
+
+target_include_directories(engine_assets PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_assets PRIVATE
+    ${stb_SOURCE_DIR}
+    ${cgltf_SOURCE_DIR}
+)
+target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading glm::glm)
+
 # --- engine_ecs static library ---
 add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
 target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR})
@@ -368,7 +407,6 @@ endif()
 
 # --- engine_tests executable ---
 add_executable(engine_tests
-    engine/threading/ThreadPool.cpp
     tests/ecs/TestEntity.cpp
     tests/ecs/TestSparseSet.cpp
     tests/ecs/TestRegistry.cpp
@@ -392,7 +430,7 @@ add_executable(engine_tests
     tests/rendering/TestSsao.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_rendering glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_rendering glm::glm Catch2::Catch2WithMain)
 
 # GLM compile flags — set here so they take effect before any GLM header is included,
 # regardless of include order inside translation units.
@@ -412,17 +450,6 @@ if(ENABLE_CLANG_TIDY)
     if(CLANG_TIDY_EXE)
         set_target_properties(engine_tests PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
     endif()
-endif()
-
-# --- stb (header-only, for PNG read/write in screenshot tests) ---
-FetchContent_Declare(
-    stb
-    GIT_REPOSITORY https://github.com/nothings/stb.git
-    GIT_TAG        master
-)
-FetchContent_GetProperties(stb)
-if(NOT stb_POPULATED)
-    FetchContent_Populate(stb)
 endif()
 
 # --- engine_screenshot_tests executable ---
@@ -533,6 +560,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_include_directories(scene_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(scene_demo PRIVATE
+        engine_assets
         engine_rendering
         engine_input_glfw
         glm::glm
