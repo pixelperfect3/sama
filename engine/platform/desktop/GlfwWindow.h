@@ -20,6 +20,12 @@ public:
     uint32_t width() const override;
     uint32_t height() const override;
 
+    // Return the underlying GLFW handle for use with input backends.
+    [[nodiscard]] GLFWwindow* glfwHandle() const
+    {
+        return window_;
+    }
+
 private:
     GLFWwindow* window_ = nullptr;
     uint32_t width_ = 0;

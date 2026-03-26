@@ -63,11 +63,28 @@ void GlfwWindow::pollEvents()
 void* GlfwWindow::nativeWindowHandle() const
 {
 #if defined(__APPLE__)
-    // bgfx expects an NSView*, not an NSWindow*.
-    // Use the ObjC runtime C API to stay valid plain C++ (no .mm required).
+    // bgfx Metal backend requires a CAMetalLayer*, not a raw NSView*.
+    // GLFW_NO_API does not attach any layer, so we create and attach one here.
+    // Uses the ObjC runtime C API so this file can stay plain C++ (no .mm).
     void* nsWindow = glfwGetCocoaWindow(window_);
-    using MsgSendFn = void* (*)(void*, SEL);
-    return reinterpret_cast<MsgSendFn>(objc_msgSend)(nsWindow, sel_getUid("contentView"));
+
+    using MsgSend0 = void* (*)(void*, SEL);
+    using MsgSendObj = void (*)(void*, SEL, void*);
+    using MsgSendBOOL = void (*)(void*, SEL, BOOL);
+
+    void* nsView = reinterpret_cast<MsgSend0>(objc_msgSend)(nsWindow, sel_getUid("contentView"));
+
+    // [nsView setWantsLayer:YES]
+    reinterpret_cast<MsgSendBOOL>(objc_msgSend)(nsView, sel_getUid("setWantsLayer:"), YES);
+
+    // metalLayer = [CAMetalLayer layer]
+    void* metalLayerCls = reinterpret_cast<void*>(objc_getClass("CAMetalLayer"));
+    void* metalLayer = reinterpret_cast<MsgSend0>(objc_msgSend)(metalLayerCls, sel_getUid("layer"));
+
+    // [nsView setLayer:metalLayer]  — view retains the layer
+    reinterpret_cast<MsgSendObj>(objc_msgSend)(nsView, sel_getUid("setLayer:"), metalLayer);
+
+    return metalLayer;
 #elif defined(_WIN32)
     return glfwGetWin32Window(window_);
 #else
