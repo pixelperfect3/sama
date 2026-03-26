@@ -44,10 +44,14 @@ CpuTextureData decodeImage(const cgltf_image& img, std::string_view gltfPath, IF
     }
     else if (img.uri && std::strncmp(img.uri, "data:", 5) == 0)
     {
-        // Data URI — base64 encoded. cgltf already decoded it into buffer data
-        // when we passed cgltf_options{} with the default allocator. If for some
-        // reason the data URI wasn't decoded, skip gracefully.
-        return {};
+        // Data URI (base64-encoded image embedded in the JSON).
+        // cgltf does NOT decode data URIs for images automatically — that is the
+        // application's responsibility. Returning empty here would silently produce
+        // a failed texture; throw so the caller gets a clear error instead.
+        // TODO: base64-decode img.uri and pass the raw bytes to stbi_load_from_memory.
+        throw std::runtime_error(
+            "GltfLoader: data URI images are not yet supported. "
+            "Export the glTF with separate image files instead.");
     }
     else if (img.uri)
     {
@@ -177,7 +181,7 @@ void encodeOctTangent(float tx, float ty, float tz, float sign, uint8_t& outX, u
     // Remap from [-1,1] to [0,255]: v' = (v + 1) / 2 * 255
     outX = static_cast<uint8_t>((glm::clamp(ox, -1.0f, 1.0f) + 1.0f) * 0.5f * 255.0f);
     outY = static_cast<uint8_t>((glm::clamp(oy, -1.0f, 1.0f) + 1.0f) * 0.5f * 255.0f);
-    outZ = 255u;  // z = +1 in oct encoding (positive hemisphere)
+    outZ = 0u;  // padding — vs_pbr.sc reads only .xy (oct) and .w (sign); .z is ignored
     outW = (sign >= 0.0f) ? 255u : 0u;
 }
 
@@ -274,11 +278,17 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
         }
     }
 
-    // Indices.
+    // Indices — stored as uint16. Meshes with > 65535 vertices are not supported.
     auto idx32 = readIndexAccessor(prim.indices);
     md.indices.reserve(idx32.size());
     for (uint32_t i : idx32)
+    {
+        if (i > 0xFFFFu)
+            throw std::runtime_error("GltfLoader: mesh index " + std::to_string(i) +
+                                     " exceeds uint16 max (65535). "
+                                     "Split the mesh or add uint32 index support.");
         md.indices.push_back(static_cast<uint16_t>(i));
+    }
 
     return md;
 }
@@ -363,10 +373,10 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
             cgltf_free(data);
             throw std::runtime_error("GltfLoader: missing external buffer '" + binPath + "'");
         }
-        // cgltf manages this memory via its allocator; copy into a cgltf allocation.
-        buf.data = opts.memory.alloc_func
-                       ? opts.memory.alloc_func(opts.memory.user_data, binBytes.size())
-                       : std::malloc(binBytes.size());
+        // cgltf_free() calls free() on buf.data when using the default allocator.
+        // We use the default allocator (opts = {}), so malloc here is the correct
+        // counterpart. A custom cgltf allocator would require matching alloc/free.
+        buf.data = std::malloc(binBytes.size());
         if (!buf.data)
         {
             cgltf_free(data);
@@ -391,6 +401,10 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
         scene.textures.push_back(decodeImage(data->images[i], path, fs));
 
     // ----- Meshes -----
+    // Only the first primitive of each mesh is converted. glTF meshes may have
+    // multiple primitives (one per material section), but multi-primitive support
+    // requires splitting one logical mesh into multiple draw calls with separate
+    // material bindings — deferred to a later phase.
     scene.meshes.reserve(data->meshes_count);
     for (size_t i = 0; i < data->meshes_count; ++i)
     {

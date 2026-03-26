@@ -53,8 +53,9 @@ uint32_t AssetManager::allocSlot(std::string_view path)
         idx = freeList_.back();
         freeList_.pop_back();
         Record& rec = records_[idx];
+        const uint32_t prevGen = rec.generation;
         rec = Record{};
-        rec.generation++;  // bump generation so old handles to this slot are stale
+        rec.generation = prevGen + 1;  // preserve history so gen never repeats for this slot
     }
     else
     {
@@ -126,7 +127,7 @@ void AssetManager::pushError(uint32_t index, uint32_t generation, std::string ms
 // processUploads — main thread, once per frame
 // ---------------------------------------------------------------------------
 
-void AssetManager::processUploads(uint32_t /*maxUploadBytes*/)
+void AssetManager::processUploads()
 {
     // Free slots from last frame's releases.
     for (uint32_t idx : pendingFree_)

@@ -36,6 +36,20 @@ namespace engine::assets
 // Handles are ref-counted. release() decrements the count; when it reaches
 // zero the GPU handles are destroyed at the start of the next processUploads()
 // call (one-frame grace period so bgfx can flush in-flight commands).
+//
+// Threading contract:
+//   • load(), state(), get(), error(), release() — MAIN THREAD ONLY.
+//     They access internal tables without locking.
+//   • processUploads() — MAIN THREAD ONLY. Must also be the bgfx submission
+//     thread (i.e. call it before bgfx::frame() / renderer.endFrame()).
+//   • Worker threads only call pushUpload() / pushError(), which are
+//     mutex-protected. No other internal state is touched from workers.
+//
+// Destruction ordering:
+//   AssetManager::~AssetManager calls processUploads(), which creates or
+//   destroys bgfx handles. The bgfx context (Renderer) MUST still be alive
+//   when AssetManager is destroyed. Ensure AssetManager is constructed after
+//   Renderer so that it is destroyed first (LIFO stack order).
 // ---------------------------------------------------------------------------
 
 class AssetManager
@@ -93,13 +107,11 @@ public:
     //
     // Drains the upload queue: creates bgfx GPU handles and marks assets
     // Ready. Also frees slots that were released the previous frame.
-    // Call once per frame AFTER bgfx::frame() / renderer.endFrame().
-    //
-    // maxUploadBytes: optional per-frame budget (uncompressed pixel data
-    // estimate). Defers remaining requests to the next frame if exceeded.
+    // Call once per frame before bgfx::frame() / renderer.endFrame() so
+    // that newly created GPU handles are submitted in the same frame.
     // ------------------------------------------------------------------
 
-    void processUploads(uint32_t maxUploadBytes = UINT32_MAX);
+    void processUploads();
 
 private:
     // ------------------------------------------------------------------

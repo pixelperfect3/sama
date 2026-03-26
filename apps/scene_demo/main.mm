@@ -387,7 +387,7 @@ int main()
             bgfx::dbgTextPrintf(1, 4, 0x07, "WASD = move   Q/E = down/up   Shift = fast");
         }
 
-        // -- Asset uploads (after endFrame so bgfx has processed previous frame) --
+        // -- Asset uploads (before endFrame so bgfx::frame() submits them this tick) --
         assets.processUploads();
 
         // -- Flip -------------------------------------------------------------
