@@ -358,13 +358,33 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
     // Load external buffers (.bin files for .gltf; embedded for .glb).
     // We implement this manually via IFileSystem rather than via cgltf_load_buffers
     // (which uses libc fopen and bypasses our abstraction).
+    //
+    // cgltf_parse does NOT populate buf.data for any buffer type — that is
+    // cgltf_load_buffers' responsibility.  We handle two cases:
+    //
+    //   • GLB embedded buffer (uri == null): data lives in data->bin.
+    //     Mirror what cgltf_load_buffers does: point buf.data at data->bin and
+    //     set data_free_method = none so cgltf_free() does not double-free it.
+    //
+    //   • External binary file (uri != null): read via IFileSystem, malloc a
+    //     copy, and let cgltf_free() release it via memory_free.
     for (size_t i = 0; i < data->buffers_count; ++i)
     {
         cgltf_buffer& buf = data->buffers[i];
         if (buf.data)
-            continue;  // already loaded (GLB embedded buffer)
+            continue;  // already populated (shouldn't happen after cgltf_parse, but be safe)
+
         if (!buf.uri)
+        {
+            // GLB embedded binary chunk.
+            if (data->bin && data->bin_size >= buf.size)
+            {
+                buf.data = const_cast<void*>(data->bin);
+                buf.data_free_method =
+                    cgltf_data_free_method_none;  // cgltf_free must not free this
+            }
             continue;
+        }
 
         const std::string binPath = fs.resolve(path, buf.uri);
         auto binBytes = fs.read(binPath);
@@ -373,9 +393,8 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
             cgltf_free(data);
             throw std::runtime_error("GltfLoader: missing external buffer '" + binPath + "'");
         }
-        // cgltf_free() calls free() on buf.data when using the default allocator.
-        // We use the default allocator (opts = {}), so malloc here is the correct
-        // counterpart. A custom cgltf allocator would require matching alloc/free.
+        // cgltf_free() calls free() on buf.data when data_free_method == memory_free
+        // (the default for opts = {}).  malloc here is the matching counterpart.
         buf.data = std::malloc(binBytes.size());
         if (!buf.data)
         {
