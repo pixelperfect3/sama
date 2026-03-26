@@ -2,6 +2,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 
 namespace engine::rendering
@@ -96,10 +97,11 @@ void ShadowRenderer::beginCascade(uint32_t cascadeIdx, const math::Mat4& lightVi
         y = static_cast<uint16_t>((i / 2) * (res / 2));
     }
 
-    bgfx::setViewFrameBuffer(viewId, fb_[i]);
-    bgfx::setViewRect(viewId, x, y, w, h);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
-    bgfx::setViewTransform(viewId, &lightView[0][0], &lightProj[0][0]);
+    RenderPass(viewId)
+        .framebuffer(fb_[i])
+        .rect(x, y, w, h)
+        .clearDepth(1.0f)
+        .transform(lightView, lightProj);
 
     lightView_[i] = lightView;
     lightProj_[i] = lightProj;
