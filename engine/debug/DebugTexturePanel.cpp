@@ -56,25 +56,28 @@ void DebugTexturePanel::clear()
 
 bool DebugTexturePanel::show(float thumbSize)
 {
+    // First-use defaults: right side of a 1280-wide window, below the menu bar.
+    ImGui::SetNextWindowPos(ImVec2(980.f, 20.f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(thumbSize + 48.f, 660.f), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Textures", nullptr);
+    ImGui::Begin("Textures");
 
     ImGui::Text("%d texture(s) loaded", static_cast<int>(m_textures.size()));
-    ImGui::Separator();
 
     for (const TextureEntry& e : m_textures)
     {
-        ImGui::Text("%s", e.label.c_str());
-        if (bgfx::isValid(e.handle))
+        // Each texture gets a collapsing header — click to expand/collapse.
+        if (ImGui::CollapsingHeader(e.label.c_str()))
         {
-            ImGui::Image(toImTexId(e.handle), ImVec2(thumbSize, thumbSize), ImVec2(0.f, 0.f),
-                         ImVec2(1.f, 1.f));
+            if (bgfx::isValid(e.handle))
+            {
+                ImGui::Image(toImTexId(e.handle), ImVec2(thumbSize, thumbSize), ImVec2(0.f, 0.f),
+                             ImVec2(1.f, 1.f));
+            }
+            else
+            {
+                ImGui::TextDisabled("(invalid handle)");
+            }
         }
-        else
-        {
-            ImGui::TextDisabled("(invalid handle)");
-        }
-        ImGui::Separator();
     }
 
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);

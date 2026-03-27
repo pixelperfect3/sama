@@ -152,6 +152,10 @@ int main()
             return 1;
     }
 
+    // Enable bgfx debug text overlay unconditionally for this sample app.
+    // Renderer::init() only enables it in debug builds; demos always want it.
+    bgfx::setDebug(BGFX_DEBUG_TEXT);
+
     // -- Asset system ---------------------------------------------------------
     // Assets are resolved relative to the binary's working directory.
     // CMake copies DamagedHelmet.glb to the build directory at configure time.
