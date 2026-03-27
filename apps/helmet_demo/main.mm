@@ -223,6 +223,14 @@ int main()
     glfwSetScrollCallback(glfwHandle, [](GLFWwindow*, double /*xoff*/, double yoff)
                           { s_imguiScrollF += static_cast<float>(yoff); });
 
+    // On Retina (HiDPI) displays glfwGetCursorPos returns logical pixels while
+    // glfwGetFramebufferSize returns physical pixels.  We pass the framebuffer
+    // size as ImGui's display size, so cursor coordinates must be scaled to
+    // physical pixels before being forwarded to imguiBeginFrame, otherwise
+    // ImGui's hit-testing is offset by the DPI scale factor.
+    float s_contentScaleX = 1.f, s_contentScaleY = 1.f;
+    glfwGetWindowContentScale(glfwHandle, &s_contentScaleX, &s_contentScaleY);
+
     renderer.endFrame();  // flush resource uploads before loading
 
     // -- Start async helmet load ----------------------------------------------
@@ -317,7 +325,8 @@ int main()
                 mx = -1.0;
                 my = -1.0;
             }
-            imguiBeginFrame(static_cast<int32_t>(mx), static_cast<int32_t>(my), imguiButtons,
+            imguiBeginFrame(static_cast<int32_t>(mx * s_contentScaleX),
+                            static_cast<int32_t>(my * s_contentScaleY), imguiButtons,
                             static_cast<int32_t>(s_imguiScrollF), static_cast<uint16_t>(fbW),
                             static_cast<uint16_t>(fbH), -1, kViewImGui);
         }

@@ -56,9 +56,11 @@ void DebugTexturePanel::clear()
 
 bool DebugTexturePanel::show(float thumbSize)
 {
-    // First-use defaults: right side of a 1280-wide window, below the menu bar.
-    ImGui::SetNextWindowPos(ImVec2(980.f, 20.f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(thumbSize + 48.f, 660.f), ImGuiCond_FirstUseEver);
+    // First-use defaults: left side, below the bgfx debug text overlay.
+    // Debug text occupies rows 1-3 at 16 px/row (~64 px total); start at y=72.
+    // Height 640 keeps the bottom edge inside a 720 px tall viewport.
+    ImGui::SetNextWindowPos(ImVec2(10.f, 72.f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(thumbSize + 48.f, 640.f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Textures");
 
     ImGui::Text("%d texture(s) loaded", static_cast<int>(m_textures.size()));
