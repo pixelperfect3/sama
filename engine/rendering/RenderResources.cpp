@@ -76,6 +76,23 @@ void RenderResources::destroyAll()
 }
 
 // ---------------------------------------------------------------------------
+// Texture registry
+// ---------------------------------------------------------------------------
+
+uint32_t RenderResources::addTexture(bgfx::TextureHandle h)
+{
+    textures_.push_back(h);
+    return static_cast<uint32_t>(textures_.size());  // 1-based ID
+}
+
+bgfx::TextureHandle RenderResources::getTexture(uint32_t id) const
+{
+    if (id == 0 || id > static_cast<uint32_t>(textures_.size()))
+        return BGFX_INVALID_HANDLE;
+    return textures_[id - 1];
+}
+
+// ---------------------------------------------------------------------------
 // Material registry
 // ---------------------------------------------------------------------------
 

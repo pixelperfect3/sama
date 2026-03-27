@@ -84,6 +84,23 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // Texture registry — stores non-owned bgfx handles (lifetime managed by
+    // the GltfAsset that uploaded them).  IDs are 1-based; 0 = no texture.
+    // -----------------------------------------------------------------------
+
+    // Register a texture handle and return its stable ID (1-based).
+    uint32_t addTexture(bgfx::TextureHandle h);
+
+    // Return the texture with the given ID, or BGFX_INVALID_HANDLE if not found.
+    [[nodiscard]] bgfx::TextureHandle getTexture(uint32_t id) const;
+
+    // Number of textures currently registered.  Valid IDs are 1..textureCount().
+    [[nodiscard]] uint32_t textureCount() const
+    {
+        return static_cast<uint32_t>(textures_.size());
+    }
+
+    // -----------------------------------------------------------------------
     // Material registry
     // -----------------------------------------------------------------------
 
@@ -115,6 +132,9 @@ private:
 
     bgfx::TextureHandle whiteTexture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle whiteCubeTexture_ = BGFX_INVALID_HANDLE;
+
+    // Non-owned texture handles registered via addTexture().  Index 0 = ID 1.
+    std::vector<bgfx::TextureHandle> textures_;
 
     std::vector<Slot> slots_;
     std::vector<uint32_t> freeList_;

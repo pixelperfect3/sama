@@ -26,6 +26,7 @@ struct PbrFrameParams
     uint16_t viewportH = 0;           // screen height — drives u_lightParams/u_frameParams
     float nearPlane = 0.05f;          // camera near plane (world units)
     float farPlane = 100.0f;          // camera far plane  (world units)
+    float camPos[3] = {0.f, 0.f, 0.f};  // camera world position — used for V vector in shader
 };
 
 // ---------------------------------------------------------------------------

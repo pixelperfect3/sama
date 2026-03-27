@@ -29,9 +29,32 @@ void registerResources(const GltfAsset& asset, rendering::RenderResources& res,
         outMeshIds.push_back(res.addMesh(rendering::Mesh(mesh)));
     }
 
+    // Register textures and build a mapping from asset-local index → RenderResources ID.
+    // The asset's texture handles are non-owned here; GltfAsset retains ownership.
+    std::vector<uint32_t> texIds;
+    texIds.reserve(asset.textures.size());
+    for (const auto& tex : asset.textures)
+        texIds.push_back(res.addTexture(tex.handle));
+
+    // Remap material texture IDs from 1-based asset-texture-index to
+    // the RenderResources texture IDs assigned above.
+    auto remap = [&](uint32_t id) -> uint32_t
+    {
+        if (id == 0)
+            return 0;
+        const uint32_t idx = id - 1;
+        return (idx < texIds.size()) ? texIds[idx] : 0;
+    };
+
     outMaterialIds.reserve(asset.materials.size());
     for (const auto& mat : asset.materials)
-        outMaterialIds.push_back(res.addMaterial(mat));
+    {
+        rendering::Material gpuMat = mat;
+        gpuMat.albedoMapId = remap(mat.albedoMapId);
+        gpuMat.normalMapId = remap(mat.normalMapId);
+        gpuMat.ormMapId = remap(mat.ormMapId);
+        outMaterialIds.push_back(res.addMaterial(gpuMat));
+    }
 }
 
 // Recurse over node tree, spawning entities.

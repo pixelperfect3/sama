@@ -98,7 +98,9 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     shadowDesc.cascadeCount = 1;
     shadow.init(shadowDesc);
 
-    const glm::vec3 kLightDir = glm::normalize(glm::vec3(-0.5f, 1.f, 0.8f));
+    // Light from upper-right-front — matches the camera side so the visible
+    // panels are directly illuminated rather than in shadow.
+    const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.6f, 1.f, 0.8f));
     const glm::vec3 kLightPos = kLightDir * 10.f;
     const glm::mat4 lightView = glm::lookAt(kLightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
     const glm::mat4 lightProj = glm::ortho(-2.f, 2.f, -2.f, 2.f, 0.1f, 30.f);
@@ -112,8 +114,9 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     // Opaque pass (view 9) → off-screen capture framebuffer
     // -----------------------------------------------------------------------
 
-    auto view =
-        glm::lookAt(glm::vec3(0.f, 0.5f, 3.0f), glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 1.f, 0.f));
+    // Camera offset to the right so the golden metallic panels are visible.
+    auto view = glm::lookAt(glm::vec3(1.5f, 0.5f, 2.8f), glm::vec3(0.f, 0.f, 0.f),
+                            glm::vec3(0.f, 1.f, 0.f));
     auto proj = glm::perspective(glm::radians(45.f),
                                  static_cast<float>(fx.width()) / static_cast<float>(fx.height()),
                                  0.05f, 50.f);
@@ -123,13 +126,19 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
     bgfx::setViewTransform(kViewOpaque, &view[0][0], &proj[0][0]);
 
-    constexpr float kLightIntens = 3.0f;
+    constexpr float kLightIntens = 4.0f;
     const float lightData[8] = {
         kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
         1.0f * kLightIntens, 0.95f * kLightIntens, 0.90f * kLightIntens, 0.f};
 
     const glm::mat4 shadowMat = shadow.shadowMatrix(0);
-    const PbrFrameParams frame{lightData, glm::value_ptr(shadowMat), shadow.atlasTexture()};
+    const glm::vec3 camPos(1.5f, 0.5f, 2.8f);
+    PbrFrameParams frame{
+        lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), fx.width(), fx.height(), 0.05f,
+        50.f};
+    frame.camPos[0] = camPos.x;
+    frame.camPos[1] = camPos.y;
+    frame.camPos[2] = camPos.z;
 
     drawCallSys.update(reg, res, pbrProg, uniforms, frame);
 

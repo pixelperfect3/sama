@@ -9,16 +9,18 @@ uniform vec4 u_material[2];
 // dir points from the surface toward the light source (normalised, away from surface).
 uniform vec4 u_dirLight[2];
 
-// [0] = {viewportWidth, viewportHeight, near, far}   [1] = {time, dt, 0, 0}
+// [0] = {viewportWidth, viewportHeight, near, far}   [1] = {camPos.x, camPos.y, camPos.z, 0}
 uniform vec4 u_frameParams[2];
 
 // Clustered lighting (Phase 6):
 //   .x = numLights, .y = screenW, .z = screenH, .w = unused
 uniform vec4 u_lightParams;
 
-SAMPLER2D(s_albedo, 0);
-SAMPLER2D(s_normal, 1);
-SAMPLER2D(s_orm, 2);
+SAMPLER2D(s_albedo,    0);
+SAMPLER2D(s_normal,    1);
+SAMPLER2D(s_orm,       2);
+SAMPLER2D(s_emissive,  3);
+SAMPLER2D(s_occlusion, 4);
 SAMPLER2DSHADOW(s_shadowMap, 5);
 
 // Light data textures — Phase 6.
@@ -91,23 +93,33 @@ void main()
     vec4 albedoSample = texture2D(s_albedo, v_texcoord0);
     albedo *= albedoSample.xyz;
 
-    // ORM map (slot 2): R=occlusion, G=roughness, B=metallic.
+    // ORM map (slot 2): G=roughness, B=metallic.  R is not used — AO comes from s_occlusion.
     vec4 ormSample = texture2D(s_orm, v_texcoord0);
-    float ao = ormSample.x;
     roughness *= ormSample.y;
-    metallic *= ormSample.z;
+    metallic  *= ormSample.z;
+
+    // Occlusion map (slot 4): R=AO.  Defaults to white (ao=1.0) when no texture is bound.
+    // Floor at 0.1 to prevent fully-black ambient in the absence of IBL.
+    float ao = max(texture2D(s_occlusion, v_texcoord0).x, 0.1);
 
     // -----------------------------------------------------------------------
-    // Normal — Phase 3 passthrough.
-    // Normal map (slot 1) is sampled but not yet applied to the TBN frame.
-    // Phase 3 uses the interpolated geometry normal directly.
-    // Full TBN normal mapping will be wired up once the sampler is exercised.
+    // Normal — TBN normal mapping.
     // -----------------------------------------------------------------------
-    vec3 N = normalize(v_normal);
+    vec3 T = normalize(v_tangent);
+    vec3 B = normalize(v_bitangent);
+    vec3 Ngeom = normalize(v_normal);
+    mat3 TBN = mtxFromCols3(T, B, Ngeom);
 
-    // View vector: approximate eye at world origin for Phase 3
-    // (accurate when the view-space transform places the camera at origin).
-    vec3 V = normalize(-v_worldPos);
+    // Sample normal map (slot 1), decode [0,1] -> [-1,1] tangent-space normal.
+    vec3 normalSample = texture2D(s_normal, v_texcoord0).xyz;
+    normalSample = normalSample * 2.0 - 1.0;
+    vec3 N = normalize(mul(TBN, normalSample));
+
+    // -----------------------------------------------------------------------
+    // View vector: camera world position from u_frameParams[1].xyz.
+    // -----------------------------------------------------------------------
+    vec3 camPos = u_frameParams[1].xyz;
+    vec3 V = normalize(camPos - v_worldPos);
 
     // -----------------------------------------------------------------------
     // F0 — dielectric base (0.04) lerped to albedo for metals.
@@ -121,7 +133,10 @@ void main()
     vec3 H = normalize(V + L);
     vec3 radiance = u_dirLight[1].xyz;
 
-    float NdotL = max(dot(N, L), 0.0);
+    // NdotL uses the smooth geometry normal so that broad-scale light/shadow
+    // varies with the macro-surface shape, not with normal-map detail.
+    // This prevents salt-and-pepper sparkle on rough metallic surfaces.
+    float NdotL = max(dot(Ngeom, L), 0.0);
     float NdotV = max(dot(N, V), 0.0);
 
     float D = distributionGGX(N, H, roughness);
@@ -154,10 +169,12 @@ void main()
             shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
         {
             float texelSize = 1.0 / 2048.0;
-            shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowCoord.z));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowCoord.z));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowCoord.z));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowCoord.z));
+            float shadowBias = 0.005;  // prevents self-shadowing (shadow acne)
+            float shadowZ = shadowCoord.z - shadowBias;
+            shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
+            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));
+            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowZ));
+            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowZ));
             shadow *= 0.25;
         }
     }
@@ -293,13 +310,24 @@ void main()
     }
     else
     {
-        ambient = vec3_splat(0.03) * albedo * ao;
+        // Hemisphere ambient: cool sky from above, warm ground from below.
+        // Use the smooth geometry normal (Ngeom) for the hemisphere factor so
+        // the ambient varies smoothly with the object shape, not with the
+        // high-frequency normal map.  F0-weighted term gives metallic surfaces
+        // their colour from indirect light (replaces IBL irradiance/prefilter).
+        vec3 skyColor    = vec3(0.90, 0.95, 1.20);
+        vec3 groundColor = vec3(0.35, 0.28, 0.18);
+        float hemiFactor = Ngeom.y * 0.5 + 0.5;
+        vec3 hemi = mix(groundColor, skyColor, hemiFactor);
+        ambient = (hemi * albedo * (1.0 - metallic) + hemi * F0) * ao;
     }
 
     // -----------------------------------------------------------------------
     // Emissive contribution.
+    // Sample s_emissive (slot 3); defaults to white when no texture is bound.
+    // emissiveScale is 0 for non-emissive materials, so white * 0 = no contribution.
     // -----------------------------------------------------------------------
-    vec3 emissive = albedo * emissiveScale;
+    vec3 emissive = texture2D(s_emissive, v_texcoord0).rgb * emissiveScale;
 
     // -----------------------------------------------------------------------
     // Combine, tonemap, and gamma-correct.

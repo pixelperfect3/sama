@@ -467,6 +467,21 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
             mat.normalTexIndex = static_cast<int32_t>(idx);
         }
 
+        if (m.emissive_texture.texture && m.emissive_texture.texture->image)
+        {
+            const ptrdiff_t idx = m.emissive_texture.texture->image - data->images;
+            mat.emissiveTexIndex = static_cast<int32_t>(idx);
+            // Use the brightest emissive_factor channel as a scalar multiplier.
+            mat.emissiveScale = std::max({m.emissive_factor[0], m.emissive_factor[1],
+                                          m.emissive_factor[2]});
+        }
+
+        if (m.occlusion_texture.texture && m.occlusion_texture.texture->image)
+        {
+            const ptrdiff_t idx = m.occlusion_texture.texture->image - data->images;
+            mat.occlusionTexIndex = static_cast<int32_t>(idx);
+        }
+
         scene.materials.push_back(mat);
     }
 

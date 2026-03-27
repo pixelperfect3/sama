@@ -132,9 +132,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     const float frameH = static_cast<float>(frame.viewportH);
 
     // u_frameParams[0] = {viewportW, viewportH, near, far}
-    // u_frameParams[1] = {time, dt, 0, 0} — unused here, set to 0
-    const float frameParamsData[8] = {frameW, frameH, frame.nearPlane, frame.farPlane, 0.0f, 0.0f,
-                                      0.0f,   0.0f};
+    // u_frameParams[1] = {camPos.x, camPos.y, camPos.z, 0} — camera world position for V vector
+    const float frameParamsData[8] = {frameW,          frameH,          frame.nearPlane,
+                                      frame.farPlane,  frame.camPos[0], frame.camPos[1],
+                                      frame.camPos[2], 0.0f};
 
     // u_lightParams = {numLights, screenW, screenH, 0}
     // numLights=0 disables the clustered loop; screenW/H prevent tile div-by-zero.
@@ -176,20 +177,33 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             bgfx::setUniform(uniforms.u_iblParams, iblParamsData);
 
             // Per-draw: bind all texture slots declared in fs_pbr.sc.
-            // Slots without real data use whiteTex/whiteCubeTex as safe defaults
-            // so Metal validation never sees a nil texture argument.
-            bgfx::setTexture(0, uniforms.s_albedo, whiteTex);
-            bgfx::setTexture(2, uniforms.s_orm, whiteTex);
+            // Material texture IDs reference RenderResources; fall back to
+            // whiteTex when not set so Metal validation never sees a nil argument.
+            auto resolveOrWhite = [&](uint32_t texId) -> bgfx::TextureHandle
+            {
+                if (texId != 0)
+                {
+                    bgfx::TextureHandle t = res.getTexture(texId);
+                    if (bgfx::isValid(t))
+                        return t;
+                }
+                return whiteTex;
+            };
+            bgfx::setTexture(0, uniforms.s_albedo,    resolveOrWhite(mat->albedoMapId));
+            bgfx::setTexture(1, uniforms.s_normal,    resolveOrWhite(mat->normalMapId));
+            bgfx::setTexture(2, uniforms.s_orm,       resolveOrWhite(mat->ormMapId));
+            bgfx::setTexture(3, uniforms.s_emissive,  resolveOrWhite(mat->emissiveMapId));
+            bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
             bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
             bgfx::setTexture(12, uniforms.s_lightData, whiteTex);
             bgfx::setTexture(13, uniforms.s_lightGrid, whiteTex);
             bgfx::setTexture(14, uniforms.s_lightIndex, whiteTex);
             if (bgfx::isValid(frame.shadowAtlas))
                 bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
-            if (bgfx::isValid(whiteCubeTex))
             {
-                bgfx::setTexture(6, uniforms.s_irradiance, whiteCubeTex);
-                bgfx::setTexture(7, uniforms.s_prefiltered, whiteCubeTex);
+                bgfx::TextureHandle cube = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
+                bgfx::setTexture(6, uniforms.s_irradiance, cube);
+                bgfx::setTexture(7, uniforms.s_prefiltered, cube);
             }
 
             bgfx::setTransform(&wtc.matrix[0][0]);

@@ -38,9 +38,11 @@ struct CpuMaterialData
     float roughness = 0.5f;
     float metallic = 0.0f;
     float emissiveScale = 0.0f;
-    int32_t albedoTexIndex = -1;  // index into CpuSceneData::textures
+    int32_t albedoTexIndex = -1;    // index into CpuSceneData::textures
     int32_t normalTexIndex = -1;
-    int32_t ormTexIndex = -1;  // R=occlusion, G=roughness, B=metallic
+    int32_t ormTexIndex = -1;       // G=roughness, B=metallic (R ignored per glTF spec)
+    int32_t emissiveTexIndex = -1;  // emissive color texture
+    int32_t occlusionTexIndex = -1; // separate occlusion texture (R=AO)
 };
 
 // ---------------------------------------------------------------------------

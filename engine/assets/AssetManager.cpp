@@ -3,7 +3,9 @@
 #include <bgfx/bgfx.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
+#include <vector>
 
 #include "engine/assets/GltfAsset.h"
 #include "engine/assets/IAssetLoader.h"
@@ -178,6 +180,28 @@ void AssetManager::uploadOne(UploadRequest& req)
 }
 
 // ---------------------------------------------------------------------------
+// Mipmap generation helper
+// ---------------------------------------------------------------------------
+
+// Creates a bgfx texture from base-level RGBA8
+// pixels.  All mip levels are packed into a single immutable memory block and
+// passed to createTexture2D in one call — the correct bgfx pattern for
+// providing pre-computed mips (updateTexture2D on Metal does not reliably
+// initialise levels that were created without initial data).
+static bgfx::TextureHandle createTexture2DWithMips(const uint8_t* pixels, int w, int h,
+                                                    uint64_t flags)
+{
+    // Upload mip 0 only.  bgfx's Metal backend computes LOD=max when hasMips=true due to
+    // an apparent UV-derivative issue on this GPU, producing near-black output.  Until the
+    // root cause is resolved, create textures without a mip chain.  The Metal sampler clamps
+    // LOD to 0 automatically when only one level exists, giving correct (if aliased) sampling.
+    const bgfx::Memory* mem = bgfx::copy(pixels, static_cast<uint32_t>(w * h * 4));
+    return bgfx::createTexture2D(static_cast<uint16_t>(w), static_cast<uint16_t>(h),
+                                 /*hasMips=*/false, /*numLayers=*/1,
+                                 bgfx::TextureFormat::RGBA8, flags, mem);
+}
+
+// ---------------------------------------------------------------------------
 // Per-type upload implementations
 // ---------------------------------------------------------------------------
 
@@ -190,13 +214,9 @@ void AssetManager::upload(Record& rec, CpuTextureData&& data)
         return;
     }
 
-    const bgfx::Memory* mem =
-        bgfx::copy(data.pixels.data(), static_cast<uint32_t>(data.pixels.size()));
-
-    bgfx::TextureHandle handle = bgfx::createTexture2D(
-        static_cast<uint16_t>(data.width), static_cast<uint16_t>(data.height),
-        /*hasMips=*/false,
-        /*numLayers=*/1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE, mem);
+    bgfx::TextureHandle handle =
+        createTexture2DWithMips(data.pixels.data(), static_cast<int>(data.width),
+                                static_cast<int>(data.height), BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE);
 
     if (!bgfx::isValid(handle))
     {
@@ -226,11 +246,10 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
         Texture tex;
         if (!cpuTex.pixels.empty() && cpuTex.width > 0 && cpuTex.height > 0)
         {
-            const bgfx::Memory* mem =
-                bgfx::copy(cpuTex.pixels.data(), static_cast<uint32_t>(cpuTex.pixels.size()));
-            tex.handle = bgfx::createTexture2D(
-                static_cast<uint16_t>(cpuTex.width), static_cast<uint16_t>(cpuTex.height), false, 1,
-                bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE, mem);
+            tex.handle =
+                createTexture2DWithMips(cpuTex.pixels.data(), static_cast<int>(cpuTex.width),
+                                        static_cast<int>(cpuTex.height),
+                                        BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE);
             tex.width = cpuTex.width;
             tex.height = cpuTex.height;
         }
@@ -253,6 +272,18 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
         mat.roughness = cpuMat.roughness;
         mat.metallic = cpuMat.metallic;
         mat.emissiveScale = cpuMat.emissiveScale;
+        // Store 1-based indices into asset.textures[] so GltfSceneSpawner can
+        // remap them to RenderResources texture IDs at spawn time.
+        if (cpuMat.albedoTexIndex >= 0)
+            mat.albedoMapId = static_cast<uint32_t>(cpuMat.albedoTexIndex + 1);
+        if (cpuMat.normalTexIndex >= 0)
+            mat.normalMapId = static_cast<uint32_t>(cpuMat.normalTexIndex + 1);
+        if (cpuMat.ormTexIndex >= 0)
+            mat.ormMapId = static_cast<uint32_t>(cpuMat.ormTexIndex + 1);
+        if (cpuMat.emissiveTexIndex >= 0)
+            mat.emissiveMapId = static_cast<uint32_t>(cpuMat.emissiveTexIndex + 1);
+        if (cpuMat.occlusionTexIndex >= 0)
+            mat.occlusionMapId = static_cast<uint32_t>(cpuMat.occlusionTexIndex + 1);
         asset.materials.push_back(mat);
     }
 

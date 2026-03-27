@@ -19,9 +19,11 @@ void ShaderUniforms::init()
     u_dirLight = bgfx::createUniform("u_dirLight", bgfx::UniformType::Vec4, 2);
 
     // Samplers — Phase 3
-    s_albedo = bgfx::createUniform("s_albedo", bgfx::UniformType::Sampler);
-    s_normal = bgfx::createUniform("s_normal", bgfx::UniformType::Sampler);
-    s_orm = bgfx::createUniform("s_orm", bgfx::UniformType::Sampler);
+    s_albedo    = bgfx::createUniform("s_albedo",    bgfx::UniformType::Sampler);
+    s_normal    = bgfx::createUniform("s_normal",    bgfx::UniformType::Sampler);
+    s_orm       = bgfx::createUniform("s_orm",       bgfx::UniformType::Sampler);
+    s_emissive  = bgfx::createUniform("s_emissive",  bgfx::UniformType::Sampler);
+    s_occlusion = bgfx::createUniform("s_occlusion", bgfx::UniformType::Sampler);
 
     // Shadow — Phase 4
     u_shadowMatrix = bgfx::createUniform("u_shadowMatrix", bgfx::UniformType::Mat4, 4);
@@ -80,6 +82,8 @@ void ShaderUniforms::destroy()
     safeDestroy(s_albedo);
     safeDestroy(s_normal);
     safeDestroy(s_orm);
+    safeDestroy(s_emissive);
+    safeDestroy(s_occlusion);
 
     // Shadow — Phase 4
     safeDestroy(u_shadowMatrix);

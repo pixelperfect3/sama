@@ -207,6 +207,33 @@ End-to-end sample app exercising platform, rendering, input, and ECS abstraction
 
 **`engine_ecs` static library** — `Registry.cpp` was compiled inline in each test executable rather than into `engine_rendering`. Creating `engine_ecs` as a named static library and linking it to `engine_rendering` as `PUBLIC` means any consumer of `engine_rendering` (including `scene_demo`) gets `Registry` automatically, and the duplicate compilations in test targets are removed.
 
+### Helmet Demo (`apps/helmet_demo`)
+
+Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and rendering with directional shadow, PBR shading, and a runtime debug texture panel.
+
+**glTF material completeness audit** — the initial implementation only wired up three of the five DamagedHelmet textures: albedo (slot 0), normal (slot 1), and ORM (slot 2). Emissive and occlusion were decoded and uploaded to the GPU but never bound to the shader. Discovery method: wrote `TestGltfLoader` which decodes the GLB, dumps all five textures to `/tmp/helmet_textures/` as PNGs and verifies dimensions and material index assignments. Both missing textures are 2048×2048 and fully populated — just unused.
+
+**ORM.R ≠ AO per glTF spec** — the glTF 2.0 spec defines the separate `occlusionTexture` (R=AO) as independent from `metallicRoughnessTexture` (G=roughness, B=metallic). `ORM.R` is officially undefined. The DamagedHelmet ships a distinct occlusion texture. The shader was updated to read AO from a dedicated `s_occlusion` sampler (slot 4) rather than `ormSample.x`. White-texture fallback gives `ao=1.0` (no occlusion applied) for models without a separate occlusion map.
+
+**emissiveScale from glTF emissive_factor** — `emissiveScale` is set to `max(emissive_factor[0..2])` when an emissive texture is present, staying 0 otherwise. This preserves existing behaviour for non-emissive models (white fallback × 0 = no contribution) while activating the texture for the helmet's scorch-marked panels.
+
+**Metal LOD=11 bug with `hasMips=true`** — bgfx's Metal backend computes `LOD = floor(log2(max(w,h))) = 11` for 2048² textures when `hasMips=true` but only mip 0 is provided. Metal GPU samples the lowest-resolution mip (black border texel) producing a near-black result. Fix: pass `hasMips=false` to `bgfx::createTexture2D`. This suppresses Metal's auto-LOD selection and forces sampling from mip 0.
+**Why:** `hasMips=true` tells Metal the full mip chain exists; when it doesn't, hardware walks off the end of the atlas. `hasMips=false` is the correct value when uploading a single mip level.
+
+---
+
+### Debug Tools (`engine_debug`)
+
+**`engine_debug` static library** — bundles dear-imgui (1.77), the bgfx imgui rendering backend (`examples/common/imgui/imgui.cpp`), and `DebugTexturePanel`. Any sample app links `engine_debug` and calls `imguiCreate/BeginFrame/EndFrame`; the backend and dear-imgui are compiled once and not repeated per app.
+
+**bgfx imgui backend compiled without USE_ENTRY** — the backend in `examples/common/imgui/imgui.cpp` guards keyboard key-map setup behind `#if USE_ENTRY`. Without it, `io.KeyMap[]` is entirely empty: keyboard navigation (arrow keys, Page Up/Down) silently does nothing even with `ImGuiConfigFlags_NavEnableKeyboard` set. Fix: after `imguiCreate()`, manually set `io.KeyMap[ImGuiKey_UpArrow] = GLFW_KEY_UP` etc. and update `io.KeysDown[glfwKey]` each frame via `glfwGetKey`.
+
+**bgfx imgui scroll is cumulative, not per-frame delta** — `imguiBeginFrame` takes `int32_t _scroll` and internally computes `io.MouseWheel = _scroll - m_lastScroll`. Passing a per-frame delta and resetting it to 0 each frame means the next frame always computes `0 - delta = -delta`, cancelling every scroll event. The accumulator must be monotonically increasing (never reset). Store as `float` to accumulate fractional trackpad deltas (e.g. 0.3 per GLFW event) that would truncate to 0 with `int32_t` cast.
+
+**ImGui mouse-capture ordering** — `imguiBeginFrame` must be called before the game's mouse-capture check so that `ImGui::GetIO().WantCaptureMouse` reflects the current frame's hover state. Calling it after means every click on an ImGui panel is stolen by the game first. The corrected order: `imguiBeginFrame` → check `WantCaptureMouse` → conditionally activate game mouse capture.
+
+**`ConfigWindowsMoveFromTitleBarOnly`** — by default ImGui windows are draggable from their entire surface, including content area. This makes it impossible to scroll or interact with content without accidentally moving the window. Set `io.ConfigWindowsMoveFromTitleBarOnly = true` after `imguiCreate()` so windows only move when dragged from the title bar.
+
 ---
 
 ## Physics

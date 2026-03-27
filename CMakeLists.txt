@@ -330,6 +330,32 @@ add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 add_library(engine_threading STATIC engine/threading/ThreadPool.cpp)
 target_include_directories(engine_threading PUBLIC ${CMAKE_SOURCE_DIR})
 
+# --- engine_debug static library ---
+# Bundles dear-imgui + bgfx imgui rendering backend + DebugTexturePanel.
+# Any sample app that wants an ImGui overlay just links engine_debug and calls
+# imguiCreate/BeginFrame/EndFrame (declared in bgfx's examples/common/imgui/imgui.h,
+# which becomes available via the PUBLIC include dirs below).
+set(_BGFX_IMGUI_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/examples/common/imgui)
+set(_DEAR_IMGUI_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/3rdparty/dear-imgui)
+
+add_library(engine_debug STATIC
+    ${_BGFX_IMGUI_DIR}/imgui.cpp          # bgfx imgui render backend (embedded shaders)
+    ${_DEAR_IMGUI_DIR}/imgui.cpp          # dear-imgui core
+    ${_DEAR_IMGUI_DIR}/imgui_draw.cpp     # dear-imgui draw list
+    ${_DEAR_IMGUI_DIR}/imgui_widgets.cpp  # dear-imgui widgets
+    engine/debug/DebugTexturePanel.cpp
+)
+
+target_include_directories(engine_debug PUBLIC
+    ${CMAKE_SOURCE_DIR}
+    # <dear-imgui/imgui.h> and <iconfontheaders/...> used by bgfx's imgui.h wrapper.
+    ${bgfx_cmake_SOURCE_DIR}/bgfx/3rdparty
+    # imgui.h (bgfx wrapper) declares imguiCreate/BeginFrame/EndFrame — expose to callers.
+    ${_BGFX_IMGUI_DIR}
+)
+
+target_link_libraries(engine_debug PUBLIC bgfx bx)
+
 # --- engine_assets static library ---
 add_library(engine_assets STATIC
     engine/assets/AssetManager.cpp
@@ -431,9 +457,16 @@ add_executable(engine_tests
     tests/assets/TestAssetHandle.cpp
     tests/assets/TestAssetManager.cpp
     tests/assets/TestStdFileSystem.cpp
+    tests/assets/TestGltfLoader.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_threading engine_assets engine_rendering glm::glm Catch2::Catch2WithMain)
+
+target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
+
+target_compile_definitions(engine_tests PRIVATE
+    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
 
 # GLM compile flags — set here so they take effect before any GLM header is included,
 # regardless of include order inside translation units.
@@ -584,6 +617,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(helmet_demo PRIVATE
         engine_assets
         engine_rendering
+        engine_debug
         engine_input_glfw
         glm::glm
         "-framework Cocoa"

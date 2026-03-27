@@ -23,6 +23,8 @@ namespace engine::rendering
 //   slot 0  — s_albedo / s_hdrColor / s_ldrColor (context-dependent)
 //   slot 1  — s_normal / s_bloomTex / s_bloomPrev (context-dependent)
 //   slot 2  — s_orm
+//   slot 3  — s_emissive
+//   slot 4  — s_occlusion
 //   slot 5  — s_shadowMap     (Phase 4)
 //   slot 6  — s_irradiance    (Phase 11)
 //   slot 7  — s_prefiltered   (Phase 11)
@@ -64,9 +66,11 @@ struct ShaderUniforms
     // Samplers (Phase 3+)
     // -----------------------------------------------------------------------
 
-    bgfx::UniformHandle s_albedo;  // slot 0
-    bgfx::UniformHandle s_normal;  // slot 1
-    bgfx::UniformHandle s_orm;     // slot 2
+    bgfx::UniformHandle s_albedo;     // slot 0
+    bgfx::UniformHandle s_normal;     // slot 1
+    bgfx::UniformHandle s_orm;        // slot 2
+    bgfx::UniformHandle s_emissive;   // slot 3
+    bgfx::UniformHandle s_occlusion;  // slot 4
 
     // -----------------------------------------------------------------------
     // Shadow (Phase 4)

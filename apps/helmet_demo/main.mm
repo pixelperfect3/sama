@@ -16,6 +16,8 @@
 #include <GLFW/glfw3.h>
 #include <bgfx/bgfx.h>
 
+// bgfx imgui backend — declares imguiCreate/Destroy/BeginFrame/EndFrame.
+// engine_debug's PUBLIC include path exposes examples/common/imgui/.
 #include <cmath>
 #include <cstdio>
 #include <glm/glm.hpp>
@@ -28,6 +30,7 @@
 #include "engine/assets/GltfSceneSpawner.h"
 #include "engine/assets/StdFileSystem.h"
 #include "engine/assets/TextureLoader.h"
+#include "engine/debug/DebugTexturePanel.h"
 #include "engine/ecs/Registry.h"
 #include "engine/input/InputState.h"
 #include "engine/input/InputSystem.h"
@@ -45,6 +48,7 @@
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/threading/ThreadPool.h"
+#include "imgui.h"
 
 using namespace engine::assets;
 using namespace engine::ecs;
@@ -59,8 +63,8 @@ using namespace engine::threading;
 
 struct Camera
 {
-    glm::vec3 pos = {0.f, 0.5f, 3.5f};
-    float yaw = 0.f;
+    glm::vec3 pos = {1.8f, 0.5f, 3.0f};
+    float yaw = -30.f;
     float pitch = -8.f;
 
     static constexpr float kBaseSpeed = 3.f;
@@ -115,6 +119,12 @@ struct Camera
 // =============================================================================
 // Entry point
 // =============================================================================
+
+// Accumulated scroll forwarded to imguiBeginFrame.  Stored as float so that
+// fractional trackpad deltas (e.g. 0.3 per event) accumulate correctly; the
+// bgfx imgui backend computes io.MouseWheel from the integer difference between
+// successive calls, so we pass the floor-truncated cumulative value.
+static float s_imguiScrollF = 0.f;
 
 int main()
 {
@@ -182,6 +192,33 @@ int main()
         shadow.init(sd);
     }
 
+    // -- ImGui ----------------------------------------------------------------
+    // View 15 (kViewImGui) is reserved for the ImGui overlay; see ViewIds.h.
+    imguiCreate(16.f);
+
+    {
+        ImGuiIO& io = ImGui::GetIO();
+
+        // Restrict window dragging to the title bar so the content area can
+        // receive scroll and click events normally.
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
+
+        // The bgfx imgui backend is compiled without USE_ENTRY so it leaves
+        // io.KeyMap[] empty.  Wire up the nav keys manually so keyboard
+        // scrolling works (arrow keys, Page Up/Down).
+        io.KeyMap[ImGuiKey_UpArrow] = GLFW_KEY_UP;
+        io.KeyMap[ImGuiKey_DownArrow] = GLFW_KEY_DOWN;
+        io.KeyMap[ImGuiKey_PageUp] = GLFW_KEY_PAGE_UP;
+        io.KeyMap[ImGuiKey_PageDown] = GLFW_KEY_PAGE_DOWN;
+        io.KeyMap[ImGuiKey_Home] = GLFW_KEY_HOME;
+        io.KeyMap[ImGuiKey_End] = GLFW_KEY_END;
+
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    }
+
+    glfwSetScrollCallback(glfwHandle, [](GLFWwindow*, double /*xoff*/, double yoff)
+                          { s_imguiScrollF += static_cast<float>(yoff); });
+
     renderer.endFrame();  // flush resource uploads before loading
 
     // -- Start async helmet load ----------------------------------------------
@@ -191,6 +228,9 @@ int main()
     Registry reg;
     DrawCallBuildSystem drawCallSys;
     bool helmetSpawned = false;
+
+    // -- Debug texture panel --------------------------------------------------
+    engine::debug::DebugTexturePanel texPanel;
 
     // -- Input ----------------------------------------------------------------
     GlfwInputBackend inputBackend(glfwHandle);
@@ -202,8 +242,9 @@ int main()
 
     // -- Light ----------------------------------------------------------------
     // Direction FROM the surface TOWARD the light (see fs_pbr.sc).
-    const glm::vec3 kLightDir = glm::normalize(glm::vec3(-0.5f, 1.f, 0.8f));
-    constexpr float kLightIntens = 3.0f;
+    // Key light: upper-front-right so the metallic panels and golden areas are lit.
+    const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.5f, 1.f, 1.2f));
+    constexpr float kLightIntens = 4.0f;
     const float lightData[8] = {
         kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
         1.0f * kLightIntens, 0.95f * kLightIntens, 0.90f * kLightIntens, 0.f};
@@ -244,8 +285,43 @@ int main()
         // -- Input ------------------------------------------------------------
         inputSys.update(inputState);
 
-        if (!mouseCaptured && (inputState.isMouseButtonPressed(MouseButton::Left) ||
-                               inputState.isMouseButtonPressed(MouseButton::Right)))
+        // Feed ImGui first so WantCaptureMouse is up-to-date before we decide
+        // whether to capture the mouse for camera control.
+        {
+            double mx, my;
+            glfwGetCursorPos(glfwHandle, &mx, &my);
+            uint8_t imguiButtons = 0;
+            if (!mouseCaptured)
+            {
+                if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
+                    imguiButtons |= IMGUI_MBUT_LEFT;
+                if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
+                    imguiButtons |= IMGUI_MBUT_RIGHT;
+                if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS)
+                    imguiButtons |= IMGUI_MBUT_MIDDLE;
+
+                // Feed keyboard nav state so arrow/page keys scroll the panel.
+                // Only relevant when ImGui has focus (not during camera capture).
+                ImGuiIO& io = ImGui::GetIO();
+                static const int kNavKeys[] = {GLFW_KEY_UP,        GLFW_KEY_DOWN, GLFW_KEY_PAGE_UP,
+                                               GLFW_KEY_PAGE_DOWN, GLFW_KEY_HOME, GLFW_KEY_END};
+                for (int k : kNavKeys)
+                    io.KeysDown[k] = (glfwGetKey(glfwHandle, k) == GLFW_PRESS);
+            }
+            else
+            {
+                mx = -1.0;
+                my = -1.0;
+            }
+            imguiBeginFrame(static_cast<int32_t>(mx), static_cast<int32_t>(my), imguiButtons,
+                            static_cast<int32_t>(s_imguiScrollF), static_cast<uint16_t>(fbW),
+                            static_cast<uint16_t>(fbH), -1, kViewImGui);
+        }
+
+        // Only capture game mouse when ImGui is not handling it.
+        if (!mouseCaptured && !ImGui::GetIO().WantCaptureMouse &&
+            (inputState.isMouseButtonPressed(MouseButton::Left) ||
+             inputState.isMouseButtonPressed(MouseButton::Right)))
         {
             mouseCaptured = true;
             skipMouseFrame = true;
@@ -275,6 +351,31 @@ int main()
             const GltfAsset* helmet = assets.get<GltfAsset>(helmetHandle);
             GltfSceneSpawner::spawn(*helmet, reg, res);
             helmetSpawned = true;
+
+            // Populate the debug panel.  DamagedHelmet textures load in this order
+            // (per glTF image array index): albedo(0→ID1), ORM(1→ID2),
+            // emissive(2→ID3), occlusion(3→ID4), normal(4→ID5).
+            static const char* kTexNames[] = {"Albedo", "ORM (G=rough B=metal)", "Emissive",
+                                              "Occlusion", "Normal"};
+            const uint32_t n = res.textureCount();
+            for (uint32_t i = 1; i <= n; ++i)
+            {
+                bgfx::TextureHandle th = res.getTexture(i);
+                const char* name = (i <= 5) ? kTexNames[i - 1] : "Texture";
+                char label[64];
+                snprintf(label, sizeof(label), "[%u] %s", i, name);
+                texPanel.add(th, label);
+            }
+        }
+        else if (helmetState == AssetState::Failed)
+        {
+            static bool printed = false;
+            if (!printed)
+            {
+                printed = true;
+                fprintf(stderr, "helmet_demo: asset load failed: %s\n",
+                        assets.error(helmetHandle).c_str());
+            }
         }
 
         // -- Render -----------------------------------------------------------
@@ -298,9 +399,12 @@ int main()
             .transform(view, proj);
 
         const glm::mat4 shadowMat = shadow.shadowMatrix(0);
-        const PbrFrameParams frame{
+        PbrFrameParams frame{
             lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), W, H, 0.05f, 50.f,
         };
+        frame.camPos[0] = cam.pos.x;
+        frame.camPos[1] = cam.pos.y;
+        frame.camPos[2] = cam.pos.z;
         drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
@@ -322,12 +426,18 @@ int main()
                                 "Click to capture mouse  |  WASD/QE  |  F=HUD  |  Esc=release");
         }
 
+        // -- ImGui texture panel ----------------------------------------------
+        texPanel.show();
+        imguiEndFrame();
+
         // -- Flip -------------------------------------------------------------
         renderer.endFrame();
     }
 
     // -- Cleanup --------------------------------------------------------------
     assets.release(helmetHandle);
+
+    imguiDestroy();
 
     shadow.shutdown();
     if (bgfx::isValid(shadowProg))
