@@ -263,9 +263,10 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
         }
     }
 
+    std::vector<float> uvData;
     if (uvAcc)
     {
-        auto uvData = readFloatAccessor(uvAcc);
+        uvData = readFloatAccessor(uvAcc);
         md.uvs.resize(vertCount * 2);
         for (size_t i = 0; i < vertCount; ++i)
         {
@@ -288,6 +289,116 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
                                      " exceeds uint16 max (65535). "
                                      "Split the mesh or add uint32 index support.");
         md.indices.push_back(static_cast<uint16_t>(i));
+    }
+
+    // -----------------------------------------------------------------------
+    // Generate tangents from positions, normals, and UVs when the glTF mesh
+    // does not provide TANGENT attributes (common for many sample models).
+    // Uses a standard per-triangle tangent computation averaged at vertices.
+    // -----------------------------------------------------------------------
+    if (!tanAcc && normAcc && uvAcc && !md.indices.empty())
+    {
+        const auto& posData = md.positions;  // float×3 per vertex
+        // uvData was captured earlier as float×2 per vertex
+
+        // Accumulate per-vertex tangent/bitangent in world space.
+        std::vector<float> tanAccum(vertCount * 3, 0.f);
+        std::vector<float> bitAccum(vertCount * 3, 0.f);
+
+        for (size_t t = 0; t + 2 < idx32.size(); t += 3)
+        {
+            const uint32_t i0 = idx32[t + 0], i1 = idx32[t + 1], i2 = idx32[t + 2];
+
+            const float* p0 = &posData[i0 * 3];
+            const float* p1 = &posData[i1 * 3];
+            const float* p2 = &posData[i2 * 3];
+
+            const float* uv0 = &uvData[i0 * 2];
+            const float* uv1 = &uvData[i1 * 2];
+            const float* uv2 = &uvData[i2 * 2];
+
+            const float e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
+            const float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
+
+            const float du1 = uv1[0] - uv0[0], dv1 = uv1[1] - uv0[1];
+            const float du2 = uv2[0] - uv0[0], dv2 = uv2[1] - uv0[1];
+
+            float det = du1 * dv2 - du2 * dv1;
+            if (std::abs(det) < 1e-8f)
+                det = 1e-8f;
+            const float invDet = 1.f / det;
+
+            const float tx = (dv2 * e1x - dv1 * e2x) * invDet;
+            const float ty = (dv2 * e1y - dv1 * e2y) * invDet;
+            const float tz = (dv2 * e1z - dv1 * e2z) * invDet;
+
+            const float bx = (-du2 * e1x + du1 * e2x) * invDet;
+            const float by = (-du2 * e1y + du1 * e2y) * invDet;
+            const float bz = (-du2 * e1z + du1 * e2z) * invDet;
+
+            for (uint32_t idx : {i0, i1, i2})
+            {
+                tanAccum[idx * 3 + 0] += tx;
+                tanAccum[idx * 3 + 1] += ty;
+                tanAccum[idx * 3 + 2] += tz;
+                bitAccum[idx * 3 + 0] += bx;
+                bitAccum[idx * 3 + 1] += by;
+                bitAccum[idx * 3 + 2] += bz;
+            }
+        }
+
+        // Orthonormalize and encode.
+        auto normData = readFloatAccessor(normAcc);
+        md.tangents.resize(vertCount * 4);
+        for (size_t i = 0; i < vertCount; ++i)
+        {
+            const float nx = normData[i * 3 + 0];
+            const float ny = normData[i * 3 + 1];
+            const float nz = normData[i * 3 + 2];
+
+            float tx = tanAccum[i * 3 + 0];
+            float ty = tanAccum[i * 3 + 1];
+            float tz = tanAccum[i * 3 + 2];
+
+            // Gram-Schmidt orthogonalize: T = normalize(T - N * dot(N, T))
+            const float ndott = nx * tx + ny * ty + nz * tz;
+            tx -= nx * ndott;
+            ty -= ny * ndott;
+            tz -= nz * ndott;
+
+            float len = std::sqrt(tx * tx + ty * ty + tz * tz);
+            if (len < 1e-6f)
+            {
+                // Degenerate — pick arbitrary tangent perpendicular to normal.
+                if (std::abs(nx) < 0.9f)
+                {
+                    tx = 0.f;
+                    ty = -nz;
+                    tz = ny;
+                }
+                else
+                {
+                    tx = nz;
+                    ty = 0.f;
+                    tz = -nx;
+                }
+                len = std::sqrt(tx * tx + ty * ty + tz * tz);
+            }
+            tx /= len;
+            ty /= len;
+            tz /= len;
+
+            // Bitangent sign: sign of dot(cross(N, T), B)
+            const float cx = ny * tz - nz * ty;
+            const float cy = nz * tx - nx * tz;
+            const float cz = nx * ty - ny * tx;
+            const float bDot =
+                cx * bitAccum[i * 3 + 0] + cy * bitAccum[i * 3 + 1] + cz * bitAccum[i * 3 + 2];
+            const float sign = (bDot < 0.f) ? -1.f : 1.f;
+
+            encodeOctTangent(tx, ty, tz, sign, md.tangents[i * 4 + 0], md.tangents[i * 4 + 1],
+                             md.tangents[i * 4 + 2], md.tangents[i * 4 + 3]);
+        }
     }
 
     return md;
@@ -472,8 +583,8 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
             const ptrdiff_t idx = m.emissive_texture.texture->image - data->images;
             mat.emissiveTexIndex = static_cast<int32_t>(idx);
             // Use the brightest emissive_factor channel as a scalar multiplier.
-            mat.emissiveScale = std::max({m.emissive_factor[0], m.emissive_factor[1],
-                                          m.emissive_factor[2]});
+            mat.emissiveScale =
+                std::max({m.emissive_factor[0], m.emissive_factor[1], m.emissive_factor[2]});
         }
 
         if (m.occlusion_texture.texture && m.occlusion_texture.texture->image)

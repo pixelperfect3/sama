@@ -53,6 +53,8 @@ void registerResources(const GltfAsset& asset, rendering::RenderResources& res,
         gpuMat.albedoMapId = remap(mat.albedoMapId);
         gpuMat.normalMapId = remap(mat.normalMapId);
         gpuMat.ormMapId = remap(mat.ormMapId);
+        gpuMat.emissiveMapId = remap(mat.emissiveMapId);
+        gpuMat.occlusionMapId = remap(mat.occlusionMapId);
         outMaterialIds.push_back(res.addMaterial(gpuMat));
     }
 }

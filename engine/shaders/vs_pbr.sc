@@ -7,14 +7,14 @@ $output v_worldPos, v_normal, v_tangent, v_bitangent, v_texcoord0, v_viewPos
 // We use u_model[0] for the world transform.
 
 // Oct-decode: maps a snorm16 vec2 in [-1, 1] back to a unit vec3.
-// The w-component of the octahedron is 1 - |x| - |y|; when negative the
-// sign of the input components is used to recover the correct hemisphere.
+// When the reconstructed z (1-|x|-|y|) is negative we are in the lower
+// hemisphere; subtract t*sign(n.xy) to undo the octWrap fold.
 vec3 octDecode(vec2 f)
 {
     vec3 n = vec3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
     float t = clamp(-n.z, 0.0, 1.0);
-    n.x += (n.x >= 0.0) ? t : -t;
-    n.y += (n.y >= 0.0) ? t : -t;
+    n.x += (n.x >= 0.0) ? -t : t;
+    n.y += (n.y >= 0.0) ? -t : t;
     return normalize(n);
 }
 

@@ -133,9 +133,9 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 
     // u_frameParams[0] = {viewportW, viewportH, near, far}
     // u_frameParams[1] = {camPos.x, camPos.y, camPos.z, 0} — camera world position for V vector
-    const float frameParamsData[8] = {frameW,          frameH,          frame.nearPlane,
-                                      frame.farPlane,  frame.camPos[0], frame.camPos[1],
-                                      frame.camPos[2], 0.0f};
+    const float frameParamsData[8] = {
+        frameW,          frameH,          frame.nearPlane, frame.farPlane,
+        frame.camPos[0], frame.camPos[1], frame.camPos[2], 0.0f};
 
     // u_lightParams = {numLights, screenW, screenH, 0}
     // numLights=0 disables the clustered loop; screenW/H prevent tile div-by-zero.
@@ -189,10 +189,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 }
                 return whiteTex;
             };
-            bgfx::setTexture(0, uniforms.s_albedo,    resolveOrWhite(mat->albedoMapId));
-            bgfx::setTexture(1, uniforms.s_normal,    resolveOrWhite(mat->normalMapId));
-            bgfx::setTexture(2, uniforms.s_orm,       resolveOrWhite(mat->ormMapId));
-            bgfx::setTexture(3, uniforms.s_emissive,  resolveOrWhite(mat->emissiveMapId));
+            bgfx::setTexture(0, uniforms.s_albedo, resolveOrWhite(mat->albedoMapId));
+            bgfx::setTexture(1, uniforms.s_normal, resolveOrWhite(mat->normalMapId));
+            bgfx::setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
+            bgfx::setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
             bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
             bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
             bgfx::setTexture(12, uniforms.s_lightData, whiteTex);

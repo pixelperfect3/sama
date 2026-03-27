@@ -108,12 +108,15 @@ void main()
     vec3 T = normalize(v_tangent);
     vec3 B = normalize(v_bitangent);
     vec3 Ngeom = normalize(v_normal);
-    mat3 TBN = mtxFromCols3(T, B, Ngeom);
 
     // Sample normal map (slot 1), decode [0,1] -> [-1,1] tangent-space normal.
     vec3 normalSample = texture2D(s_normal, v_texcoord0).xyz;
     normalSample = normalSample * 2.0 - 1.0;
-    vec3 N = normalize(mul(TBN, normalSample));
+
+    // Transform tangent-space normal to world space.
+    // Expanded manually (T*ns.x + B*ns.y + N*ns.z) to avoid
+    // mtxFromCols3 which transposes on Metal's shader path.
+    vec3 N = normalize(T * normalSample.x + B * normalSample.y + Ngeom * normalSample.z);
 
     // -----------------------------------------------------------------------
     // View vector: camera world position from u_frameParams[1].xyz.
