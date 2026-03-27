@@ -1,0 +1,3 @@
+[submodule ".metal-ai"]
+	path = .metal-ai
+	url = https://github.com/rudybear/metal-ai-skill.git
