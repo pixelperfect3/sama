@@ -180,6 +180,7 @@ void PhysicsSystem::syncDynamicBodies(ecs::Registry& reg, IPhysicsEngine& physic
                                    perspective);
                     parentRot = glm::normalize(parentRot);
                     tc->rotation = glm::normalize(glm::inverse(parentRot) * worldRot);
+                    tc->flags |= 0x01;  // mark dirty
                     return;
                 }
             }
@@ -187,6 +188,7 @@ void PhysicsSystem::syncDynamicBodies(ecs::Registry& reg, IPhysicsEngine& physic
             // Root entity: write directly
             tc->position = worldPos;
             tc->rotation = worldRot;
+            tc->flags |= 0x01;  // mark dirty so TransformSystem recomputes world matrix
         });
 }
 
