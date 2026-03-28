@@ -2,9 +2,8 @@
 
 #include <bgfx/bgfx.h>
 
-#include <vector>
-
 #include "engine/math/Types.h"
+#include "engine/memory/InlinedVector.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/components/SpriteComponent.h"
 
@@ -53,7 +52,7 @@ private:
         SpriteComponent sprite;
     };
 
-    std::vector<SpriteEntry> sprites_;
+    memory::InlinedVector<SpriteEntry, 64> sprites_;
 };
 
 }  // namespace engine::rendering
