@@ -41,6 +41,14 @@ struct Skeleton
 {
     std::vector<Joint> joints;  // ordered such that parent always precedes child
 
+#if !defined(NDEBUG)
+    // Debug-only: human-readable joint names, parallel to joints[].
+    // Populated by GltfLoader from glTF node names. Compiled out in
+    // release builds (NDEBUG is defined by CMake/Xcode/MSVC/NDK in
+    // Release mode — it's the C++ standard macro used by <cassert>).
+    std::vector<std::string> debugJointNames;
+#endif
+
     [[nodiscard]] uint32_t jointCount() const noexcept
     {
         return static_cast<uint32_t>(joints.size());
@@ -60,9 +68,10 @@ struct Skeleton
 ```
 
 **Joint layout rationale:**
-- No `std::string` — avoids per-joint heap allocation. Joint names are stored as a 32-bit FNV-1a hash, which is sufficient for gameplay lookups (attach weapon to hand bone, IK targets, ragdoll mapping). The original string names can be recovered from the source glTF if needed for editor/debug tooling.
+- No `std::string` in Joint — avoids per-joint heap allocation. Joint names are stored as a 32-bit FNV-1a hash, which is sufficient for gameplay lookups (attach weapon to hand bone, IK targets, ragdoll mapping).
 - 80 bytes per joint: 64B inverse bind matrix + 4B parent index + 4B name hash + 8B trailing padding (imposed by Mat4's 16-byte alignment). The hot loop (bone matrix computation) reads `inverseBindMatrix` and `parentIndex`; `nameHash` sits in the same cache line as `parentIndex` so it's free to include.
 - `std::vector<Joint>` for storage: joints are loaded once from glTF and never modified. Single heap allocation at load time, not per-frame.
+- **Debug joint names:** A separate `std::vector<std::string> debugJointNames` in Skeleton (parallel to `joints[]`) stores human-readable names for editor/debug tooling. Guarded by `#if !defined(NDEBUG)` — compiled out entirely in release builds. `NDEBUG` is the C++ standard macro defined by all platforms (CMake, Xcode, MSVC, Android NDK) in Release configurations. The engine already uses it elsewhere (`Renderer::init()` gates `BGFX_DEBUG_TEXT` behind `#ifndef NDEBUG`).
 
 The `joints` array is topologically sorted: parent indices always reference earlier elements. This guarantees a single forward pass computes all world-space joint transforms without recursion.
 
