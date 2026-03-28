@@ -124,13 +124,16 @@ void PhysicsSystem::syncKinematicBodies(ecs::Registry& reg, IPhysicsEngine& phys
                 return;
             }
 
-            // Decompose world matrix to get position and rotation
+            // Decompose world matrix to get position and rotation.
+            // glm::decompose can produce non-normalized quaternions;
+            // Jolt asserts on normalized input.
             math::Vec3 position;
             math::Quat rotation;
             math::Vec3 scale;
             math::Vec3 skew;
             math::Vec4 perspective;
             glm::decompose(wtc->matrix, scale, rotation, position, skew, perspective);
+            rotation = glm::normalize(rotation);
 
             physics.moveKinematic(rb.bodyID, position, rotation, deltaTime);
         });
@@ -175,7 +178,8 @@ void PhysicsSystem::syncDynamicBodies(ecs::Registry& reg, IPhysicsEngine& physic
                     math::Vec4 perspective;
                     glm::decompose(parentWtc->matrix, parentScale, parentRot, parentPos, skew,
                                    perspective);
-                    tc->rotation = glm::inverse(parentRot) * worldRot;
+                    parentRot = glm::normalize(parentRot);
+                    tc->rotation = glm::normalize(glm::inverse(parentRot) * worldRot);
                     return;
                 }
             }
