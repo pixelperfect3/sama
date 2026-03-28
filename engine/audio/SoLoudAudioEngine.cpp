@@ -19,10 +19,17 @@ bool SoLoudAudioEngine::init(uint32_t sampleRate, uint32_t bufferSize, uint32_t 
     }
 
     // SoLoud::init(flags, backend, sampleRate, bufferSize, channels).
-    // Use AUTO for sample rate and buffer size to let miniaudio pick optimal values.
     // channels is output channel count (1=mono, 2=stereo), NOT max voices.
+    // Try MINIAUDIO first, fall back to COREAUDIO, then AUTO.
     auto result = soloud_.init(SoLoud::Soloud::CLIP_ROUNDOFF, SoLoud::Soloud::MINIAUDIO,
                                SoLoud::Soloud::AUTO, SoLoud::Soloud::AUTO, 2);
+    if (result != SoLoud::SO_NO_ERROR)
+    {
+        fprintf(stderr, "SoLoud: MINIAUDIO backend failed (%d), trying AUTO\n",
+                static_cast<int>(result));
+        result = soloud_.init(SoLoud::Soloud::CLIP_ROUNDOFF, SoLoud::Soloud::AUTO,
+                              SoLoud::Soloud::AUTO, SoLoud::Soloud::AUTO, 2);
+    }
 
     if (result != SoLoud::SO_NO_ERROR)
     {

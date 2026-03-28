@@ -436,13 +436,17 @@ add_library(engine_audio STATIC
     ${SOLOUD_SRC_DIR}/audiosource/wav/soloud_wavstream.cpp
     ${SOLOUD_SRC_DIR}/audiosource/wav/stb_vorbis.c
     ${SOLOUD_SRC_DIR}/audiosource/wav/dr_impl.cpp
-    # SoLoud miniaudio backend
-    ${SOLOUD_SRC_DIR}/backend/miniaudio/soloud_miniaudio.cpp
+    # SoLoud miniaudio backend — patched for miniaudio v0.11 API compatibility.
+    # The vendored SoLoud (2020) ships miniaudio v0.9.10 which fails on macOS 14+.
+    # We replace it with miniaudio v0.11 and patch the two renamed fields.
+    ${CMAKE_SOURCE_DIR}/third_party/soloud_patches/soloud_miniaudio.cpp
 )
 
 target_compile_definitions(engine_audio PRIVATE WITH_MINIAUDIO)
 target_include_directories(engine_audio PUBLIC ${CMAKE_SOURCE_DIR})
 target_include_directories(engine_audio PUBLIC ${SOLOUD_INC_DIR})
+# Use our patched miniaudio.h (v0.11) instead of SoLoud's bundled v0.9.
+target_include_directories(engine_audio BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/third_party/soloud_patches)
 target_link_libraries(engine_audio PUBLIC engine_ecs engine_scene glm::glm)
 
 if(APPLE)

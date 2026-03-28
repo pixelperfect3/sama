@@ -316,7 +316,8 @@ int main()
     SoLoudAudioEngine audioEngine;
     if (!audioEngine.init())
     {
-        fprintf(stderr, "audio_demo: SoLoud init failed — running without audio\n");
+        fprintf(stderr, "audio_demo: failed to initialize audio engine\n");
+        return 1;
     }
     AudioSystem audioSys(audioEngine);
 
