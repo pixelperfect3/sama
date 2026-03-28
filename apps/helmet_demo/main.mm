@@ -40,6 +40,7 @@
 #include "engine/platform/desktop/GlfwWindow.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
+#include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/Renderer.h"
@@ -250,6 +251,26 @@ int main()
     engine::scene::TransformSystem transformSys;
     bool helmetSpawned = false;
 
+    // -- Light indicator (small bright cube at the light position) ------------
+    uint32_t lightMeshId = res.addMesh(buildMesh(makeCubeMeshData()));
+    Material lightMat{};
+    lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
+    lightMat.emissiveScale = 5.0f;
+    lightMat.roughness = 1.0f;
+    uint32_t lightMatId = res.addMaterial(lightMat);
+
+    EntityID lightIndicator = reg.createEntity();
+    {
+        TransformComponent tc{};
+        tc.position = {0.0f, 5.0f, 0.0f};
+        tc.rotation = glm::quat(1, 0, 0, 0);
+        tc.scale = {0.15f, 0.15f, 0.15f};
+        reg.emplace<TransformComponent>(lightIndicator, tc);
+        reg.emplace<MeshComponent>(lightIndicator, MeshComponent{lightMeshId});
+        reg.emplace<MaterialComponent>(lightIndicator, MaterialComponent{lightMatId});
+        reg.emplace<VisibleTag>(lightIndicator);
+    }
+
     // -- Debug texture panel --------------------------------------------------
     engine::debug::DebugTexturePanel texPanel;
 
@@ -424,6 +445,11 @@ int main()
             1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
         const glm::vec3 lightPos = lightDir * 10.f;
         const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
+
+        // Move light indicator cube to match the light source position (scaled closer).
+        auto* ltc = reg.get<TransformComponent>(lightIndicator);
+        if (ltc)
+            ltc->position = lightDir * 3.0f;
 
         // -- Render -----------------------------------------------------------
         renderer.beginFrameDirect();
