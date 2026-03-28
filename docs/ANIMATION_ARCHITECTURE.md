@@ -192,8 +192,15 @@ A new system in `engine/animation/AnimationSystem.h`. In the DAG, it declares `R
 ### 4.1 Per-Frame Update
 
 ```
-AnimationSystem::update(Registry& reg, float deltaTime, AnimationResources& animRes)
+AnimationSystem::update(Registry& reg, float deltaTime,
+                        AnimationResources& animRes,
+                        std::pmr::memory_resource* arena)
 {
+    // Bone matrix buffer lives in the FrameArena — zero heap allocation,
+    // automatically freed on arena reset at frame end.
+    std::pmr::vector<math::Mat4> boneBuffer(arena);
+    boneBuffer.reserve(estimatedTotalBones);  // e.g. visibleSkinCount * 64
+
     for each entity with (SkeletonComponent, AnimatorComponent, SkinComponent):
         1. Advance playbackTime by deltaTime * speed
         2. Handle looping (wrap) or clamping
@@ -206,14 +213,28 @@ AnimationSystem::update(Registry& reg, float deltaTime, AnimationResources& anim
            - Forward pass over joints (parent-first ordering guaranteed by Skeleton):
              worldTransform[i] = worldTransform[parent[i]] * localTRS(pose[i])
            - finalMatrix[i] = worldTransform[i] * inverseBindMatrix[i]
-        6. Write finalMatrix[0..boneCount-1] into the shared bone matrix buffer
-           at boneMatrixOffset
+        6. Record boneMatrixOffset = boneBuffer.size()
+           Append finalMatrix[0..boneCount-1] to boneBuffer
+           Write offset into SkinComponent::boneMatrixOffset
+
+    // boneBuffer is passed to DrawCallBuildSystem for GPU upload.
+    // It stays valid until frameArena.reset() at frame end.
 }
 ```
 
 ### 4.2 Bone Matrix Buffer
 
-A per-frame `std::vector<math::Mat4>` owned by `AnimationSystem` (or an `AnimationResources` object). Each skinned entity reserves `boneCount` contiguous slots. The renderer reads this buffer when submitting draw calls for skinned meshes.
+The per-frame bone matrix buffer uses `std::pmr::vector<math::Mat4>` backed by the
+`FrameArena`. This is the ideal use case for the arena:
+
+- **Variable size:** Depends on how many skinned characters are visible (50 characters × 64 bones = 3200 Mat4s = 200KB).
+- **Zero heap allocation:** The arena is pre-allocated (2MB in demos). Bone matrices fit easily. No `malloc`/`free` per frame.
+- **Automatic cleanup:** The buffer dies when `frameArena.reset()` is called at frame end. No manual lifetime management.
+- **No persistent memory waste:** Unlike a member `std::vector` that retains capacity forever, the arena reclaims all memory each frame.
+
+Why not InlinedVector: 50 characters × 64 bones × 64 bytes = 200KB inline storage. Too large for the stack. The arena handles this naturally since it's heap-backed but bump-allocated.
+
+The `AnimationSystem::update()` method accepts `std::pmr::memory_resource* arena` (same pattern as `InstanceBufferBuildSystem::update()`). The bone buffer pointer is passed to `DrawCallBuildSystem` for GPU upload via `bgfx::setTransform()`.
 
 ### 4.3 Clip Blending
 
