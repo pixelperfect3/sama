@@ -47,6 +47,7 @@
 #include "engine/rendering/ShadowRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
 #include "imgui.h"
 
@@ -239,6 +240,7 @@ int main()
     // -- ECS ------------------------------------------------------------------
     Registry reg;
     DrawCallBuildSystem drawCallSys;
+    engine::scene::TransformSystem transformSys;
     bool helmetSpawned = false;
 
     // -- Debug texture panel --------------------------------------------------
@@ -254,12 +256,13 @@ int main()
 
     // -- Light ----------------------------------------------------------------
     // Direction FROM the surface TOWARD the light (see fs_pbr.sc).
-    // Key light: upper-front-right so the metallic panels and golden areas are lit.
-    const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.5f, 1.f, 1.2f));
-    constexpr float kLightIntens = 4.0f;
+    // Key light: upper-right, shining toward -Z to match the DamagedHelmet
+    // visor orientation (front-face normals point in -Z).
+    const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.5f, 0.8f, -1.0f));
+    constexpr float kLightIntens = 8.0f;
     const float lightData[8] = {
         kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
-        1.0f * kLightIntens, 0.95f * kLightIntens, 0.90f * kLightIntens, 0.f};
+        1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
 
     const glm::vec3 kLightPos = kLightDir * 10.f;
     const glm::mat4 lightView = glm::lookAt(kLightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
@@ -390,6 +393,9 @@ int main()
                         assets.error(helmetHandle).c_str());
             }
         }
+
+        // -- Transform system: compose local TRS → world matrices -------------
+        transformSys.update(reg);
 
         // -- Render -----------------------------------------------------------
         renderer.beginFrameDirect();

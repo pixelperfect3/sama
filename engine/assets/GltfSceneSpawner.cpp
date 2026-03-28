@@ -1,11 +1,14 @@
 #include "engine/assets/GltfSceneSpawner.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 
 #include "engine/assets/GltfAsset.h"
 #include "engine/ecs/Registry.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/RenderResources.h"
+#include "engine/scene/HierarchyComponents.h"
+#include "engine/scene/SceneGraph.h"
 
 namespace engine::assets
 {
@@ -59,28 +62,49 @@ void registerResources(const GltfAsset& asset, rendering::RenderResources& res,
     }
 }
 
-// Recurse over node tree, spawning entities.
-void spawnNode(const GltfAsset& asset, uint32_t nodeIdx, const math::Mat4& parentWorld,
-               ecs::Registry& reg, const std::vector<uint32_t>& meshIds,
-               const std::vector<uint32_t>& matIds)
+// Decompose a Mat4 into TransformComponent TRS.
+rendering::TransformComponent decomposeToTRS(const math::Mat4& m)
+{
+    math::Vec3 scale;
+    math::Quat rotation;
+    math::Vec3 translation;
+    math::Vec3 skew;
+    math::Vec4 perspective;
+    glm::decompose(m, scale, rotation, translation, skew, perspective);
+
+    rendering::TransformComponent tc{};
+    tc.position = translation;
+    tc.rotation = rotation;
+    tc.scale = scale;
+    return tc;
+}
+
+// Recurse over node tree, spawning entities with local TRS + hierarchy.
+// Returns the EntityID of the spawned node.
+ecs::EntityID spawnNode(const GltfAsset& asset, uint32_t nodeIdx, ecs::EntityID parentEntity,
+                        ecs::Registry& reg, const std::vector<uint32_t>& meshIds,
+                        const std::vector<uint32_t>& matIds)
 {
     const GltfAsset::Node& node = asset.nodes[nodeIdx];
-    const math::Mat4 worldTransform = parentWorld * node.localTransform;
 
-    // Spawn an entity for this node if it has a mesh.
+    ecs::EntityID e = reg.createEntity();
+
+    // Store local TRS; TransformSystem will compute WorldTransformComponent.
+    reg.emplace<rendering::TransformComponent>(e, decomposeToTRS(node.localTransform));
+
+    // Establish parent-child link.
+    if (parentEntity != ecs::INVALID_ENTITY)
+        scene::setParent(reg, e, parentEntity);
+
+    // Attach mesh and material if this node references geometry.
     if (node.meshIndex >= 0 && node.meshIndex < static_cast<int32_t>(meshIds.size()))
     {
         const uint32_t meshId = meshIds[static_cast<size_t>(node.meshIndex)];
 
         uint32_t matId = 0;
         if (node.materialIndex >= 0 && node.materialIndex < static_cast<int32_t>(matIds.size()))
-        {
             matId = matIds[static_cast<size_t>(node.materialIndex)];
-        }
 
-        ecs::EntityID e = reg.createEntity();
-        reg.emplace<rendering::WorldTransformComponent>(
-            e, rendering::WorldTransformComponent{worldTransform});
         reg.emplace<rendering::MeshComponent>(e, rendering::MeshComponent{meshId});
         reg.emplace<rendering::MaterialComponent>(e, rendering::MaterialComponent{matId});
         reg.emplace<rendering::VisibleTag>(e);
@@ -89,7 +113,9 @@ void spawnNode(const GltfAsset& asset, uint32_t nodeIdx, const math::Mat4& paren
 
     // Recurse into children.
     for (uint32_t childIdx : node.childIndices)
-        spawnNode(asset, childIdx, worldTransform, reg, meshIds, matIds);
+        spawnNode(asset, childIdx, e, reg, meshIds, matIds);
+
+    return e;
 }
 
 }  // anonymous namespace
@@ -103,9 +129,8 @@ void GltfSceneSpawner::spawn(const GltfAsset& asset, ecs::Registry& reg,
     std::vector<uint32_t> matIds;
     registerResources(asset, res, meshIds, matIds);
 
-    const math::Mat4 identity(1.0f);
     for (uint32_t rootIdx : asset.rootNodeIndices)
-        spawnNode(asset, rootIdx, identity, reg, meshIds, matIds);
+        spawnNode(asset, rootIdx, ecs::INVALID_ENTITY, reg, meshIds, matIds);
 }
 
 }  // namespace engine::assets

@@ -370,7 +370,7 @@ target_include_directories(engine_assets PRIVATE
     ${stb_SOURCE_DIR}
     ${cgltf_SOURCE_DIR}
 )
-target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading glm::glm)
+target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading engine_scene glm::glm)
 
 # --- engine_ecs static library ---
 add_library(engine_ecs STATIC engine/ecs/Registry.cpp)

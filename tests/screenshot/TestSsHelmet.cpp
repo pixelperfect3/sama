@@ -29,6 +29,7 @@
 #include "engine/rendering/ShadowRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
 
 using namespace engine::assets;
@@ -87,6 +88,10 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     const GltfAsset* helmet = assets.get<GltfAsset>(handle);
     REQUIRE(helmet != nullptr);
     GltfSceneSpawner::spawn(*helmet, reg, res);
+
+    // Compute world matrices from the scene hierarchy.
+    engine::scene::TransformSystem transformSys;
+    transformSys.update(reg);
 
     // -----------------------------------------------------------------------
     // Shadow pass (view 0)
