@@ -696,3 +696,22 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - **Why a separate demo:** Validates the scene graph end-to-end with runtime interaction (picking, dragging, hierarchy propagation), which the unit tests cannot cover.
 
 ---
+
+## Rendering Bug Fixes
+
+### Shadow Mapping Fixes
+1. **Shadow pass face culling (BGFX_STATE_CULL_CCW → CULL_CW):** The shadow pass was culling front faces instead of back faces. Cube mesh uses CCW winding for front faces; `CULL_CCW` removed them, so the shadow map only contained back-face depth. Fixed to `CULL_CW`.
+2. **Shadow Y-flip on Metal:** The bias matrix converting NDC→UV didn't account for Metal's top-left texture origin (`originBottomLeft = false`). Added `bgfx::getCaps()->originBottomLeft` check to flip V when needed.
+3. **Slope-scaled shadow bias:** Fixed 0.005 bias caused shadow acne on surfaces at oblique angles to the light. Replaced with slope-dependent bias `mix(0.002, 0.02, 1.0 - dot(Ngeom, L))`.
+
+### Neutral Normal Map Fallback
+- **Problem:** When no normal map texture is assigned, the white `(255,255,255)` fallback was decoded as tangent-space `(1,1,1)`. After TBN transformation: `N = T*1 + B*1 + Ngeom*1 = T+B+Ngeom`. For a ground plane with `T=(1,0,0), B=(0,0,1), N=(0,1,0)`, this produced `(1,1,1)` normalized — and `dot((1,1,1), lightDir)` was ~0 for many light angles, making surfaces appear unlit.
+- **Fix:** Added a `(128,128,255)` neutral normal texture that decodes to tangent-space `(0,0,1)` → `N = Ngeom` (no distortion). `DrawCallBuildSystem` uses this fallback for the normal map slot when `normalMapId == 0`.
+- **Lesson:** Any texture slot where the shader decodes values (like `normalSample * 2 - 1`) needs a semantically correct fallback, not just white.
+
+### PBR Specular Visibility
+- **DamagedHelmet roughness ~1.0:** The ORM texture has roughness near 1.0 everywhere (battle-worn metal). At roughness 1.0, GGX specular lobe is completely flat — no visible peak. Override material roughness to 0.55 in the helmet demo so smoother areas produce visible specular.
+- **Ambient too bright:** Hemisphere ambient (sky 0.90/0.95/1.20) dominated the output through Reinhard tonemapping compression. Reduced to (0.15/0.18/0.25) so directional light specular punches through.
+- **Rotating light:** Helmet demo light orbits the model (6s period, 40° elevation) to sweep specular highlights across the surface.
+
+---
