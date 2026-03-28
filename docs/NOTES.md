@@ -654,3 +654,37 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - Policy defined; applied as each library is integrated
 
 ---
+
+## Scene Graph
+
+### Architecture Decision: ECS-native hierarchy
+- **Approach:** Encode parent-child relationships directly in ECS components, no separate tree object.
+- **Why:** Keeps all data in the same Registry that render systems already query. No synchronization between a parallel tree structure and ECS state. Views/queries work naturally.
+- **Alternative considered:** Standalone SceneGraph class with its own node objects → rejected because it duplicates entity lifecycle management and requires manual sync with ECS transforms.
+
+### Components
+- `HierarchyComponent` (8 bytes): stores `EntityID parent`. Absent = root entity.
+- `ChildrenComponent` (~24 bytes + heap): stores `std::vector<EntityID> children`. Removed when last child is detached (no empty vectors).
+- `TransformComponent` (44 bytes, existing): local position/rotation/scale + dirty flag.
+- `WorldTransformComponent` (64 bytes, existing): cached world matrix, one cache line.
+
+### TransformSystem
+- Runs once per frame, single-threaded, before culling/rendering.
+- Finds roots (TransformComponent without HierarchyComponent), walks children recursively via ChildrenComponent.
+- Composes `world = parentWorld * T * R * S` top-down. Writes WorldTransformComponent.
+- **Dirty flag optimization deferred** — unconditional recompute at 50k nodes is <1ms. Will add when profiling shows need.
+
+### Mutation API (free functions in `engine::scene`)
+- `setParent(reg, child, newParent)` — cycle detection via ancestor walk, automatic cleanup of old parent's ChildrenComponent when empty.
+- `detach(reg, child)` — remove from parent, become root.
+- `destroyHierarchy(reg, root)` — depth-first recursive destroy of subtree.
+- `isAncestor` — depth-limited walk (max 1024) as defense against corruption.
+
+### GltfSceneSpawner Integration
+- Creates an entity for every glTF node (not just mesh nodes) to preserve hierarchy.
+- Decomposes `Mat4 localTransform` → TRS via `glm::decompose` for TransformComponent.
+- Calls `setParent` to establish parent-child links.
+- TransformSystem computes WorldTransformComponent before rendering.
+- **Tradeoff:** Slightly more entities than before (hierarchy pivots without meshes), but enables runtime transform manipulation.
+
+---
