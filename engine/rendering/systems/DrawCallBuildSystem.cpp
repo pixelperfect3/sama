@@ -249,8 +249,9 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
             bgfx::setVertexBuffer(0, mesh->positionVbh);
             bgfx::setIndexBuffer(mesh->ibh);
 
-            // Depth write + depth test + back-face cull (CCW winding).
-            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW);
+            // Depth write + depth test + cull back faces (CW) so front faces
+            // facing the light write correct shadow depth.
+            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
 
             bgfx::submit(shadowView, shadowProgram);
         });
