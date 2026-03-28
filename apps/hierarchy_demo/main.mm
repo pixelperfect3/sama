@@ -275,10 +275,17 @@ int main()
         io.ConfigWindowsMoveFromTitleBarOnly = true;
         io.KeyMap[ImGuiKey_UpArrow] = GLFW_KEY_UP;
         io.KeyMap[ImGuiKey_DownArrow] = GLFW_KEY_DOWN;
+        io.KeyMap[ImGuiKey_LeftArrow] = GLFW_KEY_LEFT;
+        io.KeyMap[ImGuiKey_RightArrow] = GLFW_KEY_RIGHT;
         io.KeyMap[ImGuiKey_PageUp] = GLFW_KEY_PAGE_UP;
         io.KeyMap[ImGuiKey_PageDown] = GLFW_KEY_PAGE_DOWN;
         io.KeyMap[ImGuiKey_Home] = GLFW_KEY_HOME;
         io.KeyMap[ImGuiKey_End] = GLFW_KEY_END;
+        io.KeyMap[ImGuiKey_Enter] = GLFW_KEY_ENTER;
+        io.KeyMap[ImGuiKey_Escape] = GLFW_KEY_ESCAPE;
+        io.KeyMap[ImGuiKey_Space] = GLFW_KEY_SPACE;
+        io.KeyMap[ImGuiKey_Backspace] = GLFW_KEY_BACKSPACE;
+        io.KeyMap[ImGuiKey_Tab] = GLFW_KEY_TAB;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     }
 
