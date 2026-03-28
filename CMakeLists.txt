@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Engine CXX)
+project(Engine C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,7 +59,19 @@ FetchContent_Declare(
     GIT_TAG        v1.14
 )
 
-FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf)
+# Jolt Physics — rigid body physics engine.
+FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG        v5.2.0
+    SOURCE_SUBDIR  Build
+)
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
 
 # stb — header-only, used by engine_assets (TextureLoader) and screenshot tests.
 # FetchContent_Populate avoids creating unused CMake targets for a header-only lib.
@@ -72,6 +84,20 @@ FetchContent_GetProperties(stb)
 if(NOT stb_POPULATED)
     FetchContent_Populate(stb)
 endif()
+
+# SoLoud — game audio engine (MIT). Header-only FetchContent_Populate like stb;
+# we compile the needed sources into engine_audio below.
+FetchContent_Declare(
+    soloud
+    GIT_REPOSITORY https://github.com/jarikomppa/soloud.git
+    GIT_TAG        RELEASE_20200207
+)
+FetchContent_GetProperties(soloud)
+if(NOT soloud_POPULATED)
+    FetchContent_Populate(soloud)
+endif()
+set(SOLOUD_SRC_DIR ${soloud_SOURCE_DIR}/src)
+set(SOLOUD_INC_DIR ${soloud_SOURCE_DIR}/include)
 
 # ---------------------------------------------------------------------------
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
@@ -381,6 +407,67 @@ add_library(engine_scene STATIC engine/scene/SceneGraph.cpp engine/scene/Transfo
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(engine_scene PUBLIC engine_ecs glm::glm)
 
+# --- engine_audio static library ---
+# Compiles SoLoud core + miniaudio backend + engine audio code into a single
+# static library. Follows the same pattern as engine_assets (vendored sources
+# compiled directly into the target).
+add_library(engine_audio STATIC
+    engine/audio/AudioSystem.cpp
+    engine/audio/SoLoudAudioEngine.cpp
+    # SoLoud core
+    ${SOLOUD_SRC_DIR}/core/soloud.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_audiosource.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_bus.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_3d.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_basicops.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_faderops.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_filterops.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_getters.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_setters.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_voicegroup.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_core_voiceops.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_fft.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_filter.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_thread.cpp
+    # SoLoud WAV audio source + stb_vorbis
+    ${SOLOUD_SRC_DIR}/audiosource/wav/soloud_wav.cpp
+    ${SOLOUD_SRC_DIR}/audiosource/wav/soloud_wavstream.cpp
+    ${SOLOUD_SRC_DIR}/audiosource/wav/stb_vorbis.c
+    # SoLoud miniaudio backend
+    ${SOLOUD_SRC_DIR}/backend/miniaudio/soloud_miniaudio.cpp
+)
+
+target_compile_definitions(engine_audio PRIVATE WITH_MINIAUDIO)
+target_include_directories(engine_audio PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_audio PUBLIC ${SOLOUD_INC_DIR})
+target_link_libraries(engine_audio PUBLIC engine_ecs engine_scene glm::glm)
+
+if(APPLE)
+    target_link_libraries(engine_audio PUBLIC
+        "-framework AudioToolbox"
+        "-framework CoreAudio"
+    )
+endif()
+
+# --- engine_physics static library ---
+add_library(engine_physics STATIC
+    engine/physics/JoltPhysicsEngine.cpp
+    engine/physics/JoltLayerConfig.cpp
+    engine/physics/JoltContactListener.cpp
+    engine/physics/PhysicsSystem.cpp
+)
+target_include_directories(engine_physics PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_physics PUBLIC engine_ecs engine_scene Jolt glm::glm)
+
+# engine_physics needs the same GLM flags as the rest of the engine.
+target_compile_definitions(engine_physics PUBLIC
+    GLM_FORCE_INTRINSICS
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_FORCE_RADIANS
+    GLM_FORCE_XYZW_ONLY
+    GLM_ENABLE_EXPERIMENTAL
+)
+
 # --- engine_rendering static library ---
 # Wraps bgfx init/shutdown/frame and the GLFW window backend.
 add_library(engine_rendering STATIC
@@ -465,9 +552,16 @@ add_executable(engine_tests
     tests/assets/TestGltfLoader.cpp
     tests/scene/TestSceneGraph.cpp
     tests/scene/TestTransformSystem.cpp
+    tests/physics/TestPhysicsComponents.cpp
+    tests/physics/TestPhysicsSystem.cpp
+    tests/physics/TestRaycasting.cpp
+    tests/physics/TestCollisionEvents.cpp
+    tests/audio/TestAudioComponents.cpp
+    tests/audio/TestAudioSystem.cpp
+    tests/audio/TestNullAudioEngine.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_assets engine_rendering engine_scene glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_assets engine_rendering engine_scene engine_physics engine_audio glm::glm Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
