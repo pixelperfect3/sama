@@ -112,6 +112,9 @@ public:
     // ID is not live.  Pointer is valid until the next add/remove call.
     [[nodiscard]] const Material* getMaterial(uint32_t id) const;
 
+    // Mutable access to a material.  Returns nullptr if the ID is not live.
+    [[nodiscard]] Material* getMaterialMut(uint32_t id);
+
     // Free the material slot for reuse.  No-op if the ID is not live.
     void removeMaterial(uint32_t id);
 

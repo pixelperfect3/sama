@@ -375,6 +375,18 @@ int main()
             GltfSceneSpawner::spawn(*helmet, reg, res);
             helmetSpawned = true;
 
+            // Scale down roughness so metallic panels show visible specular.
+            // The DamagedHelmet ORM texture has roughness near 1.0 everywhere;
+            // multiplying by 0.55 brings the smoother areas to ~0.3 where GGX
+            // produces a clear specular peak from a single directional light.
+            reg.view<MaterialComponent>().each(
+                [&](EntityID, MaterialComponent& mc)
+                {
+                    auto* mat = res.getMaterialMut(mc.material);
+                    if (mat)
+                        mat->roughness = 0.55f;
+                });
+
             // Populate the debug panel.  DamagedHelmet textures load in this order
             // (per glTF image array index): albedo(0→ID1), ORM(1→ID2),
             // emissive(2→ID3), occlusion(3→ID4), normal(4→ID5).

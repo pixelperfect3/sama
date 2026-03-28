@@ -132,6 +132,22 @@ const Material* RenderResources::getMaterial(uint32_t id) const
     return &slot.material;
 }
 
+Material* RenderResources::getMaterialMut(uint32_t id)
+{
+    if (id == 0)
+        return nullptr;
+
+    const uint32_t index = toIndex(id);
+    if (index >= materialSlots_.size())
+        return nullptr;
+
+    MaterialSlot& slot = materialSlots_[index];
+    if (!slot.occupied)
+        return nullptr;
+
+    return &slot.material;
+}
+
 void RenderResources::removeMaterial(uint32_t id)
 {
     if (id == 0)

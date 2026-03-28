@@ -154,6 +154,7 @@ void main()
     // Outgoing radiance from the directional light.
     vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
 
+
     // -----------------------------------------------------------------------
     // Shadow — PCF 2x2, cascade 0 (Phase 4: single directional cascade).
     // Default shadow = 1.0 (fully lit) when:
