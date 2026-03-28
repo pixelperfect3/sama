@@ -56,6 +56,10 @@ public:
     virtual void moveKinematic(uint32_t bodyID, const math::Vec3& targetPos,
                                const math::Quat& targetRot, float deltaTime) = 0;
 
+    // Direct position/rotation setters (for teleporting dynamic bodies)
+    virtual void setBodyPosition(uint32_t bodyID, const math::Vec3& position) = 0;
+    virtual void setBodyRotation(uint32_t bodyID, const math::Quat& rotation) = 0;
+
     // Forces and impulses
     virtual void applyForce(uint32_t bodyID, const math::Vec3& force) = 0;
     virtual void applyImpulse(uint32_t bodyID, const math::Vec3& impulse) = 0;

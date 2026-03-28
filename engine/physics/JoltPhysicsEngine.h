@@ -36,6 +36,9 @@ public:
     void moveKinematic(uint32_t bodyID, const math::Vec3& targetPos, const math::Quat& targetRot,
                        float deltaTime) override;
 
+    void setBodyPosition(uint32_t bodyID, const math::Vec3& position) override;
+    void setBodyRotation(uint32_t bodyID, const math::Quat& rotation) override;
+
     void applyForce(uint32_t bodyID, const math::Vec3& force) override;
     void applyImpulse(uint32_t bodyID, const math::Vec3& impulse) override;
     void setLinearVelocity(uint32_t bodyID, const math::Vec3& velocity) override;

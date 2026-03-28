@@ -771,6 +771,34 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif()
 
+# --- physics_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(physics_demo apps/physics_demo/main.mm)
+
+    target_include_directories(physics_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(physics_demo PRIVATE
+        engine_assets
+        engine_rendering
+        engine_scene
+        engine_physics
+        engine_debug
+        engine_input_glfw
+        glm::glm
+        Jolt
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(physics_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+endif()
+
 # --- scene_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(scene_demo apps/scene_demo/main.mm)

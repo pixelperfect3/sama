@@ -236,6 +236,30 @@ void JoltPhysicsEngine::moveKinematic(uint32_t bodyID, const math::Vec3& targetP
     bodyInterface.MoveKinematic(jphBodyID, toJolt(targetPos), toJolt(targetRot), deltaTime);
 }
 
+void JoltPhysicsEngine::setBodyPosition(uint32_t bodyID, const math::Vec3& position)
+{
+    if (!initialized_)
+    {
+        return;
+    }
+
+    JPH::BodyID jphBodyID(bodyID);
+    JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+    bodyInterface.SetPosition(jphBodyID, toJolt(position), JPH::EActivation::Activate);
+}
+
+void JoltPhysicsEngine::setBodyRotation(uint32_t bodyID, const math::Quat& rotation)
+{
+    if (!initialized_)
+    {
+        return;
+    }
+
+    JPH::BodyID jphBodyID(bodyID);
+    JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+    bodyInterface.SetRotation(jphBodyID, toJolt(rotation), JPH::EActivation::Activate);
+}
+
 void JoltPhysicsEngine::applyForce(uint32_t bodyID, const math::Vec3& force)
 {
     if (!initialized_)
