@@ -204,6 +204,16 @@ tests/memory/
 - **PoolAllocator**: verify allocate/deallocate cycle, full pool returns nullptr, no leaks
 - **Integration**: instrument a frame with allocation counting, verify zero dynamic allocations in steady state
 
+## Future FrameArena Candidates
+
+Systems that could benefit from FrameArena when scenes scale up:
+- `PhysicsSystem::registerNewBodies/cleanupDestroyedBodies` — currently uses InlinedVector<16>, switch to pmr::vector if body counts exceed 16/frame
+- `DrawCallBuildSystem` — if draw call sorting/batching is added, temporary sort buffers should use the arena
+- `LightClusterBuilder` — currently uses fixed arrays, but dynamic cluster assignment would benefit
+- Any future particle system, visibility query, or spatial partitioning that builds per-frame lists
+
+The arena is pre-allocated in demos (2MB) and ready to use — pass `frameArena.resource()` to any system that accepts `std::pmr::memory_resource*`.
+
 ## Deferred
 
 - **Thread-local arenas**: Each worker thread gets its own FrameArena for parallel system execution. Add when the system executor runs systems on multiple threads.
