@@ -2,6 +2,8 @@
 
 #include <bgfx/bgfx.h>
 
+#include <memory_resource>
+
 #include "engine/ecs/Registry.h"
 #include "engine/rendering/RenderResources.h"
 
@@ -34,7 +36,12 @@ namespace engine::rendering
 class InstanceBufferBuildSystem
 {
 public:
-    void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program);
+    /// @param arena  Optional per-frame memory resource (e.g. from FrameArena).
+    ///                When non-null, temporary per-frame vectors use bump allocation
+    ///                instead of the heap.  Pass nullptr to fall back to the default
+    ///                allocator (std::allocator / new/delete).
+    void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program,
+                std::pmr::memory_resource* arena = nullptr);
 };
 
 }  // namespace engine::rendering

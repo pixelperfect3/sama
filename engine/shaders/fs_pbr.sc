@@ -136,10 +136,9 @@ void main()
     vec3 H = normalize(V + L);
     vec3 radiance = u_dirLight[1].xyz;
 
-    // NdotL uses the smooth geometry normal so that broad-scale light/shadow
-    // varies with the macro-surface shape, not with normal-map detail.
-    // This prevents salt-and-pepper sparkle on rough metallic surfaces.
-    float NdotL = max(dot(Ngeom, L), 0.0);
+    // Use normal-mapped N for both diffuse and specular to ensure energy
+    // conservation and consistent Cook-Torrance denominator cancellation.
+    float NdotL = max(dot(N, L), 0.0);
     float NdotV = max(dot(N, V), 0.0);
 
     float D = distributionGGX(N, H, roughness);

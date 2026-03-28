@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
+#include <memory_resource>
 #include <vector>
 
 #include "engine/rendering/EcsComponents.h"
@@ -24,7 +25,7 @@ struct InstanceEntry
 
 // Submit one instanced draw call for a group using bgfx::allocInstanceDataBuffer.
 // Caller guarantees numInstances > 0 and mesh is valid.
-void submitInstanced(const Mesh& mesh, const std::vector<InstanceEntry>& entries,
+void submitInstanced(const Mesh& mesh, const std::pmr::vector<InstanceEntry>& entries,
                      bgfx::Encoder* enc, bgfx::ProgramHandle program)
 {
     const auto numInstances = static_cast<uint32_t>(entries.size());
@@ -52,7 +53,7 @@ void submitInstanced(const Mesh& mesh, const std::vector<InstanceEntry>& entries
 
 // Fallback: submit one non-instanced draw call per entry.
 // Used when BGFX_CAPS_INSTANCING is unavailable.
-void submitFallback(const Mesh& mesh, const std::vector<InstanceEntry>& entries,
+void submitFallback(const Mesh& mesh, const std::pmr::vector<InstanceEntry>& entries,
                     bgfx::ProgramHandle program)
 {
     for (const InstanceEntry& e : entries)
@@ -71,7 +72,8 @@ void submitFallback(const Mesh& mesh, const std::vector<InstanceEntry>& entries,
 }  // anonymous namespace
 
 void InstanceBufferBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
-                                       bgfx::ProgramHandle program)
+                                       bgfx::ProgramHandle program,
+                                       std::pmr::memory_resource* arena)
 {
     if (!bgfx::isValid(program))
         return;
@@ -82,11 +84,15 @@ void InstanceBufferBuildSystem::update(ecs::Registry& reg, const RenderResources
     // each group (all entities sharing a group are expected to share a mesh).
     // -----------------------------------------------------------------------
 
+    std::pmr::memory_resource* alloc = arena ? arena : std::pmr::get_default_resource();
+
     struct GroupData
     {
         uint32_t meshId = 0;
-        std::vector<InstanceEntry> instances;
+        std::pmr::vector<InstanceEntry> instances;
         bool anyVisible = false;
+
+        explicit GroupData(std::pmr::memory_resource* mr) : instances(mr) {}
     };
 
     ankerl::unordered_dense::map<uint32_t, GroupData> groups;
@@ -96,8 +102,9 @@ void InstanceBufferBuildSystem::update(ecs::Registry& reg, const RenderResources
         [&](ecs::EntityID entity, const InstancedMeshComponent& imc,
             const WorldTransformComponent& wtc)
         {
-            GroupData& gd = groups[imc.instanceGroupId];
-            if (gd.instances.empty())
+            auto [it, inserted] = groups.try_emplace(imc.instanceGroupId, alloc);
+            GroupData& gd = it->second;
+            if (inserted)
                 gd.meshId = imc.mesh;
 
             const bool visible = reg.has<VisibleTag>(entity);

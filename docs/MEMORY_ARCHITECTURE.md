@@ -141,10 +141,14 @@ Key properties:
 
 ### Phase 1: FrameArena (Immediate Impact)
 
-1. Create `engine/memory/FrameArena.h` and `.cpp`
-2. Add `FrameArena` to the main loop in each app
-3. Convert per-frame `std::vector` allocations in render systems to `std::pmr::vector` backed by the arena
-4. Key targets: `DrawCallBuildSystem` draw call lists, `FrustumCullSystem` visibility lists, `LightClusterBuilder` light lists
+1. Create `engine/memory/FrameArena.h` and `.cpp` — **done**
+2. Add `FrameArena` to the main loop in each app — callers pass `frameArena.resource()` to systems
+3. Convert per-frame `std::vector` allocations in render systems to `std::pmr::vector` backed by the arena — **done** for `InstanceBufferBuildSystem`
+4. Key targets identified after audit:
+   - `InstanceBufferBuildSystem` — **converted**: per-frame `GroupData::instances` vectors now use `std::pmr::vector<InstanceEntry>` backed by an optional arena. The `update()` method accepts an optional `std::pmr::memory_resource*` (defaults to `nullptr` for backward compatibility; falls back to `std::pmr::get_default_resource()`).
+   - `DrawCallBuildSystem` — no per-frame local vectors; iterates ECS views and submits directly. No change needed.
+   - `FrustumCullSystem` — no per-frame local vectors; iterates ECS views directly. No change needed.
+   - `LightClusterBuilder` — already uses fixed-size `std::array` members; no per-frame heap allocation. No change needed.
 
 ### Phase 2: InlinedVector (Reduce Heap Pressure)
 

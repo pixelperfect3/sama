@@ -47,7 +47,7 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, std::vector<uint8_t>> files_;
+    ankerl::unordered_dense::map<std::string, std::vector<uint8_t>> files_;
 };
 
 // ---------------------------------------------------------------------------
