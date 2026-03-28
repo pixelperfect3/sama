@@ -358,6 +358,25 @@ int main()
     const glm::mat4 lightView = glm::lookAt(kLightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
     const glm::mat4 lightProj = glm::ortho(-12.f, 12.f, -12.f, 12.f, 0.1f, 50.f);
 
+    // -- Light indicator (small bright cube showing the light position) --------
+    Material lightMat{};
+    lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
+    lightMat.emissiveScale = 5.0f;
+    lightMat.roughness = 1.0f;
+    uint32_t lightMatId = res.addMaterial(lightMat);
+
+    EntityID lightIndicator = reg.createEntity();
+    {
+        TransformComponent tc{};
+        tc.position = kLightDir * 12.0f;
+        tc.rotation = glm::quat(1, 0, 0, 0);
+        tc.scale = {0.3f, 0.3f, 0.3f};
+        reg.emplace<TransformComponent>(lightIndicator, tc);
+        reg.emplace<MeshComponent>(lightIndicator, MeshComponent{cubeMeshId});
+        reg.emplace<MaterialComponent>(lightIndicator, MaterialComponent{lightMatId});
+        reg.emplace<VisibleTag>(lightIndicator);
+    }
+
     // -- Camera and interaction state -----------------------------------------
     OrbitCamera cam;
     int prevFbW = 0, prevFbH = 0;
