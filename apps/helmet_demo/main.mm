@@ -263,17 +263,13 @@ int main()
 
     // -- Light ----------------------------------------------------------------
     // Direction FROM the surface TOWARD the light (see fs_pbr.sc).
-    // Key light: upper-right, shining toward -Z to match the DamagedHelmet
-    // visor orientation (front-face normals point in -Z).
-    const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.5f, 0.8f, -1.0f));
-    constexpr float kLightIntens = 12.0f;
-    const float lightData[8] = {
-        kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
-        1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
-
-    const glm::vec3 kLightPos = kLightDir * 10.f;
-    const glm::mat4 lightView = glm::lookAt(kLightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
-    const glm::mat4 lightProj = glm::ortho(-2.f, 2.f, -2.f, 2.f, 0.1f, 30.f);
+    // Light rotates around the helmet so specular highlights sweep across the
+    // metallic panels.  Orbit period ~6 seconds, elevated 40° above the XZ plane.
+    constexpr float kLightIntens = 15.0f;
+    constexpr float kLightOrbitPeriod = 6.0f;  // seconds per revolution
+    constexpr float kLightElevation = 0.65f;   // sin(~40°)
+    const glm::mat4 lightProj = glm::ortho(-3.f, 3.f, -3.f, 3.f, 0.1f, 30.f);
+    float lightAngle = 0.f;
 
     // -- Main loop ------------------------------------------------------------
     Camera cam;
@@ -415,6 +411,19 @@ int main()
 
         // -- Transform system: compose local TRS → world matrices -------------
         transformSys.update(reg);
+
+        // -- Rotating light ---------------------------------------------------
+        lightAngle += dt * (2.0f * 3.14159265f / kLightOrbitPeriod);
+        const float cosA = std::cos(lightAngle);
+        const float sinA = std::sin(lightAngle);
+        const float cosE = std::sqrt(1.0f - kLightElevation * kLightElevation);
+        const glm::vec3 lightDir =
+            glm::normalize(glm::vec3(cosE * sinA, kLightElevation, cosE * cosA));
+        const float lightData[8] = {
+            lightDir.x,          lightDir.y,           lightDir.z,           0.f,
+            1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
+        const glm::vec3 lightPos = lightDir * 10.f;
+        const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
 
         // -- Render -----------------------------------------------------------
         renderer.beginFrameDirect();
