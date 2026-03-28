@@ -266,7 +266,7 @@ int main()
     // Key light: upper-right, shining toward -Z to match the DamagedHelmet
     // visor orientation (front-face normals point in -Z).
     const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.5f, 0.8f, -1.0f));
-    constexpr float kLightIntens = 8.0f;
+    constexpr float kLightIntens = 12.0f;
     const float lightData[8] = {
         kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
         1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};

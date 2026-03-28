@@ -317,8 +317,8 @@ void main()
         // the ambient varies smoothly with the object shape, not with the
         // high-frequency normal map.  F0-weighted term gives metallic surfaces
         // their colour from indirect light (replaces IBL irradiance/prefilter).
-        vec3 skyColor    = vec3(0.90, 0.95, 1.20);
-        vec3 groundColor = vec3(0.35, 0.28, 0.18);
+        vec3 skyColor    = vec3(0.15, 0.18, 0.25);
+        vec3 groundColor = vec3(0.05, 0.04, 0.03);
         float hemiFactor = Ngeom.y * 0.5 + 0.5;
         vec3 hemi = mix(groundColor, skyColor, hemiFactor);
         ambient = (hemi * albedo * (1.0 - metallic) + hemi * F0) * ao;

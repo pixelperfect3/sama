@@ -131,7 +131,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
     bgfx::setViewTransform(kViewOpaque, &view[0][0], &proj[0][0]);
 
-    constexpr float kLightIntens = 8.0f;
+    constexpr float kLightIntens = 12.0f;
     const float lightData[8] = {
         kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
         1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
