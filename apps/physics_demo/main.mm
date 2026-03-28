@@ -27,6 +27,7 @@
 #include "engine/input/InputSystem.h"
 #include "engine/input/Key.h"
 #include "engine/input/desktop/GlfwInputBackend.h"
+#include "engine/memory/FrameArena.h"
 #include "engine/physics/IPhysicsEngine.h"
 #include "engine/physics/JoltPhysicsEngine.h"
 #include "engine/physics/PhysicsComponents.h"
@@ -398,6 +399,14 @@ int main()
     constexpr float kTiltSpeed = 30.0f;  // degrees per second
     constexpr float kMaxTilt = 30.0f;    // degrees
 
+    // -- Frame arena ----------------------------------------------------------
+    // 2 MB bump allocator for per-frame temporaries.  The primary benefit is
+    // avoiding heap fragmentation over long sessions, not raw speed — small
+    // scenes will show negligible per-frame timing differences.
+    engine::memory::FrameArena frameArena(2 * 1024 * 1024);
+
+    float renderMs = 0.f;
+
     // -- Main loop ------------------------------------------------------------
     while (!window->shouldClose())
     {
@@ -542,6 +551,7 @@ int main()
         transformSys.update(reg);
 
         // -- Render -----------------------------------------------------------
+        double frameStart = glfwGetTime();
         renderer.beginFrameDirect();
 
         glm::mat4 viewMat = cam.view();
@@ -573,16 +583,20 @@ int main()
 
         // -- HUD --------------------------------------------------------------
         bgfx::dbgTextClear();
-        bgfx::dbgTextPrintf(1, 1, 0x0f, "Physics Demo  |  %.1f fps  |  %.3f ms",
-                            dt > 0 ? 1.f / dt : 0.f, dt * 1000.f);
+        bgfx::dbgTextPrintf(1, 1, 0x0f, "Physics Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
+                            dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
         bgfx::dbgTextPrintf(1, 2, 0x07, "Arrows=tilt  |  R=reset  |  RMB=orbit  |  Scroll=zoom");
+        bgfx::dbgTextPrintf(1, 3, 0x07, "Arena: %zu KB / %zu KB used",
+                            frameArena.bytesUsed() / 1024, frameArena.capacity() / 1024);
 
         // -- ImGui panel ------------------------------------------------------
         ImGui::SetNextWindowPos(ImVec2(10, 60), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(260, 280), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Physics Demo"))
         {
-            ImGui::Text("FPS: %.1f", dt > 0 ? 1.f / dt : 0.f);
+            ImGui::Text("FPS: %.1f  |  Render: %.3f ms", dt > 0 ? 1.f / dt : 0.f, renderMs);
+            ImGui::Text("Arena: %zu KB / %zu KB used", frameArena.bytesUsed() / 1024,
+                        frameArena.capacity() / 1024);
             ImGui::Separator();
 
             ImGui::Text("Plane Tilt");
@@ -628,6 +642,11 @@ int main()
 
         // -- Flip -------------------------------------------------------------
         renderer.endFrame();
+
+        double frameEnd = glfwGetTime();
+        renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);
+
+        frameArena.reset();
     }
 
     // -- Cleanup --------------------------------------------------------------

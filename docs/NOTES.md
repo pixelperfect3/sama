@@ -75,7 +75,7 @@ Tracks all decisions and progress made during development.
 - **Design target:** ~50k active entities
 
 ### Status
-- [ ] ECS implementation not started
+- [x] ECS implemented (Registry, SparseSet, Views, System scheduler — all tested)
 
 ---
 
@@ -257,7 +257,7 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
   - Start this after integrating Jolt into the engine — real usage will surface the most painful gaps
 
 ### Status
-- [ ] Physics not started
+- [x] Physics implemented (IPhysicsEngine, JoltPhysicsEngine, PhysicsSystem, raycasting, collision events — committed in engine/physics/)
 
 ---
 
@@ -279,7 +279,7 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
   - When/if FMOD is adopted, remove this logic — FMOD handles occlusion natively
 
 ### Status
-- [ ] Audio not started
+- [x] Audio implemented (IAudioEngine, SoLoudAudioEngine, AudioSystem, NullAudioEngine — SoLoud + miniaudio backend, committed)
 
 ---
 
@@ -300,7 +300,7 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
 - **Scale target:** ~20k–50k actively managed scene graph nodes at runtime, with region-based streaming loading/unloading around the player
 
 ### Status
-- [ ] Scene graph not started
+- [x] Scene graph implemented (HierarchyComponent, ChildrenComponent, TransformSystem, SceneGraph mutation API, GltfSceneSpawner integration — committed)
 
 ---
 
@@ -392,7 +392,7 @@ namespace engine::io
   - Defer custom SIMD until mobile profiling confirms TransformSystem is a real bottleneck
 
 ### Status
-- [ ] Math library setup not started
+- [x] Math library implemented (GLM aliases in engine/math/Types.h, used throughout engine — committed)
 
 ---
 
@@ -425,7 +425,7 @@ namespace engine::io
   ```
 
 ### Status
-- [ ] Input not started
+- [x] Input implemented (GLFW backend, InputSystem, InputState, key/mouse/touch abstraction — committed)
 
 ---
 

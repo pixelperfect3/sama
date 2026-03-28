@@ -732,6 +732,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(helmet_demo PRIVATE
         engine_assets
         engine_rendering
+        engine_memory
         engine_debug
         engine_input_glfw
         glm::glm
@@ -793,6 +794,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(physics_demo PRIVATE
         engine_assets
         engine_rendering
+        engine_memory
         engine_scene
         engine_physics
         engine_debug

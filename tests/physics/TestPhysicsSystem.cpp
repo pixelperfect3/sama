@@ -168,6 +168,7 @@ TEST_CASE("Kinematic body tracks TransformComponent changes", "[physics][system]
     auto* tc = reg.get<TransformComponent>(e);
     REQUIRE(tc != nullptr);
     tc->position = Vec3{5.0f, 3.0f, 0.0f};
+    tc->flags |= 0x01;  // mark dirty so TransformSystem recomputes
 
     // Recompose world matrix
     transformSys.update(reg);

@@ -36,6 +36,7 @@
 #include "engine/input/InputSystem.h"
 #include "engine/input/Key.h"
 #include "engine/input/desktop/GlfwInputBackend.h"
+#include "engine/memory/FrameArena.h"
 #include "engine/platform/Window.h"
 #include "engine/platform/desktop/GlfwWindow.h"
 #include "engine/rendering/EcsComponents.h"
@@ -298,6 +299,14 @@ int main()
     const glm::mat4 lightProj = glm::ortho(-3.f, 3.f, -3.f, 3.f, 0.1f, 30.f);
     float lightAngle = 0.f;
 
+    // -- Frame arena ----------------------------------------------------------
+    // 2 MB bump allocator for per-frame temporaries.  The primary benefit is
+    // avoiding heap fragmentation over long sessions, not raw speed — small
+    // scenes will show negligible per-frame timing differences.
+    engine::memory::FrameArena frameArena(2 * 1024 * 1024);
+
+    float renderMs = 0.f;
+
     // -- Main loop ------------------------------------------------------------
     Camera cam;
     bool showHud = true;
@@ -458,6 +467,7 @@ int main()
             ltc->position = lightDir * 3.0f;
 
         // -- Render -----------------------------------------------------------
+        double frameStart = glfwGetTime();
         renderer.beginFrameDirect();
 
         // Shadow pass (view 0)
@@ -490,8 +500,11 @@ int main()
         bgfx::dbgTextClear();
         if (showHud)
         {
-            bgfx::dbgTextPrintf(1, 1, 0x0f, "Helmet Demo  |  %.1f fps  |  %.3f ms",
-                                dt > 0 ? 1.f / dt : 0.f, dt * 1000.f);
+            bgfx::dbgTextPrintf(1, 1, 0x0f,
+                                "Helmet Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
+                                dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
+            bgfx::dbgTextPrintf(1, 4, 0x07, "Arena: %zu KB / %zu KB used",
+                                frameArena.bytesUsed() / 1024, frameArena.capacity() / 1024);
 
             if (helmetState == AssetState::Ready)
                 bgfx::dbgTextPrintf(1, 2, 0x0a, "DamagedHelmet.glb — Ready");
@@ -511,6 +524,11 @@ int main()
 
         // -- Flip -------------------------------------------------------------
         renderer.endFrame();
+
+        double frameEnd = glfwGetTime();
+        renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);
+
+        frameArena.reset();
     }
 
     // -- Cleanup --------------------------------------------------------------

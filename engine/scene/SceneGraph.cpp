@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "engine/ecs/Registry.h"
+#include "engine/rendering/EcsComponents.h"
 #include "engine/scene/HierarchyComponents.h"
 
 namespace engine::scene
@@ -85,6 +86,13 @@ bool setParent(ecs::Registry& reg, ecs::EntityID child, ecs::EntityID newParent)
         reg.emplace<ChildrenComponent>(newParent, std::move(cc));
     }
 
+    // Mark the child dirty — its world matrix depends on the new parent.
+    auto* tc = reg.get<rendering::TransformComponent>(child);
+    if (tc)
+    {
+        tc->flags |= 0x01;
+    }
+
     return true;
 }
 
@@ -101,6 +109,13 @@ void detach(ecs::Registry& reg, ecs::EntityID child)
     }
 
     reg.remove<HierarchyComponent>(child);
+
+    // Mark the child dirty — its world matrix changes when detached from parent.
+    auto* tc = reg.get<rendering::TransformComponent>(child);
+    if (tc)
+    {
+        tc->flags |= 0x01;
+    }
 }
 
 void destroyHierarchy(ecs::Registry& reg, ecs::EntityID root)

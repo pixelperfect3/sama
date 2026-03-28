@@ -38,7 +38,7 @@ void setWorldMatrix(ecs::Registry& reg, ecs::EntityID entity, const math::Mat4& 
 }
 
 void updateChildren(ecs::Registry& reg, const math::Mat4& parentWorld,
-                    const ChildrenComponent& children)
+                    const ChildrenComponent& children, bool parentDirty)
 {
     for (ecs::EntityID child : children.children)
     {
@@ -46,12 +46,34 @@ void updateChildren(ecs::Registry& reg, const math::Mat4& parentWorld,
         if (!tc)
             continue;
 
-        math::Mat4 world = parentWorld * composeLocal(*tc);
-        setWorldMatrix(reg, child, world);
+        // Treat as dirty if: parent is dirty, own dirty flag is set, or
+        // WorldTransformComponent doesn't exist yet (first frame).
+        bool missingWorld = !reg.has<rendering::WorldTransformComponent>(child);
+        bool childDirty = parentDirty || (tc->flags & 0x01) || missingWorld;
 
-        auto* cc = reg.get<ChildrenComponent>(child);
-        if (cc)
-            updateChildren(reg, world, *cc);
+        if (childDirty)
+        {
+            math::Mat4 world = parentWorld * composeLocal(*tc);
+            setWorldMatrix(reg, child, world);
+            tc->flags &= ~0x01;  // clear dirty
+
+            // All descendants must also update since this node changed.
+            auto* cc = reg.get<ChildrenComponent>(child);
+            if (cc)
+                updateChildren(reg, world, *cc, true);
+        }
+        else
+        {
+            // Not dirty — skip recomputation but still recurse
+            // (a descendant might be dirty even if this node isn't).
+            auto* cc = reg.get<ChildrenComponent>(child);
+            if (cc)
+            {
+                auto* wtc = reg.get<rendering::WorldTransformComponent>(child);
+                math::Mat4 world = wtc ? wtc->matrix : composeLocal(*tc);
+                updateChildren(reg, world, *cc, false);
+            }
+        }
     }
 }
 
@@ -68,12 +90,30 @@ void TransformSystem::update(ecs::Registry& reg)
             if (reg.has<HierarchyComponent>(entity))
                 return;
 
-            math::Mat4 world = composeLocal(tc);
-            setWorldMatrix(reg, entity, world);
+            bool missingWorld = !reg.has<rendering::WorldTransformComponent>(entity);
+            bool dirty = (tc.flags & 0x01) || missingWorld;
 
-            auto* cc = reg.get<ChildrenComponent>(entity);
-            if (cc)
-                updateChildren(reg, world, *cc);
+            if (dirty)
+            {
+                math::Mat4 world = composeLocal(tc);
+                setWorldMatrix(reg, entity, world);
+                tc.flags &= ~0x01;  // clear dirty
+
+                auto* cc = reg.get<ChildrenComponent>(entity);
+                if (cc)
+                    updateChildren(reg, world, *cc, true);
+            }
+            else
+            {
+                // Root is clean — still recurse in case a descendant is dirty.
+                auto* cc = reg.get<ChildrenComponent>(entity);
+                if (cc)
+                {
+                    auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);
+                    math::Mat4 world = wtc ? wtc->matrix : composeLocal(tc);
+                    updateChildren(reg, world, *cc, false);
+                }
+            }
         });
 }
 
