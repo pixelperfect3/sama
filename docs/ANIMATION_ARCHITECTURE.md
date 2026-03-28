@@ -28,12 +28,14 @@ All CPU-side animation data lives in `engine/animation/`. These are plain data t
 namespace engine::animation
 {
 
-struct Joint
+struct Joint                              // offset  size
 {
-    math::Mat4 inverseBindMatrix{1.0f};  // transforms from mesh space to bone-local space
-    int32_t parentIndex = -1;            // -1 = root joint (no parent)
-    std::string name;                    // debug name from glTF
-};
+    math::Mat4 inverseBindMatrix{1.0f};   //  0      64  mesh space → bone-local space
+    int32_t parentIndex = -1;             // 64       4  -1 = root joint (no parent)
+    uint32_t nameHash = 0;               // 68       4  FNV-1a hash of joint name
+    uint8_t _pad[8] = {};               // 72       8  trailing alignment padding
+};  // total: 80 bytes (aligned to 16 for Mat4)
+static_assert(sizeof(Joint) == 80);
 
 struct Skeleton
 {
@@ -43,10 +45,24 @@ struct Skeleton
     {
         return static_cast<uint32_t>(joints.size());
     }
+
+    // Find joint by name hash. Returns index or -1 if not found.
+    // Linear scan — fine for <128 joints, called at setup time (not per-frame).
+    [[nodiscard]] int32_t findJoint(uint32_t hash) const noexcept
+    {
+        for (uint32_t i = 0; i < joints.size(); ++i)
+            if (joints[i].nameHash == hash) return static_cast<int32_t>(i);
+        return -1;
+    }
 };
 
 }  // namespace engine::animation
 ```
+
+**Joint layout rationale:**
+- No `std::string` — avoids per-joint heap allocation. Joint names are stored as a 32-bit FNV-1a hash, which is sufficient for gameplay lookups (attach weapon to hand bone, IK targets, ragdoll mapping). The original string names can be recovered from the source glTF if needed for editor/debug tooling.
+- 80 bytes per joint: 64B inverse bind matrix + 4B parent index + 4B name hash + 8B trailing padding (imposed by Mat4's 16-byte alignment). The hot loop (bone matrix computation) reads `inverseBindMatrix` and `parentIndex`; `nameHash` sits in the same cache line as `parentIndex` so it's free to include.
+- `std::vector<Joint>` for storage: joints are loaded once from glTF and never modified. Single heap allocation at load time, not per-frame.
 
 The `joints` array is topologically sorted: parent indices always reference earlier elements. This guarantees a single forward pass computes all world-space joint transforms without recursion.
 
@@ -357,7 +373,7 @@ struct CpuJointData
 {
     math::Mat4 inverseBindMatrix{1.0f};
     int32_t parentIndex = -1;
-    std::string name;
+    std::string name;  // kept as string during loading; hashed to uint32_t at upload
 };
 
 struct CpuSkeletonData
