@@ -427,12 +427,15 @@ add_library(engine_audio STATIC
     ${SOLOUD_SRC_DIR}/core/soloud_core_voicegroup.cpp
     ${SOLOUD_SRC_DIR}/core/soloud_core_voiceops.cpp
     ${SOLOUD_SRC_DIR}/core/soloud_fft.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_fader.cpp
+    ${SOLOUD_SRC_DIR}/core/soloud_file.cpp
     ${SOLOUD_SRC_DIR}/core/soloud_filter.cpp
     ${SOLOUD_SRC_DIR}/core/soloud_thread.cpp
     # SoLoud WAV audio source + stb_vorbis
     ${SOLOUD_SRC_DIR}/audiosource/wav/soloud_wav.cpp
     ${SOLOUD_SRC_DIR}/audiosource/wav/soloud_wavstream.cpp
     ${SOLOUD_SRC_DIR}/audiosource/wav/stb_vorbis.c
+    ${SOLOUD_SRC_DIR}/audiosource/wav/dr_impl.cpp
     # SoLoud miniaudio backend
     ${SOLOUD_SRC_DIR}/backend/miniaudio/soloud_miniaudio.cpp
 )
@@ -791,6 +794,35 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         "-framework MetalKit"
     )
     target_compile_definitions(physics_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+endif()
+
+# --- audio_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(audio_demo apps/audio_demo/main.mm)
+
+    target_include_directories(audio_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(audio_demo PRIVATE
+        engine_assets
+        engine_rendering
+        engine_scene
+        engine_audio
+        engine_debug
+        engine_input_glfw
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework AudioToolbox"
+        "-framework CoreAudio"
+    )
+    target_compile_definitions(audio_demo PRIVATE
         GLM_FORCE_INTRINSICS
         GLM_FORCE_DEPTH_ZERO_TO_ONE
         GLM_FORCE_RADIANS

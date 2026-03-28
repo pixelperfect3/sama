@@ -18,13 +18,20 @@ bool SoLoudAudioEngine::init(uint32_t sampleRate, uint32_t bufferSize, uint32_t 
         return false;
     }
 
-    auto result = soloud_.init(SoLoud::Soloud::CLIP_ROUNDOFF, SoLoud::Soloud::MINIAUDIO, sampleRate,
-                               bufferSize, maxVoices);
+    // SoLoud::init(flags, backend, sampleRate, bufferSize, channels).
+    // Use AUTO for sample rate and buffer size to let miniaudio pick optimal values.
+    // channels is output channel count (1=mono, 2=stereo), NOT max voices.
+    auto result = soloud_.init(SoLoud::Soloud::CLIP_ROUNDOFF, SoLoud::Soloud::MINIAUDIO,
+                               SoLoud::Soloud::AUTO, SoLoud::Soloud::AUTO, 2);
 
     if (result != SoLoud::SO_NO_ERROR)
     {
+        fprintf(stderr, "SoLoud init failed with error code: %d\n", static_cast<int>(result));
         return false;
     }
+
+    // maxVoices controls how many sounds can play simultaneously.
+    soloud_.setMaxActiveVoiceCount(maxVoices);
 
     // Play each category bus into the main mixer.
     for (size_t i = 0; i < kCategoryCount; ++i)
