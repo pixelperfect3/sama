@@ -4,6 +4,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/memory/InlinedVector.h"
 #include "engine/physics/JoltPhysicsEngine.h"
 #include "engine/physics/PhysicsComponents.h"
 #include "engine/rendering/EcsComponents.h"
@@ -37,7 +38,7 @@ void PhysicsSystem::registerNewBodies(ecs::Registry& reg, IPhysicsEngine& physic
 {
     // Collect entities that need body creation first, to avoid modifying components
     // while iterating.
-    std::vector<ecs::EntityID> toRegister;
+    memory::InlinedVector<ecs::EntityID, 16> toRegister;
 
     reg.view<RigidBodyComponent, ColliderComponent>().each(
         [&](ecs::EntityID entity, RigidBodyComponent& /*rb*/, ColliderComponent& /*col*/)
@@ -203,7 +204,7 @@ void PhysicsSystem::cleanupDestroyedBodies(ecs::Registry& reg, IPhysicsEngine& p
     }
 
     const auto& bodyEntityMap = joltEngine->getBodyEntityMap();
-    std::vector<uint32_t> toRemove;
+    memory::InlinedVector<uint32_t, 16> toRemove;
 
     for (const auto& [bodyID, entityID] : bodyEntityMap)
     {
