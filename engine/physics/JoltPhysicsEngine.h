@@ -7,9 +7,9 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <ankerl/unordered_dense.h>
 
 #include <memory>
-#include <unordered_map>
 
 #include "engine/physics/IPhysicsEngine.h"
 #include "engine/physics/JoltContactListener.h"
@@ -54,7 +54,7 @@ public:
     const std::vector<ContactEvent>& getContactEndEvents() const override;
 
     // For cleanup: map of body ID -> entity ID
-    const std::unordered_map<uint32_t, ecs::EntityID>& getBodyEntityMap() const;
+    const ankerl::unordered_dense::map<uint32_t, ecs::EntityID>& getBodyEntityMap() const;
 
 private:
     JPH::ObjectLayer bodyTypeToObjectLayer(BodyType type, uint8_t layer) const;
@@ -69,7 +69,7 @@ private:
     JoltContactListener contactListener_;
 
     // Entity <-> body mappings
-    std::unordered_map<uint32_t, ecs::EntityID> bodyToEntity_;
+    ankerl::unordered_dense::map<uint32_t, ecs::EntityID> bodyToEntity_;
 
     bool initialized_ = false;
 };

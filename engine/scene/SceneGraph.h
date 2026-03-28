@@ -1,8 +1,7 @@
 #pragma once
 
-#include <vector>
-
 #include "engine/ecs/Entity.h"
+#include "engine/memory/InlinedVector.h"
 
 namespace engine::ecs
 {
@@ -28,8 +27,8 @@ void destroyHierarchy(ecs::Registry& reg, ecs::EntityID root);
 
 // Return a pointer to the children list, or nullptr if the entity has no
 // ChildrenComponent.
-[[nodiscard]] const std::vector<ecs::EntityID>* getChildren(const ecs::Registry& reg,
-                                                            ecs::EntityID entity);
+[[nodiscard]] const memory::InlinedVector<ecs::EntityID, 8>* getChildren(const ecs::Registry& reg,
+                                                                         ecs::EntityID entity);
 
 // Return true if `ancestor` is an ancestor of `descendant` (walks up the
 // hierarchy via getParent).

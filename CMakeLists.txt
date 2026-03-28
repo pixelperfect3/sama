@@ -352,6 +352,10 @@ compile_shader_pp(
 
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
+# --- engine_memory static library ---
+add_library(engine_memory STATIC engine/memory/FrameArena.cpp)
+target_include_directories(engine_memory PUBLIC ${CMAKE_SOURCE_DIR})
+
 # --- engine_threading static library ---
 add_library(engine_threading STATIC engine/threading/ThreadPool.cpp)
 target_include_directories(engine_threading PUBLIC ${CMAKE_SOURCE_DIR})
@@ -400,7 +404,7 @@ target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading eng
 
 # --- engine_ecs static library ---
 add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
-target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party)
 
 # --- engine_scene static library ---
 add_library(engine_scene STATIC engine/scene/SceneGraph.cpp engine/scene/TransformSystem.cpp)
@@ -566,9 +570,12 @@ add_executable(engine_tests
     tests/audio/TestAudioComponents.cpp
     tests/audio/TestAudioSystem.cpp
     tests/audio/TestNullAudioEngine.cpp
+    tests/memory/TestFrameArena.cpp
+    tests/memory/TestInlinedVector.cpp
+    tests/memory/TestPoolAllocator.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_assets engine_rendering engine_scene engine_physics engine_audio glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_assets engine_rendering engine_scene engine_physics engine_audio glm::glm Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 

@@ -1,9 +1,10 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+
 #include <cassert>
 #include <memory>
 #include <typeindex>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -157,7 +158,7 @@ private:
     std::vector<uint32_t> freeList_;
 
     // One SparseSet per component type, keyed by std::type_index.
-    std::unordered_map<std::type_index, std::unique_ptr<ISparseSetBase>> componentStores_;
+    ankerl::unordered_dense::map<std::type_index, std::unique_ptr<ISparseSetBase>> componentStores_;
 };
 
 }  // namespace engine::ecs

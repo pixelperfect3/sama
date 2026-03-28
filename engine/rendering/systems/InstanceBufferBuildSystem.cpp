@@ -1,8 +1,9 @@
 #include "engine/rendering/systems/InstanceBufferBuildSystem.h"
 
+#include <ankerl/unordered_dense.h>
+
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
-#include <unordered_map>
 #include <vector>
 
 #include "engine/rendering/EcsComponents.h"
@@ -88,7 +89,7 @@ void InstanceBufferBuildSystem::update(ecs::Registry& reg, const RenderResources
         bool anyVisible = false;
     };
 
-    std::unordered_map<uint32_t, GroupData> groups;
+    ankerl::unordered_dense::map<uint32_t, GroupData> groups;
 
     auto instView = reg.view<InstancedMeshComponent, WorldTransformComponent>();
     instView.each(

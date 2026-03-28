@@ -1,8 +1,7 @@
 #pragma once
 
-#include <vector>
-
 #include "engine/ecs/Entity.h"
+#include "engine/memory/InlinedVector.h"
 
 namespace engine::scene
 {
@@ -15,7 +14,7 @@ static_assert(sizeof(HierarchyComponent) == 8);
 
 struct ChildrenComponent
 {
-    std::vector<ecs::EntityID> children;
+    memory::InlinedVector<ecs::EntityID, 8> children;
 };
 
 }  // namespace engine::scene

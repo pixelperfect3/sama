@@ -408,7 +408,8 @@ const std::vector<IPhysicsEngine::ContactEvent>& JoltPhysicsEngine::getContactEn
     return contactListener_.getEndEvents();
 }
 
-const std::unordered_map<uint32_t, ecs::EntityID>& JoltPhysicsEngine::getBodyEntityMap() const
+const ankerl::unordered_dense::map<uint32_t, ecs::EntityID>& JoltPhysicsEngine::getBodyEntityMap()
+    const
 {
     return bodyToEntity_;
 }

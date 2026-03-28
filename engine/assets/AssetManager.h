@@ -1,12 +1,13 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
+
 #include <any>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -173,7 +174,7 @@ private:
     std::vector<Record> records_;
     std::vector<uint32_t> freeList_;
 
-    std::unordered_map<std::string, uint32_t> pathToSlot_;
+    ankerl::unordered_dense::map<std::string, uint32_t> pathToSlot_;
 
     // Slots released last frame — freed at the start of processUploads().
     std::vector<uint32_t> pendingFree_;

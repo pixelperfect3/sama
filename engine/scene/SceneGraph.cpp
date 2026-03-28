@@ -80,7 +80,9 @@ bool setParent(ecs::Registry& reg, ecs::EntityID child, ecs::EntityID newParent)
     }
     else
     {
-        reg.emplace<ChildrenComponent>(newParent, std::vector<ecs::EntityID>{child});
+        ChildrenComponent cc;
+        cc.children.push_back(child);
+        reg.emplace<ChildrenComponent>(newParent, std::move(cc));
     }
 
     return true;
@@ -129,7 +131,8 @@ ecs::EntityID getParent(const ecs::Registry& reg, ecs::EntityID entity)
     return hc->parent;
 }
 
-const std::vector<ecs::EntityID>* getChildren(const ecs::Registry& reg, ecs::EntityID entity)
+const memory::InlinedVector<ecs::EntityID, 8>* getChildren(const ecs::Registry& reg,
+                                                           ecs::EntityID entity)
 {
     const auto* cc = reg.get<ChildrenComponent>(entity);
     if (!cc)
