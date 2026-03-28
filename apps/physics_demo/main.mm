@@ -454,9 +454,9 @@ int main()
 
         // -- Update plane tilt (arrow keys) -----------------------------------
         if (inputState.isKeyHeld(Key::Left))
-            planeRoll -= kTiltSpeed * dt;
-        if (inputState.isKeyHeld(Key::Right))
             planeRoll += kTiltSpeed * dt;
+        if (inputState.isKeyHeld(Key::Right))
+            planeRoll -= kTiltSpeed * dt;
         if (inputState.isKeyHeld(Key::Up))
             planePitch -= kTiltSpeed * dt;
         if (inputState.isKeyHeld(Key::Down))
