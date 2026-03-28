@@ -377,9 +377,9 @@ add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
 target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR})
 
 # --- engine_scene static library ---
-add_library(engine_scene STATIC engine/scene/SceneGraph.cpp)
+add_library(engine_scene STATIC engine/scene/SceneGraph.cpp engine/scene/TransformSystem.cpp)
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_scene PUBLIC engine_ecs)
+target_link_libraries(engine_scene PUBLIC engine_ecs glm::glm)
 
 # --- engine_rendering static library ---
 # Wraps bgfx init/shutdown/frame and the GLFW window backend.
@@ -464,6 +464,7 @@ add_executable(engine_tests
     tests/assets/TestStdFileSystem.cpp
     tests/assets/TestGltfLoader.cpp
     tests/scene/TestSceneGraph.cpp
+    tests/scene/TestTransformSystem.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_threading engine_assets engine_rendering engine_scene glm::glm Catch2::Catch2WithMain)
