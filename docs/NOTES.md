@@ -687,4 +687,12 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - TransformSystem computes WorldTransformComponent before rendering.
 - **Tradeoff:** Slightly more entities than before (hierarchy pivots without meshes), but enables runtime transform manipulation.
 
+### Hierarchy Demo (`apps/hierarchy_demo`)
+- 9 cubes in a 3-level tree matching `treehierarchy.png`: Root → Child1/Child2 → 3 leaves each.
+- **Mouse picking:** Ray-AABB intersection. Unprojects mouse to world ray, tests against each cube's world-space AABB (8-corner transform of local bounds), selects nearest hit.
+- **Drag-to-move:** Projects mouse movement onto a camera-facing plane through the selected cube's world position. Converts world-space delta to parent-local-space delta via inverse parent world matrix, then updates `TransformComponent.position`. TransformSystem propagates the change to children on the next frame.
+- **Orbit camera:** Right-drag rotates yaw/pitch around the scene origin; scroll adjusts distance. No mouse capture (cursor stays visible) — different from helmet_demo's free-fly approach.
+- **ImGui panel:** TreeNodeEx hierarchy view with click-to-select and live local/world position readout.
+- **Why a separate demo:** Validates the scene graph end-to-end with runtime interaction (picking, dragging, hierarchy propagation), which the unit tests cannot cover.
+
 ---
