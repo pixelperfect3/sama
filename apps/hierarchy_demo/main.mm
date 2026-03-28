@@ -227,6 +227,12 @@ int main()
                               bgfx::copy(kWhite, sizeof(kWhite)));
     res.setWhiteTexture(whiteTex);
 
+    const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
+    bgfx::TextureHandle neutralNormalTex =
+        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                              bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
+    res.setNeutralNormalTexture(neutralNormalTex);
+
     uint8_t cubeFaces[6 * 4];
     for (int i = 0; i < 6 * 4; ++i)
         cubeFaces[i] = 255;

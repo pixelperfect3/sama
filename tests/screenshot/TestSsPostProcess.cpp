@@ -52,6 +52,7 @@ TEST_CASE("screenshot: postprocess scene", "[screenshot]")
     bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
 
     bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+    bgfx::setTexture(1, uniforms.s_normal, fx.neutralNormalTex());
     bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
 
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};

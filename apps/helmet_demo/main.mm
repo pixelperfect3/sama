@@ -179,6 +179,12 @@ int main()
                               bgfx::copy(kWhite, sizeof(kWhite)));
     res.setWhiteTexture(whiteTex);
 
+    const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
+    bgfx::TextureHandle neutralNormalTex =
+        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                              bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
+    res.setNeutralNormalTexture(neutralNormalTex);
+
     // 1×1 white cube texture — used as a safe default for unbound IBL cube samplers
     // (s_irradiance slot 6, s_prefiltered slot 7) until real IBL maps are loaded.
     // Six identical faces: +X -X +Y -Y +Z -Z, each 1×1 RGBA8 white.

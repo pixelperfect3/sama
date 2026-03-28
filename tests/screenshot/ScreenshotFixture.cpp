@@ -143,8 +143,14 @@ ScreenshotFixture::ScreenshotFixture()
 
     // 1×1 white texture for default sampler bindings (albedo, ORM, etc.).
     const uint8_t white[4] = {255, 255, 255, 255};
-    whiteTex_ = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8,
-                                      BGFX_TEXTURE_NONE, bgfx::copy(white, sizeof(white)));
+    whiteTex_ = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                                      bgfx::copy(white, sizeof(white)));
+
+    // 1×1 neutral normal map: tangent-space (0, 0, 1) → N = Ngeom.
+    const uint8_t neutralNormal[4] = {128, 128, 255, 255};
+    neutralNormalTex_ =
+        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                              bgfx::copy(neutralNormal, sizeof(neutralNormal)));
 
     // Process all deferred texture creation commands.
     bgfx::frame();
@@ -155,6 +161,8 @@ ScreenshotFixture::~ScreenshotFixture()
     // Flush any pending commands before destroying resources.
     bgfx::frame();
 
+    if (bgfx::isValid(neutralNormalTex_))
+        bgfx::destroy(neutralNormalTex_);
     if (bgfx::isValid(whiteTex_))
         bgfx::destroy(whiteTex_);
     if (bgfx::isValid(blitTex_))

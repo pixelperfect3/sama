@@ -75,7 +75,16 @@ public:
     // Bind to sampler slots that require a texture but have no real asset
     // (e.g. s_albedo slot 0, s_orm slot 2) so the shader sees white defaults
     // rather than undefined/zero values from an unbound sampler.
-    bgfx::TextureHandle whiteTex() const { return whiteTex_; }
+    bgfx::TextureHandle whiteTex() const
+    {
+        return whiteTex_;
+    }
+
+    // 1×1 neutral normal map: (128, 128, 255) → tangent-space (0, 0, 1).
+    bgfx::TextureHandle neutralNormalTex() const
+    {
+        return neutralNormalTex_;
+    }
 
 private:
     bgfx::TextureHandle rtTex_ = BGFX_INVALID_HANDLE;
@@ -83,6 +92,7 @@ private:
     bgfx::FrameBufferHandle captureFb_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle blitTex_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle whiteTex_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle neutralNormalTex_ = BGFX_INVALID_HANDLE;
 };
 
 }  // namespace engine::screenshot

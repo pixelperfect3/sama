@@ -125,6 +125,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 
     bgfx::TextureHandle whiteTex = res.whiteTexture();
     bgfx::TextureHandle whiteCubeTex = res.whiteCubeTexture();
+    // Neutral normal map: (128, 128, 255) → tangent-space (0, 0, 1) → N = Ngeom.
+    // White (255, 255, 255) decodes to (1, 1, 1) which distorts the normal.
+    bgfx::TextureHandle normalFallback =
+        bgfx::isValid(res.neutralNormalTexture()) ? res.neutralNormalTexture() : whiteTex;
 
     // Frame-level uniforms — must be re-uploaded before every submit() because
     // bgfx resets all per-draw state after each submit().
@@ -190,7 +194,8 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 return whiteTex;
             };
             bgfx::setTexture(0, uniforms.s_albedo, resolveOrWhite(mat->albedoMapId));
-            bgfx::setTexture(1, uniforms.s_normal, resolveOrWhite(mat->normalMapId));
+            bgfx::setTexture(1, uniforms.s_normal,
+                             mat->normalMapId ? resolveOrWhite(mat->normalMapId) : normalFallback);
             bgfx::setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
             bgfx::setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
             bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));

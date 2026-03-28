@@ -172,7 +172,10 @@ void main()
             shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
         {
             float texelSize = 1.0 / 2048.0;
-            float shadowBias = 0.005;  // prevents self-shadowing (shadow acne)
+            // Slope-scaled bias: surfaces at oblique angles to the light need
+            // more bias.  Clamp to [0.002, 0.02] to avoid light leaks.
+            float slopeFactor = clamp(1.0 - dot(Ngeom, L), 0.0, 1.0);
+            float shadowBias = mix(0.002, 0.02, slopeFactor);
             float shadowZ = shadowCoord.z - shadowBias;
             shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
             shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));

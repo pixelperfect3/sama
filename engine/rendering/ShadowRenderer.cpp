@@ -134,8 +134,14 @@ math::Mat4 ShadowRenderer::shadowMatrix(uint32_t cascadeIdx) const
 
     // Bias matrix: NDC XY [-1,1] -> UV [0,1]; Z unchanged (GLM_FORCE_DEPTH_ZERO_TO_ONE
     // means depth is already in [0,1] — no scale/offset needed for Z).
-    const math::Mat4 biasMatrix = glm::translate(math::Mat4(1.0f), math::Vec3(0.5f, 0.5f, 0.0f)) *
-                                  glm::scale(math::Mat4(1.0f), math::Vec3(0.5f, 0.5f, 1.0f));
+    // bgfx on Metal has texture origin at top-left (Y=0 = top), but NDC Y=+1 is
+    // the top of the scene.  We must flip V so that NDC Y=+1 maps to UV Y=0 (top).
+    const bool flipY = !bgfx::getCaps()->originBottomLeft;
+    const float yScale = flipY ? -0.5f : 0.5f;
+    const float yOffset = 0.5f;
+    const math::Mat4 biasMatrix =
+        glm::translate(math::Mat4(1.0f), math::Vec3(0.5f, yOffset, 0.0f)) *
+        glm::scale(math::Mat4(1.0f), math::Vec3(0.5f, yScale, 1.0f));
 
     // Atlas UV offset for cascade i: scale and translate the [0,1] UV into the
     // cascade tile's sub-rect within the atlas.

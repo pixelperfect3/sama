@@ -72,6 +72,17 @@ public:
         return whiteTexture_;
     }
 
+    // Neutral normal map: 1×1 pixel of (128, 128, 255, 255) = tangent-space (0, 0, 1).
+    // Use as fallback for s_normal when no normal map texture is assigned.
+    void setNeutralNormalTexture(bgfx::TextureHandle h)
+    {
+        neutralNormalTexture_ = h;
+    }
+    [[nodiscard]] bgfx::TextureHandle neutralNormalTexture() const
+    {
+        return neutralNormalTexture_;
+    }
+
     // 1×1 white cube texture — fallback for unbound IBL cube samplers (slots 6, 7).
     // The handle is NOT owned by RenderResources; caller is responsible for its lifetime.
     void setWhiteCubeTexture(bgfx::TextureHandle h)
@@ -134,6 +145,7 @@ private:
     };
 
     bgfx::TextureHandle whiteTexture_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle neutralNormalTexture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle whiteCubeTexture_ = BGFX_INVALID_HANDLE;
 
     // Non-owned texture handles registered via addTexture().  Index 0 = ID 1.

@@ -83,6 +83,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
 
     RenderResources res;
     res.setWhiteTexture(fx.whiteTex());
+    res.setNeutralNormalTexture(fx.neutralNormalTex());
 
     Registry reg;
     const GltfAsset* helmet = assets.get<GltfAsset>(handle);

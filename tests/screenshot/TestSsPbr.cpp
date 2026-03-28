@@ -46,6 +46,7 @@ TEST_CASE("screenshot: PBR lit cube", "[screenshot]")
     // Bind white defaults for unset texture slots so unbound samplers
     // don't produce zero (black albedo, zero AO) on Metal.
     bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+    bgfx::setTexture(1, uniforms.s_normal, fx.neutralNormalTex());
     bgfx::setTexture(2, uniforms.s_orm,    fx.whiteTex());
 
     // Draw cube

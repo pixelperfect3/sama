@@ -25,10 +25,11 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
     uniforms.init();
 
     bgfx::ProgramHandle shadowProg = engine::rendering::loadShadowProgram();
-    bgfx::ProgramHandle pbrProg    = engine::rendering::loadPbrProgram();
+    bgfx::ProgramHandle pbrProg = engine::rendering::loadPbrProgram();
 
     engine::rendering::RenderResources res;
     res.setWhiteTexture(fx.whiteTex());
+    res.setNeutralNormalTexture(fx.neutralNormalTex());
 
     uint32_t meshId =
         res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));
@@ -46,7 +47,7 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
 
     engine::rendering::ShadowRenderer shadow;
     engine::rendering::ShadowDesc shadowDesc;
-    shadowDesc.resolution  = 512;
+    shadowDesc.resolution = 512;
     shadowDesc.cascadeCount = 1;
     shadow.init(shadowDesc);
 
@@ -83,8 +84,8 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
 
     // Light direction: from surface toward light = normalize(lightPos - origin).
     glm::vec3 towardLight = glm::normalize(lightPos);
-    float lightData[8]    = {towardLight.x, towardLight.y, towardLight.z, 0.0f,
-                             1.0f,          0.95f,         0.9f,          0.0f};
+    float lightData[8] = {towardLight.x, towardLight.y, towardLight.z, 0.0f,
+                          6.0f,          5.7f,          5.4f,          0.0f};
 
     // Draw occluder cube
     {
@@ -92,8 +93,9 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
         bgfx::setUniform(uniforms.u_material, matData, 2);
         bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
         bgfx::setUniform(uniforms.u_shadowMatrix, &shadowMat[0][0], 4);
-        bgfx::setTexture(0, uniforms.s_albedo,   fx.whiteTex());
-        bgfx::setTexture(2, uniforms.s_orm,      fx.whiteTex());
+        bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+        bgfx::setTexture(1, uniforms.s_normal, fx.neutralNormalTex());
+        bgfx::setTexture(2, uniforms.s_orm, fx.whiteTex());
         bgfx::setTexture(5, uniforms.s_shadowMap, shadow.atlasTexture());
 
         auto model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f));
@@ -113,8 +115,9 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
         bgfx::setUniform(uniforms.u_material, matData, 2);
         bgfx::setUniform(uniforms.u_dirLight, lightData, 2);
         bgfx::setUniform(uniforms.u_shadowMatrix, &shadowMat[0][0], 4);
-        bgfx::setTexture(0, uniforms.s_albedo,   fx.whiteTex());
-        bgfx::setTexture(2, uniforms.s_orm,      fx.whiteTex());
+        bgfx::setTexture(0, uniforms.s_albedo, fx.whiteTex());
+        bgfx::setTexture(1, uniforms.s_normal, fx.neutralNormalTex());
+        bgfx::setTexture(2, uniforms.s_orm, fx.whiteTex());
         bgfx::setTexture(5, uniforms.s_shadowMap, shadow.atlasTexture());
 
         auto model = glm::scale(glm::mat4(1.0f), glm::vec3(3.0f, 0.2f, 3.0f));
@@ -131,8 +134,10 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
     auto pixels = fx.captureFrame();
 
     shadow.shutdown();
-    if (bgfx::isValid(shadowProg)) bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))    bgfx::destroy(pbrProg);
+    if (bgfx::isValid(shadowProg))
+        bgfx::destroy(shadowProg);
+    if (bgfx::isValid(pbrProg))
+        bgfx::destroy(pbrProg);
     res.destroyAll();
     uniforms.destroy();
 
