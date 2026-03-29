@@ -969,17 +969,11 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         GLM_ENABLE_EXPERIMENTAL
     )
 
-    # Copy the cowboy GLB next to the binary so StdFileSystem(".")/load() finds it.
+    # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
     add_custom_command(TARGET animation_demo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "/Users/shayanj/cowboy_walkinginplace.glb"
-            "$<TARGET_FILE_DIR:animation_demo>/cowboy_walkinginplace.glb"
-        COMMENT "Copying cowboy_walkinginplace.glb to build directory"
-    )
-    add_custom_command(TARGET animation_demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "/Users/shayanj/cowboy_running.glb"
-            "$<TARGET_FILE_DIR:animation_demo>/cowboy_running.glb"
-        COMMENT "Copying cowboy_running.glb to build directory"
+            "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
+            "$<TARGET_FILE_DIR:animation_demo>/BrainStem.glb"
+        COMMENT "Copying BrainStem.glb to build directory"
     )
 endif()

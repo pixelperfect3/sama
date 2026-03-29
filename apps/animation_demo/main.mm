@@ -1,6 +1,6 @@
 // Animation Demo — macOS
 //
-// Loads a skinned glTF cowboy model and plays its walk animation with ImGui
+// Loads a skinned glTF model model and plays its walk animation with ImGui
 // controls for play/pause, speed, and playback scrubbing.
 //
 // Controls:
@@ -201,8 +201,8 @@ int main()
 
     renderer.endFrame();  // flush resource uploads
 
-    // -- Start async cowboy load ----------------------------------------------
-    auto cowboyHandle = assets.load<GltfAsset>("cowboy_walkinginplace.glb");
+    // -- Start async model load ----------------------------------------------
+    auto modelHandle = assets.load<GltfAsset>("BrainStem.glb");
 
     // -- ECS ------------------------------------------------------------------
     Registry reg;
@@ -210,7 +210,7 @@ int main()
     engine::scene::TransformSystem transformSys;
     AnimationSystem animSys;
     AnimationResources animRes;
-    bool cowboySpawned = false;
+    bool modelSpawned = false;
 
     // -- Ground plane ---------------------------------------------------------
     MeshData cubeData = makeCubeMeshData();
@@ -360,12 +360,12 @@ int main()
         // -- Asset uploads & spawn on Ready -----------------------------------
         assets.processUploads();
 
-        const AssetState cowboyState = assets.state(cowboyHandle);
-        if (!cowboySpawned && cowboyState == AssetState::Ready)
+        const AssetState modelState = assets.state(modelHandle);
+        if (!modelSpawned && modelState == AssetState::Ready)
         {
-            const GltfAsset* cowboy = assets.get<GltfAsset>(cowboyHandle);
-            GltfSceneSpawner::spawn(*cowboy, reg, res, animRes);
-            cowboySpawned = true;
+            const GltfAsset* model = assets.get<GltfAsset>(modelHandle);
+            GltfSceneSpawner::spawn(*model, reg, res, animRes);
+            modelSpawned = true;
 
             // Start playing animation by default.
             reg.view<AnimatorComponent>().each(
@@ -376,14 +376,14 @@ int main()
                     ac.speed = 1.0f;
                 });
         }
-        else if (cowboyState == AssetState::Failed)
+        else if (modelState == AssetState::Failed)
         {
             static bool printed = false;
             if (!printed)
             {
                 printed = true;
                 fprintf(stderr, "animation_demo: asset load failed: %s\n",
-                        assets.error(cowboyHandle).c_str());
+                        assets.error(modelHandle).c_str());
             }
         }
 
@@ -475,12 +475,12 @@ int main()
         bgfx::dbgTextPrintf(1, 2, 0x07, "RMB=orbit  |  Scroll=zoom  |  Arena: %zu KB / %zu KB",
                             frameArena.bytesUsed() / 1024, frameArena.capacity() / 1024);
 
-        if (cowboyState == AssetState::Ready)
-            bgfx::dbgTextPrintf(1, 3, 0x0a, "cowboy_walkinginplace.glb — Ready");
-        else if (cowboyState == AssetState::Failed)
-            bgfx::dbgTextPrintf(1, 3, 0x0c, "cowboy_walkinginplace.glb — FAILED");
+        if (modelState == AssetState::Ready)
+            bgfx::dbgTextPrintf(1, 3, 0x0a, "BrainStem.glb — Ready");
+        else if (modelState == AssetState::Failed)
+            bgfx::dbgTextPrintf(1, 3, 0x0c, "BrainStem.glb — FAILED");
         else
-            bgfx::dbgTextPrintf(1, 3, 0x0e, "cowboy_walkinginplace.glb — Loading...");
+            bgfx::dbgTextPrintf(1, 3, 0x0e, "BrainStem.glb — Loading...");
 
         // -- ImGui panel ------------------------------------------------------
         ImGui::SetNextWindowPos(ImVec2(10, 80), ImGuiCond_FirstUseEver);
@@ -544,7 +544,7 @@ int main()
     }
 
     // -- Cleanup --------------------------------------------------------------
-    assets.release(cowboyHandle);
+    assets.release(modelHandle);
 
     imguiDestroy();
 
