@@ -444,16 +444,20 @@ target_include_directories(engine_assets PRIVATE
     ${stb_SOURCE_DIR}
     ${cgltf_SOURCE_DIR}
 )
-target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading engine_scene glm::glm)
+target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading engine_scene engine_animation glm::glm)
 
 # --- engine_ecs static library ---
 add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
 target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party)
 
 # --- engine_scene static library ---
-add_library(engine_scene STATIC engine/scene/SceneGraph.cpp engine/scene/TransformSystem.cpp)
+add_library(engine_scene STATIC
+    engine/scene/SceneGraph.cpp
+    engine/scene/TransformSystem.cpp
+    engine/scene/SceneSerializer.cpp
+)
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_scene PUBLIC engine_ecs engine_io glm::glm)
+target_link_libraries(engine_scene PUBLIC engine_ecs engine_io engine_rendering glm::glm)
 
 # --- engine_audio static library ---
 # Compiles SoLoud core + miniaudio backend + engine audio code into a single
@@ -625,7 +629,7 @@ add_executable(engine_tests
     tests/scene/TestSceneSerializer.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio engine_animation glm::glm Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 

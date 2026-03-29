@@ -108,6 +108,20 @@ public:
         return View<Components...>(findStore<Components>()...);
     }
 
+    // Iterate all live entities.  Callback signature: void(EntityID).
+    template <typename Fn>
+    void forEachEntity(Fn&& fn) const
+    {
+        for (uint32_t i = 0; i < generations_.size(); ++i)
+        {
+            EntityID id = makeEntityID(i, generations_[i]);
+            if (isValid(id))
+            {
+                fn(id);
+            }
+        }
+    }
+
 private:
     // Retrieve or create the SparseSet for type T.
     template <typename T>
