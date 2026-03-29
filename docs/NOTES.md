@@ -750,3 +750,31 @@ ECS Registry, game logic, physics, audio, animation, cameras — those remain th
 All 5 demos migrated: helmet_demo, hierarchy_demo, physics_demo, audio_demo, animation_demo. Each demo's `main()` now starts with `Engine eng; eng.init(desc);` and uses `eng.beginFrame(dt)` / `eng.endFrame()` instead of 200+ lines of manual setup.
 
 ---
+
+## Shared OrbitCamera (`engine::core::OrbitCamera`)
+
+Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera structs across demos:
+- `position()` / `view()` — spherical coordinate orbit around target
+- `orbit(deltaYaw, deltaPitch)` — right-drag rotation with pitch clamping
+- `zoom(scrollDelta)` — scroll to adjust distance
+- `moveTarget(inputState, dt, speed)` — WASD/QE target movement relative to camera yaw
+- All 5 demos migrated to use it
+
+---
+
+## Scene Serialization (`engine::scene::SceneSerializer`)
+
+- Saves/loads ECS scenes as JSON via the `engine::io` wrapper
+- Serializes: TransformComponent (position/rotation/scale), CameraComponent, DirectionalLightComponent, PointLightComponent, SpotLightComponent
+- Hierarchy preserved via scene-local IDs and two-pass loading (create entities first, rebuild parent-child second)
+- 8 tests covering round-trip, hierarchy, deep chains, ordering independence, rotation/scale preservation
+
+---
+
+## JSON Integration (`engine::io`)
+
+- rapidjson wrapped with pimpl — no rapidjson headers leak into public API
+- `JsonDocument` (parse from string/file), `JsonValue` (typed accessors, math helpers, iteration), `JsonWriter` (SAX builder with math helpers, file output)
+- 22 tests covering parsing, typed getters, math round-trips (Vec2/3/4, Quat), object/array iteration, file I/O, error handling
+
+---

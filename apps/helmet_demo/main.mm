@@ -130,7 +130,7 @@ int main()
     // -- Main loop ------------------------------------------------------------
     engine::core::OrbitCamera cam;
     cam.distance = 3.5f;
-    cam.yaw = -30.0f;
+    cam.yaw = 150.0f;
     cam.pitch = 8.0f;
     cam.target = {0, 0, 0};
     bool showHud = true;
