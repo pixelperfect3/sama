@@ -392,6 +392,28 @@ int main()
         prevMouseY = my;
         s_zoomScrollDelta = 0.f;
 
+        // WASD moves the camera target along the XZ plane.
+        {
+            constexpr float kMoveSpeed = 3.0f;
+            float speed = kMoveSpeed * dt;
+            // Forward/back = camera's XZ forward direction.
+            float yawRad = glm::radians(cam.yaw);
+            glm::vec3 fwd(std::sin(yawRad), 0.0f, std::cos(yawRad));
+            glm::vec3 rht(std::cos(yawRad), 0.0f, -std::sin(yawRad));
+            if (inputState.isKeyHeld(Key::W))
+                cam.target -= fwd * speed;
+            if (inputState.isKeyHeld(Key::S))
+                cam.target += fwd * speed;
+            if (inputState.isKeyHeld(Key::A))
+                cam.target -= rht * speed;
+            if (inputState.isKeyHeld(Key::D))
+                cam.target += rht * speed;
+            if (inputState.isKeyHeld(Key::Q))
+                cam.target.y -= speed;
+            if (inputState.isKeyHeld(Key::E))
+                cam.target.y += speed;
+        }
+
         // -- Asset uploads & spawn on Ready -----------------------------------
         assets.processUploads();
 
@@ -569,6 +591,12 @@ int main()
             // Progress bar
             float progress = (clipDuration > 0.0f) ? (currentTime / clipDuration) : 0.0f;
             ImGui::ProgressBar(progress, ImVec2(-1, 0));
+
+            ImGui::Separator();
+            glm::vec3 cp = cam.position();
+            ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cp.x, cp.y, cp.z);
+            ImGui::Text("Target: (%.1f, %.1f, %.1f)", cam.target.x, cam.target.y, cam.target.z);
+            ImGui::Text("WASD=move  QE=up/down  RMB=orbit  Scroll=zoom");
         }
         ImGui::End();
 
