@@ -243,10 +243,14 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
     auto shadowView_ = reg.view<ShadowVisibleTag, WorldTransformComponent, MeshComponent>();
 
     shadowView_.each(
-        [&](ecs::EntityID /*entity*/, const ShadowVisibleTag& tag,
+        [&](ecs::EntityID entity, const ShadowVisibleTag& tag,
             const WorldTransformComponent& wtc, const MeshComponent& mc)
         {
             if (!(tag.cascadeMask & cascadeBit))
+                return;
+
+            // Skip skinned entities — rendered by submitSkinnedShadowDrawCalls.
+            if (reg.has<animation::SkinComponent>(entity))
                 return;
 
             const Mesh* mesh = res.getMesh(mc.mesh);
@@ -264,6 +268,50 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
             bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
 
             bgfx::submit(shadowView, shadowProgram);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Skinned shadow pass — depth-only with bone matrices.
+// ---------------------------------------------------------------------------
+
+void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(
+    ecs::Registry& reg, const RenderResources& res,
+    bgfx::ProgramHandle skinnedShadowProgram, uint32_t cascadeIndex,
+    const math::Mat4* boneBuffer)
+{
+    if (!bgfx::isValid(skinnedShadowProgram) || !boneBuffer)
+        return;
+
+    const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
+    const bgfx::ViewId shadowView = static_cast<bgfx::ViewId>(kViewShadowBase + cascadeIndex);
+
+    auto skinnedShadowView =
+        reg.view<ShadowVisibleTag, animation::SkinComponent, MeshComponent>();
+
+    skinnedShadowView.each(
+        [&](ecs::EntityID /*entity*/, const ShadowVisibleTag& tag,
+            const animation::SkinComponent& skin, const MeshComponent& mc)
+        {
+            if (!(tag.cascadeMask & cascadeBit))
+                return;
+
+            const Mesh* mesh = res.getMesh(mc.mesh);
+            if (!mesh || !bgfx::isValid(mesh->positionVbh) || !bgfx::isValid(mesh->ibh))
+                return;
+
+            // Upload bone matrices.
+            const math::Mat4* bones = boneBuffer + skin.boneMatrixOffset;
+            bgfx::setTransform(&bones[0][0][0], skin.boneCount);
+
+            bgfx::setVertexBuffer(0, mesh->positionVbh);
+            if (bgfx::isValid(mesh->skinningVbh))
+                bgfx::setVertexBuffer(2, mesh->skinningVbh);
+            bgfx::setIndexBuffer(mesh->ibh);
+
+            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
+
+            bgfx::submit(shadowView, skinnedShadowProgram);
         });
 }
 

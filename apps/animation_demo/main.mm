@@ -486,6 +486,10 @@ int main()
         // Shadow pass (view 0)
         shadow.beginCascade(0, lightView, lightProj);
         drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
+        // Skinned shadow pass — animated depth with bone matrices.
+        const engine::math::Mat4* shadowBones = animSys.boneBuffer();
+        if (shadowBones)
+            drawCallSys.submitSkinnedShadowDrawCalls(reg, res, skinnedShadowProg, 0, shadowBones);
 
         // Opaque pass (view 9) to backbuffer
         const auto W = static_cast<uint16_t>(fbW);

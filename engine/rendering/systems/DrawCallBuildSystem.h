@@ -80,6 +80,12 @@ public:
     void updateSkinned(ecs::Registry& reg, const RenderResources& res,
                        bgfx::ProgramHandle skinnedProgram, const ShaderUniforms& uniforms,
                        const PbrFrameParams& frame, const math::Mat4* boneBuffer);
+
+    // Shadow pass for skinned entities — uses bone matrices for correct
+    // animated shadow depth.
+    void submitSkinnedShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
+                                      bgfx::ProgramHandle skinnedShadowProgram,
+                                      uint32_t cascadeIndex, const math::Mat4* boneBuffer);
 };
 
 }  // namespace engine::rendering
