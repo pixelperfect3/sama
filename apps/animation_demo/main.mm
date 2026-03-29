@@ -32,6 +32,7 @@
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/IblResources.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
@@ -80,6 +81,10 @@ int main()
     AssetManager assets(threadPool, fileSystem);
     assets.registerLoader(std::make_unique<TextureLoader>());
     assets.registerLoader(std::make_unique<GltfLoader>());
+
+    // -- IBL (procedural sky/ground) -----------------------------------------
+    IblResources ibl;
+    ibl.generateDefault();
 
     // -- Start async model load ----------------------------------------------
     auto modelHandle = assets.load<GltfAsset>("BrainStem.glb");
@@ -313,6 +318,15 @@ int main()
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
 
+        if (ibl.isValid())
+        {
+            frame.iblEnabled = true;
+            frame.maxMipLevels = 7.0f;
+            frame.irradiance = ibl.irradiance();
+            frame.prefiltered = ibl.prefiltered();
+            frame.brdfLut = ibl.brdfLut();
+        }
+
         drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         const engine::math::Mat4* boneBuffer = animSys.boneBuffer();
@@ -397,6 +411,7 @@ int main()
 
     // -- Cleanup --------------------------------------------------------------
     assets.release(modelHandle);
+    ibl.shutdown();
 
     return 0;
 }

@@ -31,6 +31,7 @@
 #include "engine/physics/PhysicsComponents.h"
 #include "engine/physics/PhysicsSystem.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/IblResources.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
@@ -136,6 +137,10 @@ int main()
                                   e->imguiScrollAccum() += static_cast<float>(yoff);
                               s_zoomScrollDelta += static_cast<float>(yoff);
                           });
+
+    // -- IBL (procedural sky/ground) -----------------------------------------
+    IblResources ibl;
+    ibl.generateDefault();
 
     // -- Create cube mesh (shared by all entities) ----------------------------
     MeshData cubeData = makeCubeMeshData();
@@ -419,6 +424,15 @@ int main()
         frame.camPos[0] = camPos.x;
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
+
+        if (ibl.isValid())
+        {
+            frame.iblEnabled = true;
+            frame.maxMipLevels = 7.0f;
+            frame.irradiance = ibl.irradiance();
+            frame.prefiltered = ibl.prefiltered();
+            frame.brdfLut = ibl.brdfLut();
+        }
         drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
@@ -482,6 +496,7 @@ int main()
     }
 
     // -- Cleanup --------------------------------------------------------------
+    ibl.shutdown();
     physics.shutdown();
 
     return 0;
