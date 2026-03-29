@@ -819,11 +819,9 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_include_directories(helmet_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(helmet_demo PRIVATE
+        engine_core
         engine_assets
-        engine_rendering
-        engine_memory
         engine_debug
-        engine_input_glfw
         glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
@@ -878,13 +876,9 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_include_directories(physics_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(physics_demo PRIVATE
-        engine_assets
-        engine_rendering
-        engine_memory
+        engine_core
         engine_scene
         engine_physics
-        engine_debug
-        engine_input_glfw
         glm::glm
         Jolt
         "-framework Cocoa"
@@ -907,12 +901,9 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_include_directories(audio_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(audio_demo PRIVATE
-        engine_assets
-        engine_rendering
+        engine_core
         engine_scene
         engine_audio
-        engine_debug
-        engine_input_glfw
         glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
@@ -960,13 +951,10 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_include_directories(animation_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(animation_demo PRIVATE
+        engine_core
         engine_assets
-        engine_rendering
-        engine_memory
         engine_scene
         engine_animation
-        engine_debug
-        engine_input_glfw
         glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"

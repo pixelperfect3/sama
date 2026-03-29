@@ -12,7 +12,6 @@
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#include <bgfx/bgfx.h>
 
 #include <algorithm>
 #include <cmath>
@@ -28,26 +27,19 @@
 #include "engine/audio/AudioSystem.h"
 #include "engine/audio/IAudioEngine.h"
 #include "engine/audio/SoLoudAudioEngine.h"
+#include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
-#include "engine/input/InputState.h"
-#include "engine/input/InputSystem.h"
-#include "engine/input/Key.h"
-#include "engine/input/desktop/GlfwInputBackend.h"
-#include "engine/platform/Window.h"
-#include "engine/platform/desktop/GlfwWindow.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
-#include "engine/rendering/RenderResources.h"
-#include "engine/rendering/Renderer.h"
 #include "engine/rendering/ShaderLoader.h"
-#include "engine/rendering/ShadowRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
 #include "imgui.h"
 
+using namespace engine::core;
 using namespace engine::ecs;
 using namespace engine::input;
 using namespace engine::audio;
@@ -169,154 +161,25 @@ static glm::vec3 screenToWorld(float mx, float my, float fbW, float fbH, const g
 // Entry point
 // =============================================================================
 
-static float s_imguiScrollF = 0.f;
 static float s_zoomScrollDelta = 0.f;
 
 int main()
 {
-    constexpr uint32_t kInitW = 1280;
-    constexpr uint32_t kInitH = 720;
-
-    // -- Window ---------------------------------------------------------------
-    auto window = createWindow({kInitW, kInitH, "Audio Demo"});
-    if (!window)
+    Engine eng;
+    EngineDesc desc;
+    desc.windowTitle = "Audio Demo";
+    if (!eng.init(desc))
         return 1;
 
-    auto* glfwWin = static_cast<GlfwWindow*>(window.get());
-    GLFWwindow* glfwHandle = glfwWin->glfwHandle();
-
-    // -- Renderer -------------------------------------------------------------
-    Renderer renderer;
-    {
-        RendererDesc rd;
-        rd.nativeWindowHandle = window->nativeWindowHandle();
-        rd.nativeDisplayHandle = window->nativeDisplayHandle();
-        rd.width = kInitW;
-        rd.height = kInitH;
-        rd.headless = false;
-        if (!renderer.init(rd))
-            return 1;
-    }
-
-    bgfx::setDebug(BGFX_DEBUG_TEXT);
-
-    // -- GPU resources --------------------------------------------------------
-    bgfx::ProgramHandle shadowProg = loadShadowProgram();
-    bgfx::ProgramHandle pbrProg = loadPbrProgram();
-
-    RenderResources res;
-
-    const uint8_t kWhite[4] = {255, 255, 255, 255};
-    bgfx::TextureHandle whiteTex =
-        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                              bgfx::copy(kWhite, sizeof(kWhite)));
-    res.setWhiteTexture(whiteTex);
-
-    const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
-    bgfx::TextureHandle neutralNormalTex =
-        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                              bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
-    res.setNeutralNormalTexture(neutralNormalTex);
-
-    uint8_t cubeFaces[6 * 4];
-    for (int i = 0; i < 6 * 4; ++i)
-        cubeFaces[i] = 255;
-    bgfx::TextureHandle whiteCubeTex =
-        bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                                bgfx::copy(cubeFaces, sizeof(cubeFaces)));
-    res.setWhiteCubeTexture(whiteCubeTex);
-
-    ShadowRenderer shadow;
-    {
-        ShadowDesc sd;
-        sd.resolution = 2048;
-        sd.cascadeCount = 1;
-        shadow.init(sd);
-    }
-
-    // -- Create cube mesh (shared by all entities) ----------------------------
-    MeshData cubeData = makeCubeMeshData();
-    Mesh cubeMesh = buildMesh(cubeData);
-    uint32_t cubeMeshId = res.addMesh(std::move(cubeMesh));
-
-    // -- Create materials -----------------------------------------------------
-    // Ground plane — dark gray
-    Material groundMat;
-    groundMat.albedo = {0.3f, 0.3f, 0.3f, 1.0f};
-    groundMat.roughness = 0.7f;
-    groundMat.metallic = 0.0f;
-    uint32_t groundMatId = res.addMaterial(groundMat);
-
-    // Music box — white
-    Material musicMat;
-    musicMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};
-    musicMat.roughness = 0.4f;
-    musicMat.metallic = 0.0f;
-    uint32_t musicMatId = res.addMaterial(musicMat);
-
-    // Corner pillars
-    Material redMat;
-    redMat.albedo = {1.0f, 0.2f, 0.2f, 1.0f};
-    redMat.roughness = 0.5f;
-    redMat.metallic = 0.0f;
-    uint32_t redMatId = res.addMaterial(redMat);
-
-    Material greenMat;
-    greenMat.albedo = {0.2f, 1.0f, 0.2f, 1.0f};
-    greenMat.roughness = 0.5f;
-    greenMat.metallic = 0.0f;
-    uint32_t greenMatId = res.addMaterial(greenMat);
-
-    Material blueMat;
-    blueMat.albedo = {0.2f, 0.2f, 1.0f, 1.0f};
-    blueMat.roughness = 0.5f;
-    blueMat.metallic = 0.0f;
-    uint32_t blueMatId = res.addMaterial(blueMat);
-
-    Material yellowMat;
-    yellowMat.albedo = {1.0f, 1.0f, 0.2f, 1.0f};
-    yellowMat.roughness = 0.5f;
-    yellowMat.metallic = 0.0f;
-    uint32_t yellowMatId = res.addMaterial(yellowMat);
-
-    // Listener — magenta
-    Material magentaMat;
-    magentaMat.albedo = {1.0f, 0.2f, 1.0f, 1.0f};
-    magentaMat.roughness = 0.5f;
-    magentaMat.metallic = 0.0f;
-    uint32_t magentaMatId = res.addMaterial(magentaMat);
-
-    // -- ImGui ----------------------------------------------------------------
-    imguiCreate(16.f);
-    {
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigWindowsMoveFromTitleBarOnly = true;
-        io.KeyMap[ImGuiKey_UpArrow] = GLFW_KEY_UP;
-        io.KeyMap[ImGuiKey_DownArrow] = GLFW_KEY_DOWN;
-        io.KeyMap[ImGuiKey_LeftArrow] = GLFW_KEY_LEFT;
-        io.KeyMap[ImGuiKey_RightArrow] = GLFW_KEY_RIGHT;
-        io.KeyMap[ImGuiKey_PageUp] = GLFW_KEY_PAGE_UP;
-        io.KeyMap[ImGuiKey_PageDown] = GLFW_KEY_PAGE_DOWN;
-        io.KeyMap[ImGuiKey_Home] = GLFW_KEY_HOME;
-        io.KeyMap[ImGuiKey_End] = GLFW_KEY_END;
-        io.KeyMap[ImGuiKey_Enter] = GLFW_KEY_ENTER;
-        io.KeyMap[ImGuiKey_Escape] = GLFW_KEY_ESCAPE;
-        io.KeyMap[ImGuiKey_Space] = GLFW_KEY_SPACE;
-        io.KeyMap[ImGuiKey_Backspace] = GLFW_KEY_BACKSPACE;
-        io.KeyMap[ImGuiKey_Tab] = GLFW_KEY_TAB;
-    }
-
-    glfwSetScrollCallback(glfwHandle,
-                          [](GLFWwindow*, double /*xoff*/, double yoff)
+    // Hook up zoom scroll (piggybacks on Engine's scroll callback via user pointer).
+    glfwSetScrollCallback(eng.glfwHandle(),
+                          [](GLFWwindow* win, double /*xoff*/, double yoff)
                           {
-                              s_imguiScrollF += static_cast<float>(yoff);
+                              auto* e = static_cast<Engine*>(glfwGetWindowUserPointer(win));
+                              if (e)
+                                  e->imguiScrollAccum() += static_cast<float>(yoff);
                               s_zoomScrollDelta += static_cast<float>(yoff);
                           });
-
-    float s_contentScaleX = 1.f, s_contentScaleY = 1.f;
-    glfwGetWindowContentScale(glfwHandle, &s_contentScaleX, &s_contentScaleY);
-
-    renderer.endFrame();  // flush resource uploads
 
     // -- Audio engine ---------------------------------------------------------
     SoLoudAudioEngine audioEngine;
@@ -349,10 +212,62 @@ int main()
     auto uiClickWav = generateToneWav(1200.0f, 0.1f);
     uint32_t uiClickClipId = audioEngine.loadClip(uiClickWav.data(), uiClickWav.size());
 
-    // -- ECS ------------------------------------------------------------------
+    // -- ECS & rendering systems ----------------------------------------------
     Registry reg;
     DrawCallBuildSystem drawCallSys;
     engine::scene::TransformSystem transformSys;
+
+    // -- Create cube mesh (shared by all entities) ----------------------------
+    MeshData cubeData = makeCubeMeshData();
+    Mesh cubeMesh = buildMesh(cubeData);
+    uint32_t cubeMeshId = eng.resources().addMesh(std::move(cubeMesh));
+
+    // -- Create materials -----------------------------------------------------
+    // Ground plane — dark gray
+    Material groundMat;
+    groundMat.albedo = {0.3f, 0.3f, 0.3f, 1.0f};
+    groundMat.roughness = 0.7f;
+    groundMat.metallic = 0.0f;
+    uint32_t groundMatId = eng.resources().addMaterial(groundMat);
+
+    // Music box — white
+    Material musicMat;
+    musicMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};
+    musicMat.roughness = 0.4f;
+    musicMat.metallic = 0.0f;
+    uint32_t musicMatId = eng.resources().addMaterial(musicMat);
+
+    // Corner pillars
+    Material redMat;
+    redMat.albedo = {1.0f, 0.2f, 0.2f, 1.0f};
+    redMat.roughness = 0.5f;
+    redMat.metallic = 0.0f;
+    uint32_t redMatId = eng.resources().addMaterial(redMat);
+
+    Material greenMat;
+    greenMat.albedo = {0.2f, 1.0f, 0.2f, 1.0f};
+    greenMat.roughness = 0.5f;
+    greenMat.metallic = 0.0f;
+    uint32_t greenMatId = eng.resources().addMaterial(greenMat);
+
+    Material blueMat;
+    blueMat.albedo = {0.2f, 0.2f, 1.0f, 1.0f};
+    blueMat.roughness = 0.5f;
+    blueMat.metallic = 0.0f;
+    uint32_t blueMatId = eng.resources().addMaterial(blueMat);
+
+    Material yellowMat;
+    yellowMat.albedo = {1.0f, 1.0f, 0.2f, 1.0f};
+    yellowMat.roughness = 0.5f;
+    yellowMat.metallic = 0.0f;
+    uint32_t yellowMatId = eng.resources().addMaterial(yellowMat);
+
+    // Listener — magenta
+    Material magentaMat;
+    magentaMat.albedo = {1.0f, 0.2f, 1.0f, 1.0f};
+    magentaMat.roughness = 0.5f;
+    magentaMat.metallic = 0.0f;
+    uint32_t magentaMatId = eng.resources().addMaterial(magentaMat);
 
     // -- Create ground plane entity -------------------------------------------
     EntityID groundEntity = reg.createEntity();
@@ -460,11 +375,6 @@ int main()
         reg.emplace<AudioListenerComponent>(listenerEntity, alc);
     }
 
-    // -- Input ----------------------------------------------------------------
-    GlfwInputBackend inputBackend(glfwHandle);
-    InputSystem inputSys(inputBackend);
-    InputState inputState;
-
     // -- Light ----------------------------------------------------------------
     const glm::vec3 kLightDir = glm::normalize(glm::vec3(1.0f, 2.0f, 1.0f));
     constexpr float kLightIntens = 6.0f;
@@ -478,9 +388,6 @@ int main()
 
     // -- Camera and interaction state -----------------------------------------
     OrbitCamera cam;
-    int prevFbW = 0, prevFbH = 0;
-    double prevTime = glfwGetTime();
-
     bool rightDragging = false;
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
@@ -492,52 +399,22 @@ int main()
     float uiVolume = 1.0f;
 
     // -- Main loop ------------------------------------------------------------
-    while (!window->shouldClose())
+    float dt = 0.f;
+    while (eng.beginFrame(dt))
     {
-        double now = glfwGetTime();
-        float dt = static_cast<float>(glm::min(now - prevTime, 0.05));
-        prevTime = now;
-
-        window->pollEvents();
-
-        int fbW, fbH;
-        glfwGetFramebufferSize(glfwHandle, &fbW, &fbH);
-        if ((fbW != prevFbW || fbH != prevFbH) && fbW > 0 && fbH > 0)
-        {
-            renderer.resize(static_cast<uint32_t>(fbW), static_cast<uint32_t>(fbH));
-            prevFbW = fbW;
-            prevFbH = fbH;
-        }
-        if (fbW <= 0 || fbH <= 0)
-        {
-            renderer.endFrame();
+        if (eng.fbWidth() == 0 || eng.fbHeight() == 0)
             continue;
-        }
 
-        // -- Input ------------------------------------------------------------
-        inputSys.update(inputState);
+        const auto& input = eng.inputState();
+        const float fbW = static_cast<float>(eng.fbWidth());
+        const float fbH = static_cast<float>(eng.fbHeight());
 
         double mx, my;
-        glfwGetCursorPos(glfwHandle, &mx, &my);
-        float physMx = static_cast<float>(mx * s_contentScaleX);
-        float physMy = static_cast<float>(my * s_contentScaleY);
+        glfwGetCursorPos(eng.glfwHandle(), &mx, &my);
+        float physMx = static_cast<float>(mx * eng.contentScaleX());
+        float physMy = static_cast<float>(my * eng.contentScaleY());
 
-        // -- ImGui begin frame ------------------------------------------------
-        {
-            uint8_t imguiButtons = 0;
-            if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
-                imguiButtons |= IMGUI_MBUT_LEFT;
-            if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
-                imguiButtons |= IMGUI_MBUT_RIGHT;
-            if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS)
-                imguiButtons |= IMGUI_MBUT_MIDDLE;
-
-            imguiBeginFrame(static_cast<int32_t>(physMx), static_cast<int32_t>(physMy),
-                            imguiButtons, static_cast<int32_t>(s_imguiScrollF),
-                            static_cast<uint16_t>(fbW), static_cast<uint16_t>(fbH), -1, kViewImGui);
-        }
-
-        bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+        bool imguiWants = eng.imguiWantsMouse();
 
         // -- WASD listener movement -------------------------------------------
         {
@@ -545,13 +422,13 @@ int main()
             auto* tc = reg.get<TransformComponent>(listenerEntity);
             if (tc)
             {
-                if (inputState.isKeyHeld(Key::W))
+                if (input.isKeyHeld(Key::W))
                     tc->position.z -= kMoveSpeed * dt;
-                if (inputState.isKeyHeld(Key::S))
+                if (input.isKeyHeld(Key::S))
                     tc->position.z += kMoveSpeed * dt;
-                if (inputState.isKeyHeld(Key::A))
+                if (input.isKeyHeld(Key::A))
                     tc->position.x -= kMoveSpeed * dt;
-                if (inputState.isKeyHeld(Key::D))
+                if (input.isKeyHeld(Key::D))
                     tc->position.x += kMoveSpeed * dt;
                 tc->flags |= 1;  // mark dirty
             }
@@ -571,9 +448,10 @@ int main()
         }
 
         // -- Camera orbit (right-drag) and zoom (scroll) ----------------------
-        if (!imguiWantsMouse)
+        if (!imguiWants)
         {
-            bool rightDown = glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+            bool rightDown =
+                glfwGetMouseButton(eng.glfwHandle(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
             if (rightDown)
             {
                 if (rightDragging)
@@ -599,16 +477,13 @@ int main()
         }
 
         // -- Click-to-ping (fire-and-forget 3D sound) -------------------------
-        if (!imguiWantsMouse && inputState.isMouseButtonPressed(MouseButton::Left))
+        if (!imguiWants && input.isMouseButtonPressed(MouseButton::Left))
         {
             glm::mat4 viewMat = cam.view();
-            glm::mat4 projMat =
-                glm::perspective(glm::radians(45.f),
-                                 static_cast<float>(fbW) / static_cast<float>(fbH), 0.05f, 100.f);
+            glm::mat4 projMat = glm::perspective(glm::radians(45.f), fbW / fbH, 0.05f, 100.f);
             glm::vec3 camPos = cam.position();
 
-            glm::vec3 nearPt = screenToWorld(physMx, physMy, static_cast<float>(fbW),
-                                             static_cast<float>(fbH), viewMat, projMat);
+            glm::vec3 nearPt = screenToWorld(physMx, physMy, fbW, fbH, viewMat, projMat);
             glm::vec3 rayDir = glm::normalize(nearPt - camPos);
 
             glm::vec3 hitPoint;
@@ -630,34 +505,33 @@ int main()
         audioSys.update(reg);
 
         // -- Render -----------------------------------------------------------
-        renderer.beginFrameDirect();
+        eng.renderer().beginFrameDirect();
 
         glm::mat4 viewMat = cam.view();
         glm::vec3 camPos = cam.position();
-        glm::mat4 projMat = glm::perspective(
-            glm::radians(45.f), static_cast<float>(fbW) / static_cast<float>(fbH), 0.05f, 100.f);
+        glm::mat4 projMat = glm::perspective(glm::radians(45.f), fbW / fbH, 0.05f, 100.f);
 
-        // Shadow pass (view 0)
-        shadow.beginCascade(0, lightView, lightProj);
-        drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
+        // Shadow pass
+        eng.shadow().beginCascade(0, lightView, lightProj);
+        drawCallSys.submitShadowDrawCalls(reg, eng.resources(), eng.shadowProgram(), 0);
 
-        // Opaque pass (view 9) to backbuffer
-        const auto W = static_cast<uint16_t>(fbW);
-        const auto H = static_cast<uint16_t>(fbH);
+        // Opaque pass
+        const auto W = eng.fbWidth();
+        const auto H = eng.fbHeight();
 
         RenderPass(kViewOpaque)
             .rect(0, 0, W, H)
             .clearColorAndDepth(0x1A1A2EFF)
             .transform(viewMat, projMat);
 
-        const glm::mat4 shadowMat = shadow.shadowMatrix(0);
+        const glm::mat4 shadowMat = eng.shadow().shadowMatrix(0);
         PbrFrameParams frame{
-            lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), W, H, 0.05f, 100.f,
+            lightData, glm::value_ptr(shadowMat), eng.shadow().atlasTexture(), W, H, 0.05f, 100.f,
         };
         frame.camPos[0] = camPos.x;
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
-        drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
+        drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
         bgfx::dbgTextClear();
@@ -717,31 +591,12 @@ int main()
         }
         ImGui::End();
 
-        imguiEndFrame();
-
-        // -- Flip -------------------------------------------------------------
-        renderer.endFrame();
+        eng.endFrame();
     }
 
     // -- Cleanup --------------------------------------------------------------
     audioEngine.stopAll();
     audioEngine.shutdown();
-
-    imguiDestroy();
-
-    shadow.shutdown();
-    if (bgfx::isValid(shadowProg))
-        bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))
-        bgfx::destroy(pbrProg);
-    if (bgfx::isValid(whiteTex))
-        bgfx::destroy(whiteTex);
-    if (bgfx::isValid(whiteCubeTex))
-        bgfx::destroy(whiteCubeTex);
-    res.destroyAll();
-
-    renderer.endFrame();
-    renderer.shutdown();
 
     return 0;
 }

@@ -727,3 +727,26 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - **Related fix:** BrainStem has no TEXCOORD_0 attribute. Without UVs, the surface vertex buffer wasn't created (requires normals + tangents + UVs). Fixed by generating zero UVs when TEXCOORD_0 is absent, enabling surface buffer creation for meshes with normals but no UVs.
 
 ---
+
+## Engine/Application Abstraction (`engine::core::Engine`)
+
+### Problem
+~53% of demo code was copy-pasted boilerplate (215-230 identical lines across all 5 demos): window creation, renderer init, default texture creation, shader loading, ImGui setup, input wiring, shadow renderer init, frame arena, DPI scaling, frame loop skeleton, cleanup.
+
+### Solution
+`engine::core::Engine` class (474 lines) consolidates all subsystem initialization, frame lifecycle, and shutdown:
+- `Engine::init(EngineDesc)` — creates window, renderer, default textures (white, neutral normal, white cube), loads all shader programs (PBR, shadow, skinned variants), initializes shadow renderer, ImGui (with all key mappings), input system, frame arena, DPI scale query.
+- `Engine::beginFrame(float& dt)` — polls events, handles resize, computes dt, updates input, feeds ImGui, begins ImGui frame. Returns false when window should close.
+- `Engine::endFrame()` — imguiEndFrame, arena reset, renderer.endFrame.
+- `Engine::shutdown()` — cleanup in reverse init order.
+
+### What Engine owns
+Window, Renderer, RenderResources, ShadowRenderer, ShaderUniforms, default textures, shader programs, InputSystem, InputState, FrameArena, ImGui lifecycle.
+
+### What Engine does NOT own
+ECS Registry, game logic, physics, audio, animation, cameras — those remain the application's responsibility.
+
+### Migration
+All 5 demos migrated: helmet_demo, hierarchy_demo, physics_demo, audio_demo, animation_demo. Each demo's `main()` now starts with `Engine eng; eng.init(desc);` and uses `eng.beginFrame(dt)` / `eng.endFrame()` instead of 200+ lines of manual setup.
+
+---

@@ -10,7 +10,6 @@
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#include <bgfx/bgfx.h>
 
 #include <cmath>
 #include <cstdio>
@@ -27,22 +26,13 @@
 #include "engine/assets/GltfSceneSpawner.h"
 #include "engine/assets/StdFileSystem.h"
 #include "engine/assets/TextureLoader.h"
+#include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
-#include "engine/input/InputState.h"
-#include "engine/input/InputSystem.h"
-#include "engine/input/Key.h"
-#include "engine/input/desktop/GlfwInputBackend.h"
-#include "engine/memory/FrameArena.h"
-#include "engine/platform/Window.h"
-#include "engine/platform/desktop/GlfwWindow.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
-#include "engine/rendering/RenderResources.h"
-#include "engine/rendering/Renderer.h"
 #include "engine/rendering/ShaderLoader.h"
-#include "engine/rendering/ShadowRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
@@ -51,9 +41,9 @@
 
 using namespace engine::animation;
 using namespace engine::assets;
+using namespace engine::core;
 using namespace engine::ecs;
 using namespace engine::input;
-using namespace engine::platform;
 using namespace engine::rendering;
 using namespace engine::threading;
 
@@ -86,36 +76,25 @@ struct OrbitCamera
 // Entry point
 // =============================================================================
 
-static float s_imguiScrollF = 0.f;
 static float s_zoomScrollDelta = 0.f;
 
 int main()
 {
-    constexpr uint32_t kInitW = 1280;
-    constexpr uint32_t kInitH = 720;
-
-    // -- Window ---------------------------------------------------------------
-    auto window = createWindow({kInitW, kInitH, "Animation Demo"});
-    if (!window)
+    Engine eng;
+    EngineDesc desc;
+    desc.windowTitle = "Animation Demo";
+    if (!eng.init(desc))
         return 1;
 
-    auto* glfwWin = static_cast<GlfwWindow*>(window.get());
-    GLFWwindow* glfwHandle = glfwWin->glfwHandle();
-
-    // -- Renderer -------------------------------------------------------------
-    Renderer renderer;
-    {
-        RendererDesc rd;
-        rd.nativeWindowHandle = window->nativeWindowHandle();
-        rd.nativeDisplayHandle = window->nativeDisplayHandle();
-        rd.width = kInitW;
-        rd.height = kInitH;
-        rd.headless = false;
-        if (!renderer.init(rd))
-            return 1;
-    }
-
-    bgfx::setDebug(BGFX_DEBUG_TEXT);
+    // Hook up zoom scroll (piggybacks on Engine's scroll callback via user pointer).
+    glfwSetScrollCallback(eng.glfwHandle(),
+                          [](GLFWwindow* win, double /*xoff*/, double yoff)
+                          {
+                              auto* e = static_cast<Engine*>(glfwGetWindowUserPointer(win));
+                              if (e)
+                                  e->imguiScrollAccum() += static_cast<float>(yoff);
+                              s_zoomScrollDelta += static_cast<float>(yoff);
+                          });
 
     // -- Asset system ---------------------------------------------------------
     ThreadPool threadPool(2);
@@ -123,83 +102,6 @@ int main()
     AssetManager assets(threadPool, fileSystem);
     assets.registerLoader(std::make_unique<TextureLoader>());
     assets.registerLoader(std::make_unique<GltfLoader>());
-
-    // -- GPU resources --------------------------------------------------------
-    bgfx::ProgramHandle shadowProg = loadShadowProgram();
-    bgfx::ProgramHandle pbrProg = loadPbrProgram();
-    bgfx::ProgramHandle skinnedPbrProg = loadSkinnedPbrProgram();
-    bgfx::ProgramHandle skinnedShadowProg = loadSkinnedShadowProgram();
-
-    RenderResources res;
-
-    const uint8_t kWhite[4] = {255, 255, 255, 255};
-    bgfx::TextureHandle whiteTex =
-        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                              bgfx::copy(kWhite, sizeof(kWhite)));
-    res.setWhiteTexture(whiteTex);
-
-    const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
-    bgfx::TextureHandle neutralNormalTex =
-        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                              bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
-    res.setNeutralNormalTexture(neutralNormalTex);
-
-    uint8_t cubeFaces[6 * 4];
-    for (int i = 0; i < 6 * 4; ++i)
-        cubeFaces[i] = 255;
-    bgfx::TextureHandle whiteCubeTex =
-        bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                                bgfx::copy(cubeFaces, sizeof(cubeFaces)));
-    res.setWhiteCubeTexture(whiteCubeTex);
-
-    ShadowRenderer shadow;
-    {
-        ShadowDesc sd;
-        sd.resolution = 2048;
-        sd.cascadeCount = 1;
-        shadow.init(sd);
-    }
-
-    // -- ImGui ----------------------------------------------------------------
-    imguiCreate(16.f);
-    {
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigWindowsMoveFromTitleBarOnly = true;
-        io.KeyMap[ImGuiKey_UpArrow] = GLFW_KEY_UP;
-        io.KeyMap[ImGuiKey_DownArrow] = GLFW_KEY_DOWN;
-        io.KeyMap[ImGuiKey_LeftArrow] = GLFW_KEY_LEFT;
-        io.KeyMap[ImGuiKey_RightArrow] = GLFW_KEY_RIGHT;
-        io.KeyMap[ImGuiKey_PageUp] = GLFW_KEY_PAGE_UP;
-        io.KeyMap[ImGuiKey_PageDown] = GLFW_KEY_PAGE_DOWN;
-        io.KeyMap[ImGuiKey_Home] = GLFW_KEY_HOME;
-        io.KeyMap[ImGuiKey_End] = GLFW_KEY_END;
-        io.KeyMap[ImGuiKey_Enter] = GLFW_KEY_ENTER;
-        io.KeyMap[ImGuiKey_Escape] = GLFW_KEY_ESCAPE;
-        io.KeyMap[ImGuiKey_Space] = GLFW_KEY_SPACE;
-        io.KeyMap[ImGuiKey_Backspace] = GLFW_KEY_BACKSPACE;
-        io.KeyMap[ImGuiKey_Tab] = GLFW_KEY_TAB;
-        io.KeyMap[ImGuiKey_Delete] = GLFW_KEY_DELETE;
-        io.KeyMap[ImGuiKey_Insert] = GLFW_KEY_INSERT;
-        io.KeyMap[ImGuiKey_A] = GLFW_KEY_A;
-        io.KeyMap[ImGuiKey_C] = GLFW_KEY_C;
-        io.KeyMap[ImGuiKey_V] = GLFW_KEY_V;
-        io.KeyMap[ImGuiKey_X] = GLFW_KEY_X;
-        io.KeyMap[ImGuiKey_Y] = GLFW_KEY_Y;
-        io.KeyMap[ImGuiKey_Z] = GLFW_KEY_Z;
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    }
-
-    glfwSetScrollCallback(glfwHandle,
-                          [](GLFWwindow*, double /*xoff*/, double yoff)
-                          {
-                              s_imguiScrollF += static_cast<float>(yoff);
-                              s_zoomScrollDelta += static_cast<float>(yoff);
-                          });
-
-    float s_contentScaleX = 1.f, s_contentScaleY = 1.f;
-    glfwGetWindowContentScale(glfwHandle, &s_contentScaleX, &s_contentScaleY);
-
-    renderer.endFrame();  // flush resource uploads
 
     // -- Start async model load ----------------------------------------------
     auto modelHandle = assets.load<GltfAsset>("BrainStem.glb");
@@ -215,13 +117,13 @@ int main()
     // -- Ground plane ---------------------------------------------------------
     MeshData cubeData = makeCubeMeshData();
     Mesh cubeMesh = buildMesh(cubeData);
-    uint32_t cubeMeshId = res.addMesh(std::move(cubeMesh));
+    uint32_t cubeMeshId = eng.resources().addMesh(std::move(cubeMesh));
 
     Material groundMat;
     groundMat.albedo = {0.2f, 0.2f, 0.2f, 1.0f};
     groundMat.roughness = 0.8f;
     groundMat.metallic = 0.0f;
-    uint32_t groundMatId = res.addMaterial(groundMat);
+    uint32_t groundMatId = eng.resources().addMaterial(groundMat);
 
     EntityID groundEntity = reg.createEntity();
     {
@@ -243,7 +145,7 @@ int main()
     lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
     lightMat.emissiveScale = 5.0f;
     lightMat.roughness = 1.0f;
-    uint32_t lightMatId = res.addMaterial(lightMat);
+    uint32_t lightMatId = eng.resources().addMaterial(lightMat);
 
     EntityID lightIndicator = reg.createEntity();
     {
@@ -258,11 +160,6 @@ int main()
         reg.emplace<VisibleTag>(lightIndicator);
     }
 
-    // -- Input ----------------------------------------------------------------
-    GlfwInputBackend inputBackend(glfwHandle);
-    InputSystem inputSys(inputBackend);
-    InputState inputState;
-
     // -- Light ----------------------------------------------------------------
     const glm::vec3 kLightDir = glm::normalize(glm::vec3(1.0f, 2.0f, 0.5f));
     constexpr float kLightIntens = 8.0f;
@@ -276,80 +173,37 @@ int main()
 
     // -- Camera and interaction state -----------------------------------------
     OrbitCamera cam;
-    int prevFbW = 0, prevFbH = 0;
-    double prevTime = glfwGetTime();
 
     bool rightDragging = false;
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
-    // -- Frame arena ----------------------------------------------------------
-    engine::memory::FrameArena frameArena(2 * 1024 * 1024);
-
     float renderMs = 0.f;
 
     // -- Main loop ------------------------------------------------------------
-    while (!window->shouldClose())
+    float dt = 0.f;
+    while (eng.beginFrame(dt))
     {
-        double now = glfwGetTime();
-        float dt = static_cast<float>(glm::min(now - prevTime, 0.05));
-        prevTime = now;
-
-        window->pollEvents();
-
-        int fbW, fbH;
-        glfwGetFramebufferSize(glfwHandle, &fbW, &fbH);
-        if ((fbW != prevFbW || fbH != prevFbH) && fbW > 0 && fbH > 0)
-        {
-            renderer.resize(static_cast<uint32_t>(fbW), static_cast<uint32_t>(fbH));
-            prevFbW = fbW;
-            prevFbH = fbH;
-        }
-        if (fbW <= 0 || fbH <= 0)
-        {
-            renderer.endFrame();
+        if (eng.fbWidth() == 0 || eng.fbHeight() == 0)
             continue;
-        }
 
-        // -- Input ------------------------------------------------------------
-        inputSys.update(inputState);
+        const auto& input = eng.inputState();
+        const float fbW = static_cast<float>(eng.fbWidth());
+        const float fbH = static_cast<float>(eng.fbHeight());
 
         double mx, my;
-        glfwGetCursorPos(glfwHandle, &mx, &my);
-        float physMx = static_cast<float>(mx * s_contentScaleX);
-        float physMy = static_cast<float>(my * s_contentScaleY);
+        glfwGetCursorPos(eng.glfwHandle(), &mx, &my);
+        float physMx = static_cast<float>(mx * eng.contentScaleX());
+        float physMy = static_cast<float>(my * eng.contentScaleY());
 
-        // -- ImGui begin frame ------------------------------------------------
-        {
-            uint8_t imguiButtons = 0;
-            if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
-                imguiButtons |= IMGUI_MBUT_LEFT;
-            if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
-                imguiButtons |= IMGUI_MBUT_RIGHT;
-            if (glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS)
-                imguiButtons |= IMGUI_MBUT_MIDDLE;
-
-            // Feed keyboard nav state for ImGui.
-            ImGuiIO& io = ImGui::GetIO();
-            static const int kNavKeys[] = {GLFW_KEY_UP,        GLFW_KEY_DOWN,   GLFW_KEY_PAGE_UP,
-                                           GLFW_KEY_PAGE_DOWN, GLFW_KEY_HOME,   GLFW_KEY_END,
-                                           GLFW_KEY_ENTER,     GLFW_KEY_ESCAPE, GLFW_KEY_SPACE,
-                                           GLFW_KEY_BACKSPACE, GLFW_KEY_TAB,    GLFW_KEY_DELETE,
-                                           GLFW_KEY_INSERT,    GLFW_KEY_LEFT,   GLFW_KEY_RIGHT};
-            for (int k : kNavKeys)
-                io.KeysDown[k] = (glfwGetKey(glfwHandle, k) == GLFW_PRESS);
-
-            imguiBeginFrame(static_cast<int32_t>(physMx), static_cast<int32_t>(physMy),
-                            imguiButtons, static_cast<int32_t>(s_imguiScrollF),
-                            static_cast<uint16_t>(fbW), static_cast<uint16_t>(fbH), -1, kViewImGui);
-        }
-
-        bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+        bool imguiWants = eng.imguiWantsMouse();
 
         // -- Camera orbit (left or right drag) and zoom (scroll) ----------------
-        if (!imguiWantsMouse)
+        if (!imguiWants)
         {
-            bool leftDown = glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-            bool rightDown = glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+            bool leftDown =
+                glfwGetMouseButton(eng.glfwHandle(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+            bool rightDown =
+                glfwGetMouseButton(eng.glfwHandle(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
             bool dragging = leftDown || rightDown;
             if (dragging)
             {
@@ -387,17 +241,17 @@ int main()
             float yawRad = glm::radians(cam.yaw);
             glm::vec3 fwd(std::sin(yawRad), 0.0f, std::cos(yawRad));
             glm::vec3 rht(std::cos(yawRad), 0.0f, -std::sin(yawRad));
-            if (inputState.isKeyHeld(Key::W))
+            if (input.isKeyHeld(Key::W))
                 cam.target -= fwd * speed;
-            if (inputState.isKeyHeld(Key::S))
+            if (input.isKeyHeld(Key::S))
                 cam.target += fwd * speed;
-            if (inputState.isKeyHeld(Key::A))
+            if (input.isKeyHeld(Key::A))
                 cam.target -= rht * speed;
-            if (inputState.isKeyHeld(Key::D))
+            if (input.isKeyHeld(Key::D))
                 cam.target += rht * speed;
-            if (inputState.isKeyHeld(Key::Q))
+            if (input.isKeyHeld(Key::Q))
                 cam.target.y -= speed;
-            if (inputState.isKeyHeld(Key::E))
+            if (input.isKeyHeld(Key::E))
                 cam.target.y += speed;
         }
 
@@ -408,7 +262,7 @@ int main()
         if (!modelSpawned && modelState == AssetState::Ready)
         {
             const GltfAsset* model = assets.get<GltfAsset>(modelHandle);
-            GltfSceneSpawner::spawn(*model, reg, res, animRes);
+            GltfSceneSpawner::spawn(*model, reg, eng.resources(), animRes);
             modelSpawned = true;
 
             // Start playing animation by default.
@@ -465,55 +319,54 @@ int main()
             });
 
         // -- Animation system update ------------------------------------------
-        animSys.update(reg, dt, animRes, frameArena.resource());
-
+        animSys.update(reg, dt, animRes, eng.frameArena().resource());
 
         // -- Transform system -------------------------------------------------
         transformSys.update(reg);
 
         // -- Render -----------------------------------------------------------
         double frameStart = glfwGetTime();
-        renderer.beginFrameDirect();
+        eng.renderer().beginFrameDirect();
 
         glm::mat4 viewMat = cam.view();
         glm::vec3 camPos = cam.position();
-        glm::mat4 projMat = glm::perspective(
-            glm::radians(45.f), static_cast<float>(fbW) / static_cast<float>(fbH), 0.05f, 50.f);
+        glm::mat4 projMat = glm::perspective(glm::radians(45.f), fbW / fbH, 0.05f, 50.f);
 
         // Shadow pass (view 0)
-        shadow.beginCascade(0, lightView, lightProj);
-        drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
+        eng.shadow().beginCascade(0, lightView, lightProj);
+        drawCallSys.submitShadowDrawCalls(reg, eng.resources(), eng.shadowProgram(), 0);
         // Skinned shadow pass — animated depth with bone matrices.
         const engine::math::Mat4* shadowBones = animSys.boneBuffer();
         if (shadowBones)
-            drawCallSys.submitSkinnedShadowDrawCalls(reg, res, skinnedShadowProg, 0, shadowBones);
+            drawCallSys.submitSkinnedShadowDrawCalls(reg, eng.resources(),
+                                                     eng.skinnedShadowProgram(), 0, shadowBones);
 
         // Opaque pass (view 9) to backbuffer
-        const auto W = static_cast<uint16_t>(fbW);
-        const auto H = static_cast<uint16_t>(fbH);
+        const auto W = eng.fbWidth();
+        const auto H = eng.fbHeight();
 
         RenderPass(kViewOpaque)
             .rect(0, 0, W, H)
             .clearColorAndDepth(0x1A1A2EFF)
             .transform(viewMat, projMat);
 
-        const glm::mat4 shadowMat = shadow.shadowMatrix(0);
+        const glm::mat4 shadowMat = eng.shadow().shadowMatrix(0);
         PbrFrameParams frame{
-            lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), W, H, 0.05f, 50.f,
+            lightData, glm::value_ptr(shadowMat), eng.shadow().atlasTexture(), W, H, 0.05f, 50.f,
         };
         frame.camPos[0] = camPos.x;
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
 
         // Regular (non-skinned) draw calls (ground plane, etc.)
-        drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
+        drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         // Skinned draw calls
         const engine::math::Mat4* boneBuffer = animSys.boneBuffer();
         if (boneBuffer)
         {
-            drawCallSys.updateSkinned(reg, res, skinnedPbrProg, renderer.uniforms(), frame,
-                                      boneBuffer);
+            drawCallSys.updateSkinned(reg, eng.resources(), eng.skinnedPbrProgram(), eng.uniforms(),
+                                      frame, boneBuffer);
         }
 
         // -- HUD --------------------------------------------------------------
@@ -522,7 +375,8 @@ int main()
                             "Animation Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
                             dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
         bgfx::dbgTextPrintf(1, 2, 0x07, "RMB=orbit  |  Scroll=zoom  |  Arena: %zu KB / %zu KB",
-                            frameArena.bytesUsed() / 1024, frameArena.capacity() / 1024);
+                            eng.frameArena().bytesUsed() / 1024,
+                            eng.frameArena().capacity() / 1024);
 
         if (modelState == AssetState::Ready)
             bgfx::dbgTextPrintf(1, 3, 0x0a, "BrainStem.glb — Ready");
@@ -587,39 +441,14 @@ int main()
         }
         ImGui::End();
 
-        imguiEndFrame();
-
-        // -- Flip -------------------------------------------------------------
-        renderer.endFrame();
+        eng.endFrame();
 
         double frameEnd = glfwGetTime();
         renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);
-
-        frameArena.reset();
     }
 
     // -- Cleanup --------------------------------------------------------------
     assets.release(modelHandle);
-
-    imguiDestroy();
-
-    shadow.shutdown();
-    if (bgfx::isValid(shadowProg))
-        bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))
-        bgfx::destroy(pbrProg);
-    if (bgfx::isValid(skinnedPbrProg))
-        bgfx::destroy(skinnedPbrProg);
-    if (bgfx::isValid(skinnedShadowProg))
-        bgfx::destroy(skinnedShadowProg);
-    if (bgfx::isValid(whiteTex))
-        bgfx::destroy(whiteTex);
-    if (bgfx::isValid(whiteCubeTex))
-        bgfx::destroy(whiteCubeTex);
-    res.destroyAll();
-
-    renderer.endFrame();
-    renderer.shutdown();
 
     return 0;
 }
