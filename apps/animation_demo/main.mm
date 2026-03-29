@@ -360,11 +360,13 @@ int main()
 
         bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
 
-        // -- Camera orbit (right-drag) and zoom (scroll) ----------------------
+        // -- Camera orbit (left or right drag) and zoom (scroll) ----------------
         if (!imguiWantsMouse)
         {
+            bool leftDown = glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
             bool rightDown = glfwGetMouseButton(glfwHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-            if (rightDown)
+            bool dragging = leftDown || rightDown;
+            if (dragging)
             {
                 if (rightDragging)
                 {
