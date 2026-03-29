@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <vector>
 
+#include "engine/animation/AnimationClip.h"
+#include "engine/animation/Skeleton.h"
 #include "engine/assets/GltfAsset.h"
 #include "engine/assets/IAssetLoader.h"
 #include "engine/assets/IFileSystem.h"
@@ -300,6 +302,74 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
         dst.childIndices = std::move(src.childIndices);
         asset.nodes.push_back(std::move(dst));
     }
+
+    // Convert skeletons: CpuSkeletonData -> animation::Skeleton.
+    // Hash joint names with FNV-1a for runtime lookup.
+    auto fnv1a = [](const std::string& s) -> uint32_t
+    {
+        uint32_t hash = 2166136261u;
+        for (char c : s)
+        {
+            hash ^= static_cast<uint32_t>(static_cast<uint8_t>(c));
+            hash *= 16777619u;
+        }
+        return hash;
+    };
+
+    asset.skeletons.reserve(data.skeletons.size());
+    for (const auto& cpuSkel : data.skeletons)
+    {
+        animation::Skeleton skeleton;
+        skeleton.joints.resize(cpuSkel.joints.size());
+#if !defined(NDEBUG)
+        skeleton.debugJointNames.resize(cpuSkel.joints.size());
+#endif
+        for (size_t j = 0; j < cpuSkel.joints.size(); ++j)
+        {
+            skeleton.joints[j].inverseBindMatrix = cpuSkel.joints[j].inverseBindMatrix;
+            skeleton.joints[j].parentIndex = cpuSkel.joints[j].parentIndex;
+            skeleton.joints[j].nameHash = fnv1a(cpuSkel.joints[j].name);
+#if !defined(NDEBUG)
+            skeleton.debugJointNames[j] = cpuSkel.joints[j].name;
+#endif
+        }
+        asset.skeletons.push_back(std::move(skeleton));
+    }
+
+    // Convert animation clips: CpuAnimationClipData -> animation::AnimationClip.
+    asset.animations.reserve(data.animations.size());
+    for (const auto& cpuClip : data.animations)
+    {
+        animation::AnimationClip clip;
+        clip.name = cpuClip.name;
+        clip.duration = cpuClip.duration;
+        clip.channels.reserve(cpuClip.channels.size());
+
+        for (const auto& cpuCh : cpuClip.channels)
+        {
+            animation::JointChannel ch;
+            ch.jointIndex = cpuCh.jointIndex;
+
+            ch.positions.reserve(cpuCh.positionTimes.size());
+            for (size_t k = 0; k < cpuCh.positionTimes.size(); ++k)
+                ch.positions.push_back({cpuCh.positionTimes[k], cpuCh.positionValues[k]});
+
+            ch.rotations.reserve(cpuCh.rotationTimes.size());
+            for (size_t k = 0; k < cpuCh.rotationTimes.size(); ++k)
+                ch.rotations.push_back({cpuCh.rotationTimes[k], cpuCh.rotationValues[k]});
+
+            ch.scales.reserve(cpuCh.scaleTimes.size());
+            for (size_t k = 0; k < cpuCh.scaleTimes.size(); ++k)
+                ch.scales.push_back({cpuCh.scaleTimes[k], cpuCh.scaleValues[k]});
+
+            clip.channels.push_back(std::move(ch));
+        }
+
+        asset.animations.push_back(std::move(clip));
+    }
+
+    // Pass through per-mesh skin indices.
+    asset.meshSkinIndices = std::move(data.meshSkinIndices);
 
     rec.payload = std::move(asset);
     rec.state = AssetState::Ready;

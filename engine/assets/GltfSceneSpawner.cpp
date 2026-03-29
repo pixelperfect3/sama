@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/animation/AnimationComponents.h"
+#include "engine/animation/AnimationResources.h"
 #include "engine/assets/GltfAsset.h"
 #include "engine/ecs/Registry.h"
 #include "engine/rendering/EcsComponents.h"
@@ -131,6 +133,81 @@ void GltfSceneSpawner::spawn(const GltfAsset& asset, ecs::Registry& reg,
 
     for (uint32_t rootIdx : asset.rootNodeIndices)
         spawnNode(asset, rootIdx, ecs::INVALID_ENTITY, reg, meshIds, matIds);
+}
+
+void GltfSceneSpawner::spawn(const GltfAsset& asset, ecs::Registry& reg,
+                             rendering::RenderResources& res,
+                             animation::AnimationResources& animRes)
+{
+    std::vector<uint32_t> meshIds;
+    std::vector<uint32_t> matIds;
+    registerResources(asset, res, meshIds, matIds);
+
+    // Register skeletons and clips into AnimationResources.
+    std::vector<uint32_t> skelIds;
+    skelIds.reserve(asset.skeletons.size());
+    for (const auto& skel : asset.skeletons)
+        skelIds.push_back(animRes.addSkeleton(skel));
+
+    std::vector<uint32_t> clipIds;
+    clipIds.reserve(asset.animations.size());
+    for (const auto& clip : asset.animations)
+        clipIds.push_back(animRes.addClip(clip));
+
+    // Spawn nodes with animation components where appropriate.
+    for (uint32_t rootIdx : asset.rootNodeIndices)
+        spawnNode(asset, rootIdx, ecs::INVALID_ENTITY, reg, meshIds, matIds);
+
+    // Walk all spawned entities and attach animation components to those with
+    // skinned meshes. We find entities by checking meshIndex against meshSkinIndices.
+    auto meshView = reg.view<rendering::MeshComponent>();
+
+    meshView.each(
+        [&](ecs::EntityID entity, const rendering::MeshComponent& mc)
+        {
+            // Find the original glTF mesh index by looking up the mesh ID
+            // in our local meshIds mapping.
+            int32_t gltfMeshIdx = -1;
+            for (size_t i = 0; i < meshIds.size(); ++i)
+            {
+                if (meshIds[i] == mc.mesh)
+                {
+                    gltfMeshIdx = static_cast<int32_t>(i);
+                    break;
+                }
+            }
+
+            if (gltfMeshIdx < 0 ||
+                static_cast<size_t>(gltfMeshIdx) >= asset.meshSkinIndices.size())
+                return;
+
+            int32_t skinIdx = asset.meshSkinIndices[gltfMeshIdx];
+            if (skinIdx < 0 || static_cast<size_t>(skinIdx) >= skelIds.size())
+                return;
+
+            // Attach animation components.
+            reg.emplace<animation::SkeletonComponent>(
+                entity, animation::SkeletonComponent{skelIds[static_cast<size_t>(skinIdx)]});
+
+            animation::AnimatorComponent anim{};
+            anim.clipId = clipIds.empty() ? UINT32_MAX : clipIds[0];
+            anim.nextClipId = UINT32_MAX;
+            anim.playbackTime = 0.0f;
+            anim.speed = 1.0f;
+            anim.blendFactor = 0.0f;
+            anim.blendDuration = 0.0f;
+            anim.blendElapsed = 0.0f;
+            anim.flags = 0x03;  // looping + playing
+            anim._pad[0] = anim._pad[1] = anim._pad[2] = 0;
+            reg.emplace<animation::AnimatorComponent>(entity, anim);
+
+            const animation::Skeleton* skel = animRes.getSkeleton(
+                skelIds[static_cast<size_t>(skinIdx)]);
+            uint32_t boneCount = skel ? skel->jointCount() : 0;
+
+            reg.emplace<animation::SkinComponent>(
+                entity, animation::SkinComponent{0, boneCount});
+        });
 }
 
 }  // namespace engine::assets

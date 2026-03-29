@@ -1,6 +1,8 @@
 #include "engine/assets/GltfLoader.h"
 
 #include <cstring>
+#include <unordered_map>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -461,6 +463,212 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
 }
 
 // ---------------------------------------------------------------------------
+// Extract skeleton data from cgltf_skin.
+// ---------------------------------------------------------------------------
+
+CpuSkeletonData extractSkeleton(const cgltf_data* data, const cgltf_skin& skin)
+{
+    CpuSkeletonData skelData;
+
+    // Read inverse bind matrices.
+    std::vector<float> ibmData;
+    if (skin.inverse_bind_matrices)
+        ibmData = readFloatAccessor(skin.inverse_bind_matrices);
+
+    // Build a map from cgltf_node* to index in the skin's joint array.
+    std::unordered_map<const cgltf_node*, size_t> jointNodeToIdx;
+    for (size_t i = 0; i < skin.joints_count; ++i)
+        jointNodeToIdx[skin.joints[i]] = i;
+
+    // Build initial joint data (not yet topologically sorted).
+    struct RawJoint
+    {
+        size_t originalIndex;
+        math::Mat4 ibm{1.0f};
+        int32_t parentOriginal = -1;  // index into skin.joints[]
+        std::string name;
+    };
+    std::vector<RawJoint> rawJoints(skin.joints_count);
+
+    for (size_t i = 0; i < skin.joints_count; ++i)
+    {
+        rawJoints[i].originalIndex = i;
+        rawJoints[i].name = skin.joints[i]->name ? skin.joints[i]->name : "";
+
+        if (!ibmData.empty() && (i + 1) * 16 <= ibmData.size())
+            std::memcpy(&rawJoints[i].ibm[0][0], &ibmData[i * 16], sizeof(float) * 16);
+
+        // Find parent: walk up the glTF node tree until we hit another joint in this skin.
+        const cgltf_node* parent = skin.joints[i]->parent;
+        while (parent)
+        {
+            auto it = jointNodeToIdx.find(parent);
+            if (it != jointNodeToIdx.end())
+            {
+                rawJoints[i].parentOriginal = static_cast<int32_t>(it->second);
+                break;
+            }
+            parent = parent->parent;
+        }
+    }
+
+    // Topological sort: parent always comes before child.
+    // Simple Kahn's algorithm.
+    std::vector<size_t> sortedOrder;
+    sortedOrder.reserve(skin.joints_count);
+    std::vector<bool> emitted(skin.joints_count, false);
+
+    // Repeatedly scan for joints whose parent is already emitted (or is -1).
+    while (sortedOrder.size() < skin.joints_count)
+    {
+        bool progress = false;
+        for (size_t i = 0; i < skin.joints_count; ++i)
+        {
+            if (emitted[i])
+                continue;
+            int32_t p = rawJoints[i].parentOriginal;
+            if (p < 0 || emitted[static_cast<size_t>(p)])
+            {
+                sortedOrder.push_back(i);
+                emitted[i] = true;
+                progress = true;
+            }
+        }
+        if (!progress)
+        {
+            // Cyclic reference -- emit remaining joints as roots.
+            for (size_t i = 0; i < skin.joints_count; ++i)
+                if (!emitted[i])
+                    sortedOrder.push_back(i);
+            break;
+        }
+    }
+
+    // Build remapping: originalIndex -> sortedIndex.
+    std::vector<int32_t> remap(skin.joints_count, -1);
+    for (size_t i = 0; i < sortedOrder.size(); ++i)
+        remap[sortedOrder[i]] = static_cast<int32_t>(i);
+
+    // Build final sorted joint data.
+    skelData.joints.resize(skin.joints_count);
+    for (size_t i = 0; i < sortedOrder.size(); ++i)
+    {
+        const auto& raw = rawJoints[sortedOrder[i]];
+        auto& dst = skelData.joints[i];
+        dst.inverseBindMatrix = raw.ibm;
+        dst.name = raw.name;
+        dst.parentIndex = (raw.parentOriginal >= 0) ? remap[raw.parentOriginal] : -1;
+    }
+
+    return skelData;
+}
+
+// ---------------------------------------------------------------------------
+// Extract animation clips from cgltf_animation.
+// ---------------------------------------------------------------------------
+
+std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data,
+                                                     const cgltf_skin& skin)
+{
+    // Build a map from cgltf_node* to joint index for this skin.
+    std::unordered_map<const cgltf_node*, uint32_t> nodeToJoint;
+    for (size_t i = 0; i < skin.joints_count; ++i)
+        nodeToJoint[skin.joints[i]] = static_cast<uint32_t>(i);
+
+    std::vector<CpuAnimationClipData> clips;
+    clips.reserve(data->animations_count);
+
+    for (size_t ai = 0; ai < data->animations_count; ++ai)
+    {
+        const cgltf_animation& anim = data->animations[ai];
+        CpuAnimationClipData clip;
+        clip.name = anim.name ? anim.name : "animation_" + std::to_string(ai);
+        clip.duration = 0.0f;
+
+        // Group channels by joint index.
+        std::unordered_map<uint32_t, CpuAnimationClipData::Channel> channelMap;
+
+        for (size_t ci = 0; ci < anim.channels_count; ++ci)
+        {
+            const cgltf_animation_channel& ch = anim.channels[ci];
+            if (!ch.target_node)
+                continue;
+
+            auto it = nodeToJoint.find(ch.target_node);
+            if (it == nodeToJoint.end())
+                continue;  // not a joint in this skin
+
+            uint32_t jointIdx = it->second;
+            auto& dst = channelMap[jointIdx];
+            dst.jointIndex = jointIdx;
+
+            const cgltf_animation_sampler* sampler = ch.sampler;
+            if (!sampler || !sampler->input || !sampler->output)
+                continue;
+
+            auto times = readFloatAccessor(sampler->input);
+            auto values = readFloatAccessor(sampler->output);
+
+            // Update clip duration.
+            for (float t : times)
+                if (t > clip.duration)
+                    clip.duration = t;
+
+            switch (ch.target_path)
+            {
+                case cgltf_animation_path_type_translation:
+                {
+                    dst.positionTimes = std::move(times);
+                    dst.positionValues.resize(dst.positionTimes.size());
+                    for (size_t k = 0; k < dst.positionValues.size(); ++k)
+                    {
+                        dst.positionValues[k] = {
+                            values[k * 3 + 0], values[k * 3 + 1], values[k * 3 + 2]};
+                    }
+                    break;
+                }
+                case cgltf_animation_path_type_rotation:
+                {
+                    dst.rotationTimes = std::move(times);
+                    dst.rotationValues.resize(dst.rotationTimes.size());
+                    for (size_t k = 0; k < dst.rotationValues.size(); ++k)
+                    {
+                        // glTF stores quaternions as (x, y, z, w).
+                        // GLM constructor is (w, x, y, z).
+                        dst.rotationValues[k] = math::Quat(
+                            values[k * 4 + 3], values[k * 4 + 0], values[k * 4 + 1],
+                            values[k * 4 + 2]);
+                    }
+                    break;
+                }
+                case cgltf_animation_path_type_scale:
+                {
+                    dst.scaleTimes = std::move(times);
+                    dst.scaleValues.resize(dst.scaleTimes.size());
+                    for (size_t k = 0; k < dst.scaleValues.size(); ++k)
+                    {
+                        dst.scaleValues[k] = {
+                            values[k * 3 + 0], values[k * 3 + 1], values[k * 3 + 2]};
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        // Flatten channel map into the clip's channel vector.
+        clip.channels.reserve(channelMap.size());
+        for (auto& [idx, ch] : channelMap)
+            clip.channels.push_back(std::move(ch));
+
+        clips.push_back(std::move(clip));
+    }
+
+    return clips;
+}
+
+// ---------------------------------------------------------------------------
 // Recurse over cgltf_node tree, building CpuSceneData nodes.
 // ---------------------------------------------------------------------------
 
@@ -650,6 +858,32 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
         }
 
         scene.materials.push_back(mat);
+    }
+
+    // ----- Skeletons (skins) -----
+    scene.skeletons.reserve(data->skins_count);
+    for (size_t i = 0; i < data->skins_count; ++i)
+        scene.skeletons.push_back(extractSkeleton(data, data->skins[i]));
+
+    // ----- Animations -----
+    // Extract animations relative to the first skin (most common case).
+    if (data->skins_count > 0)
+        scene.animations = extractAnimations(data, data->skins[0]);
+
+    // ----- Per-mesh skin indices -----
+    // Build a mapping from cgltf_node to skin index. Walk the node tree and
+    // record which skin each mesh-bearing node uses.
+    scene.meshSkinIndices.resize(data->meshes_count, -1);
+    for (size_t i = 0; i < data->nodes_count; ++i)
+    {
+        const cgltf_node& node = data->nodes[i];
+        if (node.mesh && node.skin)
+        {
+            const ptrdiff_t meshIdx = node.mesh - data->meshes;
+            const ptrdiff_t skinIdx = node.skin - data->skins;
+            if (meshIdx >= 0 && static_cast<size_t>(meshIdx) < data->meshes_count)
+                scene.meshSkinIndices[meshIdx] = static_cast<int32_t>(skinIdx);
+        }
     }
 
     // ----- Scene node tree -----

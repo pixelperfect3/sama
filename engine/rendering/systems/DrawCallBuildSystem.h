@@ -3,6 +3,7 @@
 #include <bgfx/bgfx.h>
 
 #include "engine/ecs/Registry.h"
+#include "engine/math/Types.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/ShaderUniforms.h"
 
@@ -72,6 +73,13 @@ public:
     // Phase 4 — depth-only shadow pass.
     void submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
                                bgfx::ProgramHandle shadowProgram, uint32_t cascadeIndex);
+
+    // PBR + skeletal animation: submit skinned entities.
+    // boneBuffer points to the AnimationSystem's per-frame bone matrix array.
+    // skinnedProgram is the PBR vertex shader with GPU skinning support.
+    void updateSkinned(ecs::Registry& reg, const RenderResources& res,
+                       bgfx::ProgramHandle skinnedProgram, const ShaderUniforms& uniforms,
+                       const PbrFrameParams& frame, const math::Mat4* boneBuffer);
 };
 
 }  // namespace engine::rendering
