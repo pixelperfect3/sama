@@ -23,6 +23,8 @@
 
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
+#include "engine/input/InputState.h"
+#include "engine/input/Key.h"
 #include "engine/physics/IPhysicsEngine.h"
 #include "engine/physics/JoltPhysicsEngine.h"
 #include "engine/physics/PhysicsComponents.h"
@@ -41,7 +43,6 @@ using namespace engine::core;
 using namespace engine::ecs;
 using namespace engine::input;
 using namespace engine::physics;
-using namespace engine::platform;
 using namespace engine::rendering;
 
 // =============================================================================
@@ -150,7 +151,7 @@ int main()
     if (!eng.init(desc))
         return 1;
 
-    // Hook up zoom scroll (piggybacks on Engine's scroll callback via user pointer).
+    // Hook up zoom scroll.
     glfwSetScrollCallback(eng.glfwHandle(),
                           [](GLFWwindow* win, double /*xoff*/, double yoff)
                           {
@@ -159,6 +160,28 @@ int main()
                                   e->imguiScrollAccum() += static_cast<float>(yoff);
                               s_zoomScrollDelta += static_cast<float>(yoff);
                           });
+
+    // -- Create cube mesh (shared by all entities) ----------------------------
+    MeshData cubeData = makeCubeMeshData();
+    Mesh cubeMesh = buildMesh(cubeData);
+    uint32_t cubeMeshId = eng.resources().addMesh(std::move(cubeMesh));
+
+    // -- Create materials -----------------------------------------------------
+    Material groundMat;
+    groundMat.albedo = {0.3f, 0.3f, 0.3f, 1.0f};
+    groundMat.roughness = 0.7f;
+    groundMat.metallic = 0.0f;
+    uint32_t groundMatId = eng.resources().addMaterial(groundMat);
+
+    uint32_t cubeMatIds[kCubeCount];
+    for (int i = 0; i < kCubeCount; i++)
+    {
+        Material mat;
+        mat.albedo = kCubeDefs[i].color;
+        mat.roughness = 0.5f;
+        mat.metallic = 0.0f;
+        cubeMatIds[i] = eng.resources().addMaterial(mat);
+    }
 
     // -- Physics engine -------------------------------------------------------
     JoltPhysicsEngine physics;
@@ -174,30 +197,6 @@ int main()
     DrawCallBuildSystem drawCallSys;
     engine::scene::TransformSystem transformSys;
 
-    // -- Create cube mesh (shared by all entities) ----------------------------
-    MeshData cubeData = makeCubeMeshData();
-    Mesh cubeMesh = buildMesh(cubeData);
-    uint32_t cubeMeshId = eng.resources().addMesh(std::move(cubeMesh));
-
-    // -- Create materials -----------------------------------------------------
-    // Ground plane material
-    Material groundMat;
-    groundMat.albedo = {0.3f, 0.3f, 0.3f, 1.0f};
-    groundMat.roughness = 0.7f;
-    groundMat.metallic = 0.0f;
-    uint32_t groundMatId = eng.resources().addMaterial(groundMat);
-
-    // Per-cube materials
-    uint32_t cubeMatIds[kCubeCount];
-    for (int i = 0; i < kCubeCount; i++)
-    {
-        Material mat;
-        mat.albedo = kCubeDefs[i].color;
-        mat.roughness = 0.5f;
-        mat.metallic = 0.0f;
-        cubeMatIds[i] = eng.resources().addMaterial(mat);
-    }
-
     // -- Create ground plane entity -------------------------------------------
     EntityID groundEntity = reg.createEntity();
     {
@@ -205,7 +204,7 @@ int main()
         tc.position = {0.0f, 0.0f, 0.0f};
         tc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         tc.scale = {10.0f, 0.2f, 10.0f};
-        tc.flags = 1;  // dirty
+        tc.flags = 1;
         reg.emplace<TransformComponent>(groundEntity, tc);
         reg.emplace<WorldTransformComponent>(groundEntity);
         reg.emplace<MeshComponent>(groundEntity, cubeMeshId);
@@ -222,7 +221,7 @@ int main()
 
         ColliderComponent col;
         col.shape = ColliderShape::Box;
-        col.halfExtents = {5.0f, 0.1f, 5.0f};  // half of (10, 0.2, 10)
+        col.halfExtents = {5.0f, 0.1f, 5.0f};
         reg.emplace<ColliderComponent>(groundEntity, col);
     }
 
@@ -274,7 +273,7 @@ int main()
     const glm::mat4 lightView = glm::lookAt(kLightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
     const glm::mat4 lightProj = glm::ortho(-12.f, 12.f, -12.f, 12.f, 0.1f, 50.f);
 
-    // -- Light indicator (small bright cube showing the light position) --------
+    // -- Light indicator ------------------------------------------------------
     Material lightMat{};
     lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
     lightMat.emissiveScale = 5.0f;
@@ -299,10 +298,10 @@ int main()
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
     // Ground plane tilt state
-    float planePitch = 0.0f;             // rotation around X axis, degrees
-    float planeRoll = 0.0f;              // rotation around Z axis, degrees
-    constexpr float kTiltSpeed = 30.0f;  // degrees per second
-    constexpr float kMaxTilt = 30.0f;    // degrees
+    float planePitch = 0.0f;
+    float planeRoll = 0.0f;
+    constexpr float kTiltSpeed = 30.0f;
+    constexpr float kMaxTilt = 30.0f;
 
     float renderMs = 0.f;
 
@@ -368,7 +367,6 @@ int main()
         planePitch = glm::clamp(planePitch, -kMaxTilt, kMaxTilt);
         planeRoll = glm::clamp(planeRoll, -kMaxTilt, kMaxTilt);
 
-        // Build rotation quaternion from euler angles
         glm::quat planeRot =
             glm::quat(glm::vec3(glm::radians(planePitch), 0.0f, glm::radians(planeRoll)));
         {
@@ -376,7 +374,7 @@ int main()
             if (tc)
             {
                 tc->rotation = planeRot;
-                tc->flags |= 1;  // mark dirty
+                tc->flags |= 1;
             }
         }
 
@@ -480,25 +478,21 @@ int main()
 
             ImGui::Text("Cube Legend:");
 
-            // Heavy — dark red swatch
             ImGui::ColorButton("##heavy", ImVec4(0.6f, 0.1f, 0.1f, 1.0f),
                                ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
             ImGui::SameLine();
             ImGui::Text("Heavy (mass 5.0, low bounce)");
 
-            // Medium — orange swatch
             ImGui::ColorButton("##medium", ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
                                ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
             ImGui::SameLine();
             ImGui::Text("Medium (mass 1.0)");
 
-            // Light — yellow swatch
             ImGui::ColorButton("##light", ImVec4(1.0f, 1.0f, 0.3f, 1.0f),
                                ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
             ImGui::SameLine();
             ImGui::Text("Light (mass 0.2)");
 
-            // Bouncy — cyan swatch
             ImGui::ColorButton("##bouncy", ImVec4(0.2f, 0.9f, 1.0f, 1.0f),
                                ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
             ImGui::SameLine();
@@ -506,10 +500,10 @@ int main()
         }
         ImGui::End();
 
-        eng.endFrame();
-
         double frameEnd = glfwGetTime();
         renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);
+
+        eng.endFrame();
     }
 
     // -- Cleanup --------------------------------------------------------------

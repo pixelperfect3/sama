@@ -29,6 +29,8 @@
 #include "engine/audio/SoLoudAudioEngine.h"
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
+#include "engine/input/InputState.h"
+#include "engine/input/Key.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
@@ -39,11 +41,10 @@
 #include "engine/scene/TransformSystem.h"
 #include "imgui.h"
 
+using namespace engine::audio;
 using namespace engine::core;
 using namespace engine::ecs;
 using namespace engine::input;
-using namespace engine::audio;
-using namespace engine::platform;
 using namespace engine::rendering;
 
 // =============================================================================
@@ -79,8 +80,8 @@ static std::vector<uint8_t> generateToneWav(float frequencyHz, float durationSec
                                             float sampleRate = 44100.0f)
 {
     uint32_t numSamples = static_cast<uint32_t>(sampleRate * durationSec);
-    uint32_t dataSize = numSamples * 2;  // 16-bit = 2 bytes per sample
-    uint32_t fileSize = 44 + dataSize;   // WAV header = 44 bytes
+    uint32_t dataSize = numSamples * 2;
+    uint32_t fileSize = 44 + dataSize;
 
     std::vector<uint8_t> wav(fileSize);
 
@@ -92,7 +93,7 @@ static std::vector<uint8_t> generateToneWav(float frequencyHz, float durationSec
     memcpy(&wav[12], "fmt ", 4);
     uint32_t subchunk1Size = 16;
     memcpy(&wav[16], &subchunk1Size, 4);
-    uint16_t audioFormat = 1;  // PCM
+    uint16_t audioFormat = 1;
     memcpy(&wav[20], &audioFormat, 2);
     uint16_t numChannels = 1;
     memcpy(&wav[22], &numChannels, 2);
@@ -107,13 +108,11 @@ static std::vector<uint8_t> generateToneWav(float frequencyHz, float durationSec
     memcpy(&wav[36], "data", 4);
     memcpy(&wav[40], &dataSize, 4);
 
-    // Generate sine wave samples
     int16_t* samples = reinterpret_cast<int16_t*>(&wav[44]);
     for (uint32_t i = 0; i < numSamples; ++i)
     {
         float t = static_cast<float>(i) / sampleRate;
         float value = std::sin(2.0f * 3.14159265f * frequencyHz * t);
-        // Apply fade-in/fade-out envelope to avoid clicks
         float envelope = 1.0f;
         float fadeTime = 0.01f * sampleRate;
         if (i < static_cast<uint32_t>(fadeTime))
@@ -150,7 +149,7 @@ static glm::vec3 screenToWorld(float mx, float my, float fbW, float fbH, const g
 {
     float ndcX = (2.0f * mx / fbW) - 1.0f;
     float ndcY = 1.0f - (2.0f * my / fbH);
-    glm::vec4 clipNear = glm::vec4(ndcX, ndcY, 0.0f, 1.0f);  // bgfx [0,1] depth
+    glm::vec4 clipNear = glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
     glm::mat4 invVP = glm::inverse(proj * view);
     glm::vec4 worldNear = invVP * clipNear;
     worldNear /= worldNear.w;
@@ -171,7 +170,7 @@ int main()
     if (!eng.init(desc))
         return 1;
 
-    // Hook up zoom scroll (piggybacks on Engine's scroll callback via user pointer).
+    // Hook up zoom scroll.
     glfwSetScrollCallback(eng.glfwHandle(),
                           [](GLFWwindow* win, double /*xoff*/, double yoff)
                           {
@@ -180,6 +179,54 @@ int main()
                                   e->imguiScrollAccum() += static_cast<float>(yoff);
                               s_zoomScrollDelta += static_cast<float>(yoff);
                           });
+
+    // -- Create cube mesh (shared by all entities) ----------------------------
+    MeshData cubeData = makeCubeMeshData();
+    Mesh cubeMesh = buildMesh(cubeData);
+    uint32_t cubeMeshId = eng.resources().addMesh(std::move(cubeMesh));
+
+    // -- Create materials -----------------------------------------------------
+    Material groundMat;
+    groundMat.albedo = {0.3f, 0.3f, 0.3f, 1.0f};
+    groundMat.roughness = 0.7f;
+    groundMat.metallic = 0.0f;
+    uint32_t groundMatId = eng.resources().addMaterial(groundMat);
+
+    Material musicMat;
+    musicMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};
+    musicMat.roughness = 0.4f;
+    musicMat.metallic = 0.0f;
+    uint32_t musicMatId = eng.resources().addMaterial(musicMat);
+
+    Material redMat;
+    redMat.albedo = {1.0f, 0.2f, 0.2f, 1.0f};
+    redMat.roughness = 0.5f;
+    redMat.metallic = 0.0f;
+    uint32_t redMatId = eng.resources().addMaterial(redMat);
+
+    Material greenMat;
+    greenMat.albedo = {0.2f, 1.0f, 0.2f, 1.0f};
+    greenMat.roughness = 0.5f;
+    greenMat.metallic = 0.0f;
+    uint32_t greenMatId = eng.resources().addMaterial(greenMat);
+
+    Material blueMat;
+    blueMat.albedo = {0.2f, 0.2f, 1.0f, 1.0f};
+    blueMat.roughness = 0.5f;
+    blueMat.metallic = 0.0f;
+    uint32_t blueMatId = eng.resources().addMaterial(blueMat);
+
+    Material yellowMat;
+    yellowMat.albedo = {1.0f, 1.0f, 0.2f, 1.0f};
+    yellowMat.roughness = 0.5f;
+    yellowMat.metallic = 0.0f;
+    uint32_t yellowMatId = eng.resources().addMaterial(yellowMat);
+
+    Material magentaMat;
+    magentaMat.albedo = {1.0f, 0.2f, 1.0f, 1.0f};
+    magentaMat.roughness = 0.5f;
+    magentaMat.metallic = 0.0f;
+    uint32_t magentaMatId = eng.resources().addMaterial(magentaMat);
 
     // -- Audio engine ---------------------------------------------------------
     SoLoudAudioEngine audioEngine;
@@ -212,62 +259,10 @@ int main()
     auto uiClickWav = generateToneWav(1200.0f, 0.1f);
     uint32_t uiClickClipId = audioEngine.loadClip(uiClickWav.data(), uiClickWav.size());
 
-    // -- ECS & rendering systems ----------------------------------------------
+    // -- ECS ------------------------------------------------------------------
     Registry reg;
     DrawCallBuildSystem drawCallSys;
     engine::scene::TransformSystem transformSys;
-
-    // -- Create cube mesh (shared by all entities) ----------------------------
-    MeshData cubeData = makeCubeMeshData();
-    Mesh cubeMesh = buildMesh(cubeData);
-    uint32_t cubeMeshId = eng.resources().addMesh(std::move(cubeMesh));
-
-    // -- Create materials -----------------------------------------------------
-    // Ground plane — dark gray
-    Material groundMat;
-    groundMat.albedo = {0.3f, 0.3f, 0.3f, 1.0f};
-    groundMat.roughness = 0.7f;
-    groundMat.metallic = 0.0f;
-    uint32_t groundMatId = eng.resources().addMaterial(groundMat);
-
-    // Music box — white
-    Material musicMat;
-    musicMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};
-    musicMat.roughness = 0.4f;
-    musicMat.metallic = 0.0f;
-    uint32_t musicMatId = eng.resources().addMaterial(musicMat);
-
-    // Corner pillars
-    Material redMat;
-    redMat.albedo = {1.0f, 0.2f, 0.2f, 1.0f};
-    redMat.roughness = 0.5f;
-    redMat.metallic = 0.0f;
-    uint32_t redMatId = eng.resources().addMaterial(redMat);
-
-    Material greenMat;
-    greenMat.albedo = {0.2f, 1.0f, 0.2f, 1.0f};
-    greenMat.roughness = 0.5f;
-    greenMat.metallic = 0.0f;
-    uint32_t greenMatId = eng.resources().addMaterial(greenMat);
-
-    Material blueMat;
-    blueMat.albedo = {0.2f, 0.2f, 1.0f, 1.0f};
-    blueMat.roughness = 0.5f;
-    blueMat.metallic = 0.0f;
-    uint32_t blueMatId = eng.resources().addMaterial(blueMat);
-
-    Material yellowMat;
-    yellowMat.albedo = {1.0f, 1.0f, 0.2f, 1.0f};
-    yellowMat.roughness = 0.5f;
-    yellowMat.metallic = 0.0f;
-    uint32_t yellowMatId = eng.resources().addMaterial(yellowMat);
-
-    // Listener — magenta
-    Material magentaMat;
-    magentaMat.albedo = {1.0f, 0.2f, 1.0f, 1.0f};
-    magentaMat.roughness = 0.5f;
-    magentaMat.metallic = 0.0f;
-    uint32_t magentaMatId = eng.resources().addMaterial(magentaMat);
 
     // -- Create ground plane entity -------------------------------------------
     EntityID groundEntity = reg.createEntity();
@@ -306,7 +301,6 @@ int main()
         asc.volume = 1.0f;
         asc.minDistance = 1.0f;
         asc.maxDistance = 15.0f;
-        // flags: loop=1, spatial=2, autoPlay=4
         asc.flags = 0x01 | 0x02 | 0x04;
         reg.emplace<AudioSourceComponent>(musicEntity, asc);
     }
@@ -320,10 +314,10 @@ int main()
     };
     // clang-format off
     CornerDef corners[] = {
-        {{-4.0f, 0.5f, -4.0f}, redMatId,    ambientClip220},  // front-left,  220 Hz
-        {{ 4.0f, 0.5f, -4.0f}, greenMatId,  ambientClip277},  // front-right, 277 Hz
-        {{-4.0f, 0.5f,  4.0f}, blueMatId,   ambientClip330},  // back-left,   330 Hz
-        {{ 4.0f, 0.5f,  4.0f}, yellowMatId, ambientClip440},  // back-right,  440 Hz
+        {{-4.0f, 0.5f, -4.0f}, redMatId,    ambientClip220},
+        {{ 4.0f, 0.5f, -4.0f}, greenMatId,  ambientClip277},
+        {{-4.0f, 0.5f,  4.0f}, blueMatId,   ambientClip330},
+        {{ 4.0f, 0.5f,  4.0f}, yellowMatId, ambientClip440},
     };
     // clang-format on
 
@@ -350,7 +344,6 @@ int main()
         asc.volume = 1.0f;
         asc.minDistance = 1.0f;
         asc.maxDistance = 10.0f;
-        // flags: loop=1, spatial=2, autoPlay=4
         asc.flags = 0x01 | 0x02 | 0x04;
         reg.emplace<AudioSourceComponent>(cornerEntities[i], asc);
     }
@@ -430,7 +423,7 @@ int main()
                     tc->position.x -= kMoveSpeed * dt;
                 if (input.isKeyHeld(Key::D))
                     tc->position.x += kMoveSpeed * dt;
-                tc->flags |= 1;  // mark dirty
+                tc->flags |= 1;
             }
         }
 
@@ -439,7 +432,6 @@ int main()
             auto* tc = reg.get<TransformComponent>(musicEntity);
             if (tc)
             {
-                // 1 revolution per 4 seconds = 2*pi/4 rad/s
                 float angularSpeed = 2.0f * 3.14159265f / 4.0f;
                 glm::quat spin = glm::angleAxis(angularSpeed * dt, glm::vec3(0.0f, 1.0f, 0.0f));
                 tc->rotation = spin * tc->rotation;
@@ -544,13 +536,11 @@ int main()
         ImGui::SetNextWindowSize(ImVec2(280, 380), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Audio Demo"))
         {
-            // Master volume
             if (ImGui::SliderFloat("Master Volume", &masterVolume, 0.0f, 1.0f))
                 audioEngine.setMasterVolume(masterVolume);
 
             ImGui::Separator();
 
-            // Per-category volumes
             if (ImGui::SliderFloat("Music", &musicVolume, 0.0f, 1.0f))
                 audioEngine.setCategoryVolume(SoundCategory::Music, musicVolume);
 
@@ -565,7 +555,6 @@ int main()
 
             ImGui::Separator();
 
-            // Listener position display
             auto* tc = reg.get<TransformComponent>(listenerEntity);
             if (tc)
             {
@@ -575,7 +564,6 @@ int main()
 
             ImGui::Separator();
 
-            // Play UI sound button
             if (ImGui::Button("Play UI Sound"))
             {
                 audioEngine.play(uiClickClipId, SoundCategory::UI, 1.0f, false);

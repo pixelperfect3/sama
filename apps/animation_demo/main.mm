@@ -28,6 +28,8 @@
 #include "engine/assets/TextureLoader.h"
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
+#include "engine/input/InputState.h"
+#include "engine/input/Key.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
@@ -86,7 +88,7 @@ int main()
     if (!eng.init(desc))
         return 1;
 
-    // Hook up zoom scroll (piggybacks on Engine's scroll callback via user pointer).
+    // Hook up zoom scroll.
     glfwSetScrollCallback(eng.glfwHandle(),
                           [](GLFWwindow* win, double /*xoff*/, double yoff)
                           {
@@ -131,7 +133,7 @@ int main()
         tc.position = {0.0f, -0.5f, 0.0f};
         tc.rotation = glm::quat(1, 0, 0, 0);
         tc.scale = {5.0f, 0.1f, 5.0f};
-        tc.flags = 1;  // dirty
+        tc.flags = 1;
         reg.emplace<TransformComponent>(groundEntity, tc);
         reg.emplace<WorldTransformComponent>(groundEntity);
         reg.emplace<MeshComponent>(groundEntity, MeshComponent{cubeMeshId});
@@ -140,7 +142,7 @@ int main()
         reg.emplace<ShadowVisibleTag>(groundEntity, ShadowVisibleTag{0xFF});
     }
 
-    // -- Light indicator cube (shows light source position) ------------------
+    // -- Light indicator cube -------------------------------------------------
     Material lightMat{};
     lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
     lightMat.emissiveScale = 5.0f;
@@ -173,7 +175,6 @@ int main()
 
     // -- Camera and interaction state -----------------------------------------
     OrbitCamera cam;
-
     bool rightDragging = false;
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
@@ -192,8 +193,6 @@ int main()
 
         double mx, my;
         glfwGetCursorPos(eng.glfwHandle(), &mx, &my);
-        float physMx = static_cast<float>(mx * eng.contentScaleX());
-        float physMy = static_cast<float>(my * eng.contentScaleY());
 
         bool imguiWants = eng.imguiWantsMouse();
 
@@ -237,7 +236,6 @@ int main()
         {
             constexpr float kMoveSpeed = 3.0f;
             float speed = kMoveSpeed * dt;
-            // Forward/back = camera's XZ forward direction.
             float yawRad = glm::radians(cam.yaw);
             glm::vec3 fwd(std::sin(yawRad), 0.0f, std::cos(yawRad));
             glm::vec3 rht(std::cos(yawRad), 0.0f, -std::sin(yawRad));
@@ -265,7 +263,6 @@ int main()
             GltfSceneSpawner::spawn(*model, reg, eng.resources(), animRes);
             modelSpawned = true;
 
-            // Start playing animation by default.
             reg.view<AnimatorComponent>().each(
                 [&](EntityID, AnimatorComponent& ac)
                 {
@@ -286,7 +283,6 @@ int main()
         }
 
         // -- ImGui controls update AnimatorComponent --------------------------
-        // Gather info for the panel before rendering.
         float currentTime = 0.0f;
         float clipDuration = 0.0f;
         float animSpeed = 1.0f;
@@ -332,16 +328,17 @@ int main()
         glm::vec3 camPos = cam.position();
         glm::mat4 projMat = glm::perspective(glm::radians(45.f), fbW / fbH, 0.05f, 50.f);
 
-        // Shadow pass (view 0)
+        // Shadow pass
         eng.shadow().beginCascade(0, lightView, lightProj);
         drawCallSys.submitShadowDrawCalls(reg, eng.resources(), eng.shadowProgram(), 0);
-        // Skinned shadow pass — animated depth with bone matrices.
         const engine::math::Mat4* shadowBones = animSys.boneBuffer();
         if (shadowBones)
+        {
             drawCallSys.submitSkinnedShadowDrawCalls(reg, eng.resources(),
                                                      eng.skinnedShadowProgram(), 0, shadowBones);
+        }
 
-        // Opaque pass (view 9) to backbuffer
+        // Opaque pass
         const auto W = eng.fbWidth();
         const auto H = eng.fbHeight();
 
@@ -358,10 +355,8 @@ int main()
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
 
-        // Regular (non-skinned) draw calls (ground plane, etc.)
         drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
-        // Skinned draw calls
         const engine::math::Mat4* boneBuffer = animSys.boneBuffer();
         if (boneBuffer)
         {
@@ -394,7 +389,6 @@ int main()
             ImGui::Text("Joints: %u", jointCount);
             ImGui::Separator();
 
-            // Play / Pause button
             if (ImGui::Button(isPlaying ? "Pause" : "Play", ImVec2(80, 0)))
             {
                 reg.view<AnimatorComponent>().each(
@@ -403,7 +397,6 @@ int main()
             }
             ImGui::SameLine();
 
-            // Stop button
             if (ImGui::Button("Stop", ImVec2(80, 0)))
             {
                 reg.view<AnimatorComponent>().each(
@@ -416,7 +409,6 @@ int main()
 
             ImGui::Separator();
 
-            // Speed slider
             float speedVal = animSpeed;
             if (ImGui::SliderFloat("Speed", &speedVal, 0.0f, 3.0f, "%.2f"))
             {
@@ -426,10 +418,8 @@ int main()
 
             ImGui::Separator();
 
-            // Playback time display
             ImGui::Text("Time: %.2f / %.2f s", currentTime, clipDuration);
 
-            // Progress bar
             float progress = (clipDuration > 0.0f) ? (currentTime / clipDuration) : 0.0f;
             ImGui::ProgressBar(progress, ImVec2(-1, 0));
 
@@ -441,10 +431,10 @@ int main()
         }
         ImGui::End();
 
-        eng.endFrame();
-
         double frameEnd = glfwGetTime();
         renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);
+
+        eng.endFrame();
     }
 
     // -- Cleanup --------------------------------------------------------------
