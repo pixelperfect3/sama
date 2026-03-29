@@ -941,3 +941,45 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         GLM_ENABLE_EXPERIMENTAL
     )
 endif()
+
+# --- animation_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(animation_demo apps/animation_demo/main.mm)
+
+    target_include_directories(animation_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(animation_demo PRIVATE
+        engine_assets
+        engine_rendering
+        engine_memory
+        engine_scene
+        engine_animation
+        engine_debug
+        engine_input_glfw
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(animation_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+
+    # Copy the cowboy GLB next to the binary so StdFileSystem(".")/load() finds it.
+    add_custom_command(TARGET animation_demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "/Users/shayanj/cowboy_walkinginplace.glb"
+            "$<TARGET_FILE_DIR:animation_demo>/cowboy_walkinginplace.glb"
+        COMMENT "Copying cowboy_walkinginplace.glb to build directory"
+    )
+    add_custom_command(TARGET animation_demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "/Users/shayanj/cowboy_running.glb"
+            "$<TARGET_FILE_DIR:animation_demo>/cowboy_running.glb"
+        COMMENT "Copying cowboy_running.glb to build directory"
+    )
+endif()
