@@ -238,6 +238,21 @@ int main()
         reg.emplace<ShadowVisibleTag>(groundEntity, ShadowVisibleTag{0xFF});
     }
 
+    // -- Test shadow cube (static, above ground — should cast a visible shadow)
+    EntityID testCube = reg.createEntity();
+    {
+        TransformComponent tc{};
+        tc.position = {2.0f, 1.5f, 0.0f};
+        tc.rotation = glm::quat(1, 0, 0, 0);
+        tc.scale = {0.5f, 0.5f, 0.5f};
+        tc.flags = 1;
+        reg.emplace<TransformComponent>(testCube, tc);
+        reg.emplace<MeshComponent>(testCube, MeshComponent{cubeMeshId});
+        reg.emplace<MaterialComponent>(testCube, MaterialComponent{groundMatId});
+        reg.emplace<VisibleTag>(testCube);
+        reg.emplace<ShadowVisibleTag>(testCube, ShadowVisibleTag{0xFF});
+    }
+
     // -- Light indicator cube (shows light source position) ------------------
     Material lightMat{};
     lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
