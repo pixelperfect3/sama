@@ -99,6 +99,18 @@ endif()
 set(SOLOUD_SRC_DIR ${soloud_SOURCE_DIR}/src)
 set(SOLOUD_INC_DIR ${soloud_SOURCE_DIR}/include)
 
+# rapidjson — header-only JSON parser (MIT). FetchContent_Populate like stb;
+# no CMake targets needed for a header-only lib.
+FetchContent_Declare(
+    rapidjson
+    GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
+    GIT_TAG        v1.1.0
+)
+FetchContent_GetProperties(rapidjson)
+if(NOT rapidjson_POPULATED)
+    FetchContent_Populate(rapidjson)
+endif()
+
 # ---------------------------------------------------------------------------
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
 # ---------------------------------------------------------------------------
@@ -232,6 +244,22 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_pbr.sc FRAGMENT ANDROID ""   fs_pbr_essl COMPILED_SHADERS)
 
+# PBR Skinned — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr_skinned.sc VERTEX   OSX   metal  vs_pbr_skinned_mtl  COMPILED_SHADERS)
+
+# PBR Skinned — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr_skinned.sc VERTEX   LINUX spirv  vs_pbr_skinned_spv  COMPILED_SHADERS)
+
+# PBR Skinned — GLSL (OpenGL)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr_skinned.sc VERTEX   LINUX 120    vs_pbr_skinned_glsl COMPILED_SHADERS)
+
+# PBR Skinned — ESSL (OpenGLES / Android)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_pbr_skinned.sc VERTEX   ANDROID ""   vs_pbr_skinned_essl COMPILED_SHADERS)
+
 # Instanced — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_instanced.sc VERTEX   OSX     metal  vs_instanced_mtl  COMPILED_SHADERS)
@@ -352,9 +380,25 @@ compile_shader_pp(
 
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
+# --- engine_io static library ---
+add_library(engine_io STATIC engine/io/Json.cpp)
+target_include_directories(engine_io PUBLIC ${CMAKE_SOURCE_DIR} ${rapidjson_SOURCE_DIR}/include)
+target_link_libraries(engine_io PUBLIC engine glm::glm)
+# rapidjson v1.1.0 emits warnings under modern C++20 compilers — suppress them.
+target_compile_options(engine_io PRIVATE -Wno-deprecated-declarations)
+
 # --- engine_memory static library ---
 add_library(engine_memory STATIC engine/memory/FrameArena.cpp)
 target_include_directories(engine_memory PUBLIC ${CMAKE_SOURCE_DIR})
+
+# --- engine_animation static library ---
+add_library(engine_animation STATIC
+    engine/animation/AnimationResources.cpp
+    engine/animation/AnimationSampler.cpp
+    engine/animation/AnimationSystem.cpp
+)
+target_include_directories(engine_animation PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_animation PUBLIC engine_ecs glm::glm)
 
 # --- engine_threading static library ---
 add_library(engine_threading STATIC engine/threading/ThreadPool.cpp)
@@ -409,7 +453,7 @@ target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_
 # --- engine_scene static library ---
 add_library(engine_scene STATIC engine/scene/SceneGraph.cpp engine/scene/TransformSystem.cpp)
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_scene PUBLIC engine_ecs glm::glm)
+target_link_libraries(engine_scene PUBLIC engine_ecs engine_io glm::glm)
 
 # --- engine_audio static library ---
 # Compiles SoLoud core + miniaudio backend + engine audio code into a single
@@ -515,6 +559,10 @@ target_include_directories(engine_rendering PUBLIC
 
 target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm engine_ecs)
 
+# Increase bgfx bone matrix limit from default 32 to 128 for skeletal animation.
+# u_model[128] = 512 vec4 uniforms, fits in BGFX_CONFIG_MAX_UNIFORMS (512).
+target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BONES=128)
+
 # Same GLM flags as engine_tests to ensure consistent behaviour when rendering
 # code includes GLM headers directly.
 target_compile_definitions(engine_rendering PUBLIC
@@ -573,9 +621,11 @@ add_executable(engine_tests
     tests/memory/TestFrameArena.cpp
     tests/memory/TestInlinedVector.cpp
     tests/memory/TestPoolAllocator.cpp
+    tests/io/TestJson.cpp
+    tests/scene/TestSceneSerializer.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_assets engine_rendering engine_scene engine_physics engine_audio glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio glm::glm Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
