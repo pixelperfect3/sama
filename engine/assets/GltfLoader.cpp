@@ -1,12 +1,11 @@
 #include "engine/assets/GltfLoader.h"
 
 #include <cstring>
-#include <unordered_map>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <stdexcept>
+#include <unordered_map>
 
 #include "engine/assets/CpuAssetData.h"
 #include "engine/assets/IFileSystem.h"
@@ -466,9 +465,18 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
 // Extract skeleton data from cgltf_skin.
 // ---------------------------------------------------------------------------
 
-CpuSkeletonData extractSkeleton(const cgltf_data* data, const cgltf_skin& skin)
+struct SkeletonExtraction
 {
-    CpuSkeletonData skelData;
+    CpuSkeletonData skeleton;
+    // Remap from original skin joint index to topologically sorted index.
+    // Used to fix up vertex JOINTS_0 attributes and animation channel indices.
+    std::vector<int32_t> remap;
+};
+
+SkeletonExtraction extractSkeleton(const cgltf_data* data, const cgltf_skin& skin)
+{
+    SkeletonExtraction result;
+    auto& skelData = result.skeleton;
 
     // Read inverse bind matrices.
     std::vector<float> ibmData;
@@ -498,7 +506,8 @@ CpuSkeletonData extractSkeleton(const cgltf_data* data, const cgltf_skin& skin)
         if (!ibmData.empty() && (i + 1) * 16 <= ibmData.size())
             std::memcpy(&rawJoints[i].ibm[0][0], &ibmData[i * 16], sizeof(float) * 16);
 
-        // Find parent: walk up the glTF node tree until we hit another joint in this skin.
+        // Find parent: walk up the glTF node tree until we hit another joint
+        // in this skin.
         const cgltf_node* parent = skin.joints[i]->parent;
         while (parent)
         {
@@ -545,9 +554,9 @@ CpuSkeletonData extractSkeleton(const cgltf_data* data, const cgltf_skin& skin)
     }
 
     // Build remapping: originalIndex -> sortedIndex.
-    std::vector<int32_t> remap(skin.joints_count, -1);
+    result.remap.resize(skin.joints_count, -1);
     for (size_t i = 0; i < sortedOrder.size(); ++i)
-        remap[sortedOrder[i]] = static_cast<int32_t>(i);
+        result.remap[sortedOrder[i]] = static_cast<int32_t>(i);
 
     // Build final sorted joint data.
     skelData.joints.resize(skin.joints_count);
@@ -557,23 +566,26 @@ CpuSkeletonData extractSkeleton(const cgltf_data* data, const cgltf_skin& skin)
         auto& dst = skelData.joints[i];
         dst.inverseBindMatrix = raw.ibm;
         dst.name = raw.name;
-        dst.parentIndex = (raw.parentOriginal >= 0) ? remap[raw.parentOriginal] : -1;
+        dst.parentIndex = (raw.parentOriginal >= 0) ? result.remap[raw.parentOriginal] : -1;
     }
 
-    return skelData;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
 // Extract animation clips from cgltf_animation.
 // ---------------------------------------------------------------------------
 
-std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data,
-                                                     const cgltf_skin& skin)
+std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data, const cgltf_skin& skin,
+                                                    const std::vector<int32_t>& jointRemap)
 {
-    // Build a map from cgltf_node* to joint index for this skin.
+    // Build a map from cgltf_node* to the *remapped* (sorted) joint index.
     std::unordered_map<const cgltf_node*, uint32_t> nodeToJoint;
     for (size_t i = 0; i < skin.joints_count; ++i)
-        nodeToJoint[skin.joints[i]] = static_cast<uint32_t>(i);
+    {
+        int32_t sorted = (i < jointRemap.size()) ? jointRemap[i] : static_cast<int32_t>(i);
+        nodeToJoint[skin.joints[i]] = static_cast<uint32_t>(sorted);
+    }
 
     std::vector<CpuAnimationClipData> clips;
     clips.reserve(data->animations_count);
@@ -622,8 +634,8 @@ std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data,
                     dst.positionValues.resize(dst.positionTimes.size());
                     for (size_t k = 0; k < dst.positionValues.size(); ++k)
                     {
-                        dst.positionValues[k] = {
-                            values[k * 3 + 0], values[k * 3 + 1], values[k * 3 + 2]};
+                        dst.positionValues[k] = {values[k * 3 + 0], values[k * 3 + 1],
+                                                 values[k * 3 + 2]};
                     }
                     break;
                 }
@@ -635,9 +647,8 @@ std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data,
                     {
                         // glTF stores quaternions as (x, y, z, w).
                         // GLM constructor is (w, x, y, z).
-                        dst.rotationValues[k] = math::Quat(
-                            values[k * 4 + 3], values[k * 4 + 0], values[k * 4 + 1],
-                            values[k * 4 + 2]);
+                        dst.rotationValues[k] = math::Quat(values[k * 4 + 3], values[k * 4 + 0],
+                                                           values[k * 4 + 1], values[k * 4 + 2]);
                     }
                     break;
                 }
@@ -647,8 +658,8 @@ std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data,
                     dst.scaleValues.resize(dst.scaleTimes.size());
                     for (size_t k = 0; k < dst.scaleValues.size(); ++k)
                     {
-                        dst.scaleValues[k] = {
-                            values[k * 3 + 0], values[k * 3 + 1], values[k * 3 + 2]};
+                        dst.scaleValues[k] = {values[k * 3 + 0], values[k * 3 + 1],
+                                              values[k * 3 + 2]};
                     }
                     break;
                 }
@@ -685,8 +696,8 @@ void buildNodeTree(const cgltf_data* data, const cgltf_node* node, CpuSceneData&
     if (node->mesh)
     {
         // Map cgltf mesh pointer to our local mesh index.
-        // We process only the first primitive per mesh for now.
-        const ptrdiff_t meshIdx = node->mesh - data->meshes;  // pointer arithmetic gives index
+        // All primitives are merged into one MeshData per glTF mesh.
+        const ptrdiff_t meshIdx = node->mesh - data->meshes;
         dst.meshIndex = static_cast<int32_t>(meshIdx);
     }
 
@@ -794,18 +805,134 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
     for (size_t i = 0; i < data->images_count; ++i)
         scene.textures.push_back(decodeImage(data->images[i], path, fs));
 
+    // ----- Skeletons (skins) — extract first so we have joint remaps -----
+    std::vector<SkeletonExtraction> skelExtractions;
+    skelExtractions.reserve(data->skins_count);
+    scene.skeletons.reserve(data->skins_count);
+    for (size_t i = 0; i < data->skins_count; ++i)
+    {
+        skelExtractions.push_back(extractSkeleton(data, data->skins[i]));
+        scene.skeletons.push_back(std::move(skelExtractions.back().skeleton));
+    }
+
+    // ----- Per-mesh skin indices -----
+    // Build a mapping from cgltf mesh to skin index. Walk the node tree and
+    // record which skin each mesh-bearing node uses.
+    scene.meshSkinIndices.resize(data->meshes_count, -1);
+    for (size_t i = 0; i < data->nodes_count; ++i)
+    {
+        const cgltf_node& node = data->nodes[i];
+        if (node.mesh && node.skin)
+        {
+            const ptrdiff_t meshIdx = node.mesh - data->meshes;
+            const ptrdiff_t skinIdx = node.skin - data->skins;
+            if (meshIdx >= 0 && static_cast<size_t>(meshIdx) < data->meshes_count)
+                scene.meshSkinIndices[meshIdx] = static_cast<int32_t>(skinIdx);
+        }
+    }
+
     // ----- Meshes -----
-    // Only the first primitive of each mesh is converted. glTF meshes may have
-    // multiple primitives (one per material section), but multi-primitive support
-    // requires splitting one logical mesh into multiple draw calls with separate
-    // material bindings — deferred to a later phase.
+    // Merge all primitives of each mesh into a single MeshData by concatenating
+    // vertex/index arrays with proper index offsets. This handles models like
+    // BrainStem which have many primitives in one mesh.
     scene.meshes.reserve(data->meshes_count);
     for (size_t i = 0; i < data->meshes_count; ++i)
     {
-        if (data->meshes[i].primitives_count > 0)
-            scene.meshes.push_back(convertPrimitive(data->meshes[i].primitives[0]));
-        else
-            scene.meshes.emplace_back();  // empty placeholder keeps indices aligned
+        const cgltf_mesh& gltfMesh = data->meshes[i];
+        if (gltfMesh.primitives_count == 0)
+        {
+            scene.meshes.emplace_back();  // empty placeholder
+            continue;
+        }
+
+        // Convert first primitive as the base.
+        rendering::MeshData merged = convertPrimitive(gltfMesh.primitives[0]);
+
+        // Merge remaining primitives.
+        for (size_t pi = 1; pi < gltfMesh.primitives_count; ++pi)
+        {
+            rendering::MeshData prim = convertPrimitive(gltfMesh.primitives[pi]);
+            if (prim.positions.empty())
+                continue;
+
+            // Current vertex count before merging (positions are float3).
+            const uint32_t baseVertex = static_cast<uint32_t>(merged.positions.size() / 3);
+
+            // Append positions.
+            merged.positions.insert(merged.positions.end(), prim.positions.begin(),
+                                    prim.positions.end());
+
+            // Append normals (if both have them).
+            if (!merged.normals.empty() && !prim.normals.empty())
+            {
+                merged.normals.insert(merged.normals.end(), prim.normals.begin(),
+                                      prim.normals.end());
+            }
+
+            // Append tangents.
+            if (!merged.tangents.empty() && !prim.tangents.empty())
+            {
+                merged.tangents.insert(merged.tangents.end(), prim.tangents.begin(),
+                                       prim.tangents.end());
+            }
+
+            // Append UVs.
+            if (!merged.uvs.empty() && !prim.uvs.empty())
+            {
+                merged.uvs.insert(merged.uvs.end(), prim.uvs.begin(), prim.uvs.end());
+            }
+
+            // Append bone indices.
+            if (!merged.boneIndices.empty() && !prim.boneIndices.empty())
+            {
+                merged.boneIndices.insert(merged.boneIndices.end(), prim.boneIndices.begin(),
+                                          prim.boneIndices.end());
+            }
+
+            // Append bone weights.
+            if (!merged.boneWeights.empty() && !prim.boneWeights.empty())
+            {
+                merged.boneWeights.insert(merged.boneWeights.end(), prim.boneWeights.begin(),
+                                          prim.boneWeights.end());
+            }
+
+            // Append indices with offset.
+            for (uint16_t idx : prim.indices)
+            {
+                uint32_t newIdx = static_cast<uint32_t>(idx) + baseVertex;
+                if (newIdx > 0xFFFFu)
+                {
+                    throw std::runtime_error(
+                        "GltfLoader: merged primitive index exceeds uint16 max");
+                }
+                merged.indices.push_back(static_cast<uint16_t>(newIdx));
+            }
+
+            // Expand bounding box.
+            merged.boundsMin = glm::min(merged.boundsMin, prim.boundsMin);
+            merged.boundsMax = glm::max(merged.boundsMax, prim.boundsMax);
+        }
+
+        // Remap vertex bone indices from original skin joint order to the
+        // topologically sorted order used by the skeleton.
+        if (!merged.boneIndices.empty() && scene.meshSkinIndices[i] >= 0)
+        {
+            const size_t skinIdx = static_cast<size_t>(scene.meshSkinIndices[i]);
+            if (skinIdx < skelExtractions.size())
+            {
+                const auto& remap = skelExtractions[skinIdx].remap;
+                for (size_t bi = 0; bi < merged.boneIndices.size(); ++bi)
+                {
+                    uint8_t orig = merged.boneIndices[bi];
+                    if (orig < remap.size() && remap[orig] >= 0)
+                    {
+                        merged.boneIndices[bi] = static_cast<uint8_t>(remap[orig]);
+                    }
+                }
+            }
+        }
+
+        scene.meshes.push_back(std::move(merged));
     }
 
     // ----- Materials -----
@@ -846,7 +973,6 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
         {
             const ptrdiff_t idx = m.emissive_texture.texture->image - data->images;
             mat.emissiveTexIndex = static_cast<int32_t>(idx);
-            // Use the brightest emissive_factor channel as a scalar multiplier.
             mat.emissiveScale =
                 std::max({m.emissive_factor[0], m.emissive_factor[1], m.emissive_factor[2]});
         }
@@ -860,30 +986,12 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
         scene.materials.push_back(mat);
     }
 
-    // ----- Skeletons (skins) -----
-    scene.skeletons.reserve(data->skins_count);
-    for (size_t i = 0; i < data->skins_count; ++i)
-        scene.skeletons.push_back(extractSkeleton(data, data->skins[i]));
-
     // ----- Animations -----
-    // Extract animations relative to the first skin (most common case).
+    // Extract animations relative to the first skin, passing the joint remap
+    // so animation channel indices match the topologically sorted skeleton.
     if (data->skins_count > 0)
-        scene.animations = extractAnimations(data, data->skins[0]);
-
-    // ----- Per-mesh skin indices -----
-    // Build a mapping from cgltf_node to skin index. Walk the node tree and
-    // record which skin each mesh-bearing node uses.
-    scene.meshSkinIndices.resize(data->meshes_count, -1);
-    for (size_t i = 0; i < data->nodes_count; ++i)
     {
-        const cgltf_node& node = data->nodes[i];
-        if (node.mesh && node.skin)
-        {
-            const ptrdiff_t meshIdx = node.mesh - data->meshes;
-            const ptrdiff_t skinIdx = node.skin - data->skins;
-            if (meshIdx >= 0 && static_cast<size_t>(meshIdx) < data->meshes_count)
-                scene.meshSkinIndices[meshIdx] = static_cast<int32_t>(skinIdx);
-        }
+        scene.animations = extractAnimations(data, data->skins[0], skelExtractions[0].remap);
     }
 
     // ----- Scene node tree -----
