@@ -364,6 +364,28 @@ int main()
         if (!modelSpawned && modelState == AssetState::Ready)
         {
             const GltfAsset* model = assets.get<GltfAsset>(modelHandle);
+            // Debug: log model info
+            {
+                FILE* f = fopen("/tmp/anim_load.log", "w");
+                if (f) {
+                    fprintf(f, "meshes=%zu skeletons=%zu animations=%zu meshSkinIndices=%zu\n",
+                            model->meshes.size(), model->skeletons.size(),
+                            model->animations.size(), model->meshSkinIndices.size());
+                    for (size_t i = 0; i < model->meshes.size(); i++) {
+                        const auto& m = model->meshes[i];
+                        fprintf(f, "  mesh[%zu]: verts=%u idxs=%u pos=%d surf=%d skin=%d\n",
+                                i, m.vertexCount, m.indexCount,
+                                bgfx::isValid(m.positionVbh), bgfx::isValid(m.surfaceVbh),
+                                bgfx::isValid(m.skinningVbh));
+                    }
+                    for (size_t i = 0; i < model->skeletons.size(); i++)
+                        fprintf(f, "  skel[%zu]: %u joints\n", i, model->skeletons[i].jointCount());
+                    for (size_t i = 0; i < model->animations.size(); i++)
+                        fprintf(f, "  anim[%zu]: dur=%.2f ch=%zu\n", i,
+                                model->animations[i].duration, model->animations[i].channels.size());
+                    fclose(f);
+                }
+            }
             GltfSceneSpawner::spawn(*model, reg, res, animRes);
             modelSpawned = true;
 
@@ -422,6 +444,32 @@ int main()
 
         // -- Animation system update ------------------------------------------
         animSys.update(reg, dt, animRes, frameArena.resource());
+
+        // Debug: log bone buffer on first animated frame
+        static bool loggedBones = false;
+        if (!loggedBones && animSys.boneBuffer() && animSys.boneBufferSize() > 0)
+        {
+            loggedBones = true;
+            FILE* f = fopen("/tmp/anim_bones.log", "w");
+            if (f)
+            {
+                fprintf(f, "boneBufferSize=%u\n", animSys.boneBufferSize());
+                for (uint32_t i = 0; i < std::min(animSys.boneBufferSize(), 5u); i++)
+                {
+                    const auto& m = animSys.boneBuffer()[i];
+                    fprintf(f, "bone[%u]: [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f]\n",
+                            i, m[0][0], m[1][0], m[2][0], m[3][0],
+                            m[0][1], m[1][1], m[2][1], m[3][1],
+                            m[0][2], m[1][2], m[2][2], m[3][2],
+                            m[0][3], m[1][3], m[2][3], m[3][3]);
+                }
+                // Also log SkinComponent data
+                reg.view<SkinComponent>().each(
+                    [&](EntityID, const SkinComponent& sc)
+                    { fprintf(f, "SkinComponent: offset=%u count=%u\n", sc.boneMatrixOffset, sc.boneCount); });
+                fclose(f);
+            }
+        }
 
         // -- Transform system -------------------------------------------------
         transformSys.update(reg);

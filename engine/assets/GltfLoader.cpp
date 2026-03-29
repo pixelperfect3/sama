@@ -293,11 +293,19 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
     if (uvAcc)
     {
         uvData = readFloatAccessor(uvAcc);
+    }
+    else if (normAcc)
+    {
+        // No UVs in the mesh — generate zero UVs so the surface buffer
+        // can be created (normals + tangents + UVs are all required).
+        uvData.resize(vertCount * 2, 0.0f);
+    }
+
+    if (!uvData.empty())
+    {
         md.uvs.resize(vertCount * 2);
         for (size_t i = 0; i < vertCount; ++i)
         {
-            // glm::packHalf2x16 packs two floats into a uint32_t:
-            // low 16 bits = first component, high 16 bits = second.
             const uint32_t packed =
                 glm::packHalf2x16(glm::vec2(uvData[i * 2 + 0], uvData[i * 2 + 1]));
             md.uvs[i * 2 + 0] = static_cast<uint16_t>(packed & 0xFFFFu);
@@ -322,7 +330,7 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
     // does not provide TANGENT attributes (common for many sample models).
     // Uses a standard per-triangle tangent computation averaged at vertices.
     // -----------------------------------------------------------------------
-    if (!tanAcc && normAcc && uvAcc && !md.indices.empty())
+    if (!tanAcc && normAcc && !uvData.empty() && !md.indices.empty())
     {
         const auto& posData = md.positions;  // float×3 per vertex
         // uvData was captured earlier as float×2 per vertex
@@ -911,6 +919,106 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
             // Expand bounding box.
             merged.boundsMin = glm::min(merged.boundsMin, prim.boundsMin);
             merged.boundsMax = glm::max(merged.boundsMax, prim.boundsMax);
+        }
+
+        // If tangents are empty after merge but normals and UVs exist,
+        // generate tangents for the merged mesh (same algorithm as convertPrimitive).
+        {
+            const uint32_t mergedVertCount = static_cast<uint32_t>(merged.positions.size() / 3);
+            if (merged.tangents.empty() && !merged.normals.empty() && !merged.uvs.empty() &&
+                !merged.indices.empty())
+            {
+                // Decode UVs from half-float back to float for tangent generation.
+                std::vector<float> uvFloats(mergedVertCount * 2);
+                for (uint32_t vi = 0; vi < mergedVertCount; ++vi)
+                {
+                    const uint32_t packed = static_cast<uint32_t>(merged.uvs[vi * 2 + 0]) |
+                                            (static_cast<uint32_t>(merged.uvs[vi * 2 + 1]) << 16u);
+                    const glm::vec2 uv = glm::unpackHalf2x16(packed);
+                    uvFloats[vi * 2 + 0] = uv.x;
+                    uvFloats[vi * 2 + 1] = uv.y;
+                }
+
+                // Decode normals from oct-encoded snorm16 back to float for tangent gen.
+                auto normData = std::vector<float>(mergedVertCount * 3);
+                for (uint32_t vi = 0; vi < mergedVertCount; ++vi)
+                {
+                    float ox = static_cast<float>(merged.normals[vi * 2 + 0]) / 32767.0f;
+                    float oy = static_cast<float>(merged.normals[vi * 2 + 1]) / 32767.0f;
+                    float oz = 1.0f - std::abs(ox) - std::abs(oy);
+                    if (oz < 0.0f)
+                    {
+                        float px = ox, py = oy;
+                        ox = (1.0f - std::abs(py)) * (px >= 0.0f ? 1.0f : -1.0f);
+                        oy = (1.0f - std::abs(px)) * (py >= 0.0f ? 1.0f : -1.0f);
+                    }
+                    float len = std::sqrt(ox * ox + oy * oy + oz * oz);
+                    if (len > 1e-6f) { ox /= len; oy /= len; oz /= len; }
+                    normData[vi * 3 + 0] = ox;
+                    normData[vi * 3 + 1] = oy;
+                    normData[vi * 3 + 2] = oz;
+                }
+
+                // Same tangent generation as convertPrimitive.
+                std::vector<uint32_t> idx32(merged.indices.begin(), merged.indices.end());
+                std::vector<float> tanAccum(mergedVertCount * 3, 0.f);
+                std::vector<float> bitAccum(mergedVertCount * 3, 0.f);
+
+                for (size_t t = 0; t + 2 < idx32.size(); t += 3)
+                {
+                    const uint32_t i0 = idx32[t], i1 = idx32[t + 1], i2 = idx32[t + 2];
+                    const float* p0 = &merged.positions[i0 * 3];
+                    const float* p1 = &merged.positions[i1 * 3];
+                    const float* p2 = &merged.positions[i2 * 3];
+                    const float* uv0 = &uvFloats[i0 * 2];
+                    const float* uv1 = &uvFloats[i1 * 2];
+                    const float* uv2 = &uvFloats[i2 * 2];
+
+                    const float e1x = p1[0]-p0[0], e1y = p1[1]-p0[1], e1z = p1[2]-p0[2];
+                    const float e2x = p2[0]-p0[0], e2y = p2[1]-p0[1], e2z = p2[2]-p0[2];
+                    const float du1 = uv1[0]-uv0[0], dv1 = uv1[1]-uv0[1];
+                    const float du2 = uv2[0]-uv0[0], dv2 = uv2[1]-uv0[1];
+
+                    float det = du1 * dv2 - du2 * dv1;
+                    if (std::abs(det) < 1e-8f) det = 1e-8f;
+                    const float inv = 1.f / det;
+
+                    const float tx = (dv2*e1x - dv1*e2x) * inv;
+                    const float ty = (dv2*e1y - dv1*e2y) * inv;
+                    const float tz = (dv2*e1z - dv1*e2z) * inv;
+                    const float bx = (-du2*e1x + du1*e2x) * inv;
+                    const float by = (-du2*e1y + du1*e2y) * inv;
+                    const float bz = (-du2*e1z + du1*e2z) * inv;
+
+                    for (uint32_t idx : {i0, i1, i2})
+                    {
+                        tanAccum[idx*3+0] += tx; tanAccum[idx*3+1] += ty; tanAccum[idx*3+2] += tz;
+                        bitAccum[idx*3+0] += bx; bitAccum[idx*3+1] += by; bitAccum[idx*3+2] += bz;
+                    }
+                }
+
+                merged.tangents.resize(mergedVertCount * 4);
+                for (size_t vi = 0; vi < mergedVertCount; ++vi)
+                {
+                    float nx = normData[vi*3], ny = normData[vi*3+1], nz = normData[vi*3+2];
+                    float ttx = tanAccum[vi*3], tty = tanAccum[vi*3+1], ttz = tanAccum[vi*3+2];
+                    float nd = nx*ttx + ny*tty + nz*ttz;
+                    ttx -= nx*nd; tty -= ny*nd; ttz -= nz*nd;
+                    float tlen = std::sqrt(ttx*ttx + tty*tty + ttz*ttz);
+                    if (tlen < 1e-6f) {
+                        if (std::abs(nx) < 0.9f) { ttx=0; tty=-nz; ttz=ny; }
+                        else { ttx=nz; tty=0; ttz=-nx; }
+                        tlen = std::sqrt(ttx*ttx + tty*tty + ttz*ttz);
+                    }
+                    ttx /= tlen; tty /= tlen; ttz /= tlen;
+                    float cx = ny*ttz - nz*tty, cy = nz*ttx - nx*ttz, cz = nx*tty - ny*ttx;
+                    float bd = cx*bitAccum[vi*3] + cy*bitAccum[vi*3+1] + cz*bitAccum[vi*3+2];
+                    float sign = (bd < 0.f) ? -1.f : 1.f;
+                    encodeOctTangent(ttx, tty, ttz, sign,
+                                     merged.tangents[vi*4], merged.tangents[vi*4+1],
+                                     merged.tangents[vi*4+2], merged.tangents[vi*4+3]);
+                }
+            }
         }
 
         // Remap vertex bone indices from original skin joint order to the
