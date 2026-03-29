@@ -238,6 +238,26 @@ int main()
         reg.emplace<ShadowVisibleTag>(groundEntity, ShadowVisibleTag{0xFF});
     }
 
+    // -- Light indicator cube (shows light source position) ------------------
+    Material lightMat{};
+    lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
+    lightMat.emissiveScale = 5.0f;
+    lightMat.roughness = 1.0f;
+    uint32_t lightMatId = res.addMaterial(lightMat);
+
+    EntityID lightIndicator = reg.createEntity();
+    {
+        TransformComponent tc{};
+        tc.position = glm::normalize(glm::vec3(1.0f, 2.0f, 0.5f)) * 5.0f;
+        tc.rotation = glm::quat(1, 0, 0, 0);
+        tc.scale = {0.15f, 0.15f, 0.15f};
+        tc.flags = 1;
+        reg.emplace<TransformComponent>(lightIndicator, tc);
+        reg.emplace<MeshComponent>(lightIndicator, MeshComponent{cubeMeshId});
+        reg.emplace<MaterialComponent>(lightIndicator, MaterialComponent{lightMatId});
+        reg.emplace<VisibleTag>(lightIndicator);
+    }
+
     // -- Input ----------------------------------------------------------------
     GlfwInputBackend inputBackend(glfwHandle);
     InputSystem inputSys(inputBackend);
