@@ -2,15 +2,14 @@
 //
 // Loads the Damaged Helmet glTF (single GLB file) via the async AssetManager,
 // spawns ECS entities from the loaded scene, and renders with PBR + directional
-// shadow.  Camera orbits the helmet with click-to-capture free-fly fallback.
+// shadow.  Camera orbits the helmet with drag-to-orbit and WASD target movement.
 //
 // Controls:
-//   LMB / RMB  — click to capture mouse (orbit mode while held)
-//   Escape     — release mouse
-//   WASD       — free-fly move
-//   Q / E      — move down / up
-//   Shift      — 3× speed
-//   F          — toggle HUD
+//   LMB / RMB drag  — orbit camera
+//   WASD             — move camera target
+//   Q / E            — move target down / up
+//   Shift            — 3× speed
+//   F                — toggle HUD
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -28,6 +27,7 @@
 #include "engine/assets/StdFileSystem.h"
 #include "engine/assets/TextureLoader.h"
 #include "engine/core/Engine.h"
+#include "engine/core/OrbitCamera.h"
 #include "engine/debug/DebugTexturePanel.h"
 #include "engine/ecs/Registry.h"
 #include "engine/input/InputState.h"
@@ -50,65 +50,6 @@ using namespace engine::ecs;
 using namespace engine::input;
 using namespace engine::rendering;
 using namespace engine::threading;
-
-// =============================================================================
-// Orbit + free-fly camera
-// =============================================================================
-
-struct Camera
-{
-    glm::vec3 pos = {1.8f, 0.5f, 3.0f};
-    float yaw = -30.f;
-    float pitch = -8.f;
-
-    static constexpr float kBaseSpeed = 3.f;
-    static constexpr float kFastMult = 3.5f;
-    static constexpr float kSensitivity = 0.18f;
-
-    [[nodiscard]] glm::vec3 forward() const
-    {
-        float y = glm::radians(yaw);
-        float p = glm::radians(pitch);
-        return {std::sin(y) * std::cos(p), std::sin(p), -std::cos(y) * std::cos(p)};
-    }
-
-    [[nodiscard]] glm::vec3 right() const
-    {
-        return glm::normalize(glm::cross(forward(), glm::vec3(0, 1, 0)));
-    }
-
-    [[nodiscard]] glm::mat4 view() const
-    {
-        return glm::lookAt(pos, pos + forward(), glm::vec3(0, 1, 0));
-    }
-
-    void update(const InputState& input, bool mouseActive, float dt)
-    {
-        if (mouseActive)
-        {
-            yaw += static_cast<float>(input.mouseDeltaX()) * kSensitivity;
-            pitch -= static_cast<float>(input.mouseDeltaY()) * kSensitivity;
-            pitch = glm::clamp(pitch, -89.f, 89.f);
-        }
-
-        float spd = kBaseSpeed * (input.isKeyHeld(Key::LeftShift) ? kFastMult : 1.f);
-        glm::vec3 fwd = forward();
-        glm::vec3 rht = right();
-
-        if (input.isKeyHeld(Key::W))
-            pos += fwd * spd * dt;
-        if (input.isKeyHeld(Key::S))
-            pos -= fwd * spd * dt;
-        if (input.isKeyHeld(Key::A))
-            pos -= rht * spd * dt;
-        if (input.isKeyHeld(Key::D))
-            pos += rht * spd * dt;
-        if (input.isKeyHeld(Key::E))
-            pos.y += spd * dt;
-        if (input.isKeyHeld(Key::Q))
-            pos.y -= spd * dt;
-    }
-};
 
 // =============================================================================
 // Entry point
@@ -187,7 +128,11 @@ int main()
     float renderMs = 0.f;
 
     // -- Main loop ------------------------------------------------------------
-    Camera cam;
+    engine::core::OrbitCamera cam;
+    cam.distance = 3.5f;
+    cam.yaw = -30.0f;
+    cam.pitch = 8.0f;
+    cam.target = {0, 0, 0};
     bool showHud = true;
     float dt = 0.f;
 
@@ -200,29 +145,44 @@ int main()
         const float fbW = static_cast<float>(eng.fbWidth());
         const float fbH = static_cast<float>(eng.fbHeight());
 
-        // Only capture game mouse when ImGui is not handling it.
-        if (!mouseCaptured && !eng.imguiWantsMouse() &&
-            (input.isMouseButtonPressed(MouseButton::Left) ||
-             input.isMouseButtonPressed(MouseButton::Right)))
-        {
-            mouseCaptured = true;
-            skipMouseFrame = true;
-            glfwSetInputMode(eng.glfwHandle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            if (glfwRawMouseMotionSupported())
-                glfwSetInputMode(eng.glfwHandle(), GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-        }
-        if (mouseCaptured && input.isKeyPressed(Key::Escape))
-        {
-            mouseCaptured = false;
-            glfwSetInputMode(eng.glfwHandle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        }
         if (input.isKeyPressed(Key::F))
             showHud = !showHud;
 
-        bool applyMouse = mouseCaptured && !skipMouseFrame;
-        skipMouseFrame = false;
+        // -- Camera orbit (right-drag) and zoom (scroll) ----------------------
+        if (!eng.imguiWantsMouse())
+        {
+            bool rightDown =
+                glfwGetMouseButton(eng.glfwHandle(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+            bool leftDown =
+                glfwGetMouseButton(eng.glfwHandle(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+            bool dragging = rightDown || leftDown;
+            if (dragging)
+            {
+                if (mouseCaptured)
+                {
+                    cam.orbit(static_cast<float>(input.mouseDeltaX()),
+                              -static_cast<float>(input.mouseDeltaY()), 0.18f);
+                }
+                if (!mouseCaptured)
+                {
+                    mouseCaptured = true;
+                    skipMouseFrame = true;
+                    glfwSetInputMode(eng.glfwHandle(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    if (glfwRawMouseMotionSupported())
+                        glfwSetInputMode(eng.glfwHandle(), GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+                }
+            }
+            else if (mouseCaptured)
+            {
+                mouseCaptured = false;
+                skipMouseFrame = false;
+                glfwSetInputMode(eng.glfwHandle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+        }
 
-        cam.update(input, applyMouse, dt);
+        // WASD/QE target movement
+        float moveSpeed = 3.0f * (input.isKeyHeld(Key::LeftShift) ? 3.5f : 1.0f);
+        cam.moveTarget(input, dt, moveSpeed);
 
         // -- Asset uploads & spawn on Ready -----------------------------------
         assets.processUploads();
@@ -312,9 +272,10 @@ int main()
         PbrFrameParams frame{
             lightData, glm::value_ptr(shadowMat), eng.shadow().atlasTexture(), W, H, 0.05f, 50.f,
         };
-        frame.camPos[0] = cam.pos.x;
-        frame.camPos[1] = cam.pos.y;
-        frame.camPos[2] = cam.pos.z;
+        glm::vec3 camPos = cam.position();
+        frame.camPos[0] = camPos.x;
+        frame.camPos[1] = camPos.y;
+        frame.camPos[2] = camPos.z;
 
         if (ibl.isValid())
         {
@@ -345,8 +306,7 @@ int main()
             else
                 bgfx::dbgTextPrintf(1, 2, 0x0e, "DamagedHelmet.glb — Loading...");
 
-            bgfx::dbgTextPrintf(1, 3, 0x07,
-                                "Click to capture mouse  |  WASD/QE  |  F=HUD  |  Esc=release");
+            bgfx::dbgTextPrintf(1, 3, 0x07, "Drag=orbit  |  WASD/QE=move  |  Shift=fast  |  F=HUD");
         }
 
         // -- ImGui texture panel ----------------------------------------------

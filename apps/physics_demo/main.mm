@@ -22,6 +22,7 @@
 #include <random>
 
 #include "engine/core/Engine.h"
+#include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
@@ -44,31 +45,6 @@ using namespace engine::ecs;
 using namespace engine::input;
 using namespace engine::physics;
 using namespace engine::rendering;
-
-// =============================================================================
-// Orbit camera
-// =============================================================================
-
-struct OrbitCamera
-{
-    float distance = 25.0f;
-    float yaw = 0.0f;
-    float pitch = 30.0f;
-    glm::vec3 target = {0, 0, 0};
-
-    [[nodiscard]] glm::vec3 position() const
-    {
-        float r = glm::radians(pitch);
-        float y = glm::radians(yaw);
-        return target + glm::vec3(distance * std::cos(r) * std::sin(y), distance * std::sin(r),
-                                  distance * std::cos(r) * std::cos(y));
-    }
-
-    [[nodiscard]] glm::mat4 view() const
-    {
-        return glm::lookAt(position(), target, glm::vec3(0, 1, 0));
-    }
-};
 
 // =============================================================================
 // Cube category definitions
@@ -293,7 +269,9 @@ int main()
     }
 
     // -- Camera and interaction state -----------------------------------------
-    OrbitCamera cam;
+    engine::core::OrbitCamera cam;
+    cam.distance = 25.0f;
+    cam.pitch = 30.0f;
     bool rightDragging = false;
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
@@ -330,11 +308,9 @@ int main()
             {
                 if (rightDragging)
                 {
-                    double dx = mx - prevMouseX;
-                    double dy = my - prevMouseY;
-                    cam.yaw += static_cast<float>(dx) * 0.3f;
-                    cam.pitch += static_cast<float>(dy) * 0.3f;
-                    cam.pitch = glm::clamp(cam.pitch, -89.0f, 89.0f);
+                    float dx = static_cast<float>(mx - prevMouseX);
+                    float dy = static_cast<float>(my - prevMouseY);
+                    cam.orbit(dx, dy);
                 }
                 rightDragging = true;
             }
@@ -345,8 +321,7 @@ int main()
 
             if (std::abs(s_zoomScrollDelta) > 0.01f)
             {
-                cam.distance -= s_zoomScrollDelta * 1.0f;
-                cam.distance = glm::clamp(cam.distance, 5.0f, 60.0f);
+                cam.zoom(s_zoomScrollDelta, 1.0f, 5.0f, 60.0f);
             }
         }
 

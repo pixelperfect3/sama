@@ -27,6 +27,7 @@
 #include "engine/assets/StdFileSystem.h"
 #include "engine/assets/TextureLoader.h"
 #include "engine/core/Engine.h"
+#include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
@@ -48,31 +49,6 @@ using namespace engine::ecs;
 using namespace engine::input;
 using namespace engine::rendering;
 using namespace engine::threading;
-
-// =============================================================================
-// Orbit camera
-// =============================================================================
-
-struct OrbitCamera
-{
-    float distance = 5.0f;
-    float yaw = 0.0f;
-    float pitch = 15.0f;
-    glm::vec3 target = {0, 0.5f, 0};
-
-    [[nodiscard]] glm::vec3 position() const
-    {
-        float r = glm::radians(pitch);
-        float y = glm::radians(yaw);
-        return target + glm::vec3(distance * std::cos(r) * std::sin(y), distance * std::sin(r),
-                                  distance * std::cos(r) * std::cos(y));
-    }
-
-    [[nodiscard]] glm::mat4 view() const
-    {
-        return glm::lookAt(position(), target, glm::vec3(0, 1, 0));
-    }
-};
 
 // =============================================================================
 // Entry point
@@ -174,7 +150,10 @@ int main()
     const glm::mat4 lightProj = glm::ortho(-5.f, 5.f, -5.f, 5.f, 0.1f, 40.f);
 
     // -- Camera and interaction state -----------------------------------------
-    OrbitCamera cam;
+    engine::core::OrbitCamera cam;
+    cam.distance = 5.0f;
+    cam.pitch = 15.0f;
+    cam.target = {0, 0.5f, 0};
     bool rightDragging = false;
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
@@ -208,11 +187,9 @@ int main()
             {
                 if (rightDragging)
                 {
-                    double dx = mx - prevMouseX;
-                    double dy = my - prevMouseY;
-                    cam.yaw += static_cast<float>(dx) * 0.3f;
-                    cam.pitch += static_cast<float>(dy) * 0.3f;
-                    cam.pitch = glm::clamp(cam.pitch, -89.0f, 89.0f);
+                    float dx = static_cast<float>(mx - prevMouseX);
+                    float dy = static_cast<float>(my - prevMouseY);
+                    cam.orbit(dx, dy);
                 }
                 rightDragging = true;
             }
@@ -223,8 +200,7 @@ int main()
 
             if (std::abs(s_zoomScrollDelta) > 0.01f)
             {
-                cam.distance -= s_zoomScrollDelta * 0.5f;
-                cam.distance = glm::clamp(cam.distance, 1.0f, 20.0f);
+                cam.zoom(s_zoomScrollDelta, 0.5f, 1.0f, 20.0f);
             }
         }
 
@@ -233,25 +209,7 @@ int main()
         s_zoomScrollDelta = 0.f;
 
         // WASD moves the camera target along the XZ plane.
-        {
-            constexpr float kMoveSpeed = 3.0f;
-            float speed = kMoveSpeed * dt;
-            float yawRad = glm::radians(cam.yaw);
-            glm::vec3 fwd(std::sin(yawRad), 0.0f, std::cos(yawRad));
-            glm::vec3 rht(std::cos(yawRad), 0.0f, -std::sin(yawRad));
-            if (input.isKeyHeld(Key::W))
-                cam.target -= fwd * speed;
-            if (input.isKeyHeld(Key::S))
-                cam.target += fwd * speed;
-            if (input.isKeyHeld(Key::A))
-                cam.target -= rht * speed;
-            if (input.isKeyHeld(Key::D))
-                cam.target += rht * speed;
-            if (input.isKeyHeld(Key::Q))
-                cam.target.y -= speed;
-            if (input.isKeyHeld(Key::E))
-                cam.target.y += speed;
-        }
+        cam.moveTarget(input, dt);
 
         // -- Asset uploads & spawn on Ready -----------------------------------
         assets.processUploads();
