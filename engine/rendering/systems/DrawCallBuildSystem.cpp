@@ -153,9 +153,13 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
         reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
 
     visibleView.each(
-        [&](ecs::EntityID /*entity*/, const VisibleTag& /*tag*/, const WorldTransformComponent& wtc,
+        [&](ecs::EntityID entity, const VisibleTag& /*tag*/, const WorldTransformComponent& wtc,
             const MeshComponent& mc, const MaterialComponent& matc)
         {
+            // Skip skinned entities — rendered separately by updateSkinned().
+            if (reg.has<animation::SkinComponent>(entity))
+                return;
+
             const Mesh* mesh = res.getMesh(mc.mesh);
             if (!mesh || !mesh->isValid())
                 return;
