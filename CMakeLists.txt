@@ -798,6 +798,21 @@ target_link_libraries(engine_input_tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# --- engine_core static library ---
+# Centralised Engine class that owns window, renderer, default textures, shaders,
+# ImGui, input, shadow renderer, and frame arena.  Apps link engine_core instead
+# of manually wiring all subsystems.
+add_library(engine_core STATIC engine/core/Engine.cpp)
+target_include_directories(engine_core PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_core PUBLIC
+    engine_rendering
+    engine_input_glfw
+    engine_memory
+    engine_debug
+    engine_scene
+    glm::glm
+)
+
 # --- helmet_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(helmet_demo apps/helmet_demo/main.mm)
@@ -840,11 +855,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_include_directories(hierarchy_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(hierarchy_demo PRIVATE
-        engine_assets
-        engine_rendering
+        engine_core
         engine_scene
-        engine_debug
-        engine_input_glfw
         glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
