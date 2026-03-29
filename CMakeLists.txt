@@ -566,6 +566,7 @@ add_library(engine_rendering STATIC
     engine/rendering/PostProcessResources.cpp
     engine/rendering/SpriteBatcher.cpp
     engine/rendering/systems/UiRenderSystem.cpp
+    engine/rendering/RenderSettingsJson.cpp
     engine/rendering/LightClusterBuilder.cpp
     engine/platform/desktop/GlfwWindow.cpp
 )
@@ -577,7 +578,7 @@ target_include_directories(engine_rendering PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
-target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm engine_ecs)
+target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm engine_ecs engine_io)
 
 # Increase bgfx bone matrix limit from default 32 to 128 for skeletal animation.
 # u_model[128] = 512 vec4 uniforms, fits in BGFX_CONFIG_MAX_UNIFORMS (512).
@@ -615,6 +616,7 @@ add_executable(engine_tests
     tests/math/TestTransform.cpp
     tests/rendering/TestRenderer.cpp
     tests/rendering/TestRenderSettings.cpp
+    tests/rendering/TestRenderSettingsJson.cpp
     tests/rendering/TestMesh.cpp
     tests/rendering/TestInstancing.cpp
     tests/rendering/TestUi.cpp
@@ -747,12 +749,13 @@ endif()
 # --- engine_input static library ---
 add_library(engine_input STATIC
     engine/input/ActionMap.cpp
+    engine/input/ActionMapJson.cpp
     engine/input/InputState.cpp
     engine/input/InputSystem.cpp
 )
 
 target_include_directories(engine_input PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_input PUBLIC engine)
+target_link_libraries(engine_input PUBLIC engine engine_io)
 
 # Desktop GLFW backend
 add_library(engine_input_glfw STATIC
@@ -783,6 +786,7 @@ endif()
 # --- engine_input_tests executable ---
 add_executable(engine_input_tests
     tests/input/TestActionMap.cpp
+    tests/input/TestActionMapJson.cpp
     tests/input/TestInputState.cpp
     tests/input/TestInputSystemTransitions.cpp
     tests/input/TestAxisResolution.cpp
@@ -796,6 +800,10 @@ target_link_libraries(engine_input_tests PRIVATE
     engine_input
     engine_input_glfw
     Catch2::Catch2WithMain
+)
+
+target_compile_definitions(engine_input_tests PRIVATE
+    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 # --- engine_core static library ---

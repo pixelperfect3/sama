@@ -45,6 +45,12 @@ public:
     // Return pointer to the AxisBinding with this name, or nullptr.
     [[nodiscard]] const AxisBinding* axisBinding(std::string_view axisName) const;
 
+    // Return all axis bindings (for serialization / iteration).
+    [[nodiscard]] const std::vector<AxisBinding>& axisBindings() const
+    {
+        return axisBindings_;
+    }
+
 private:
     static constexpr size_t kKeyCount = static_cast<size_t>(Key::COUNT);
     static constexpr size_t kMouseButtonCount = static_cast<size_t>(MouseButton::COUNT);
