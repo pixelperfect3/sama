@@ -58,9 +58,46 @@ Tracks all decisions and progress made during development.
 - **clang-format:** Run after every C++ file write/edit (see Code Formatting above)
 - **clang-tidy:** Optional static analysis, enable with `-DENABLE_CLANG_TIDY=ON` in CMake
 - **Build:**
+  ```bash
+  # Initial CMake configure (once)
+  mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Debug
+
+  # Build everything
+  cmake --build build -j$(sysctl -n hw.ncpu)
+
+  # Build specific targets
+  cmake --build build --target engine_tests -j$(sysctl -n hw.ncpu)
+  cmake --build build --target engine_screenshot_tests -j$(sysctl -n hw.ncpu)
+  cmake --build build --target helmet_demo -j$(sysctl -n hw.ncpu)
+  cmake --build build --target hierarchy_demo -j$(sysctl -n hw.ncpu)
+  cmake --build build --target physics_demo -j$(sysctl -n hw.ncpu)
+  cmake --build build --target audio_demo -j$(sysctl -n hw.ncpu)
+  cmake --build build --target animation_demo -j$(sysctl -n hw.ncpu)
   ```
-  mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Debug && make engine_tests
-  ./engine_tests --reporter compact
+
+- **Run tests:**
+  ```bash
+  build/engine_tests                          # all unit tests (412 cases)
+  build/engine_tests "[scenegraph]"           # tests by tag
+  build/engine_tests "[physics]"
+  build/engine_tests "[audio]"
+  build/engine_tests "[animation]"
+  build/engine_tests "[json]"
+  build/engine_tests "[serializer]"
+  build/engine_tests "[memory]"
+  build/engine_tests "[transform]"
+  build/engine_screenshot_tests               # all screenshot tests (11 cases)
+  build/engine_screenshot_tests --update-goldens  # regenerate reference images
+  ```
+
+- **Run demos** (from the build directory for asset loading):
+  ```bash
+  cd build
+  ./helmet_demo         # PBR helmet with rotating light + IBL
+  ./hierarchy_demo      # Scene graph with draggable cubes
+  ./physics_demo        # Falling cubes on tilting plane (Jolt)
+  ./audio_demo          # Spatial 3D audio with volume sliders (SoLoud)
+  ./animation_demo      # Skeletal animation with playback controls
   ```
 
 ---
