@@ -283,7 +283,10 @@ int main()
 
         auto* ltc = reg.get<TransformComponent>(lightIndicator);
         if (ltc)
+        {
             ltc->position = lightDir * 3.0f;
+            ltc->flags |= 0x01;
+        }
 
         // -- Render -----------------------------------------------------------
         double frameStart = glfwGetTime();
