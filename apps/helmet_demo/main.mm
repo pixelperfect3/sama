@@ -40,6 +40,7 @@
 #include "engine/platform/Window.h"
 #include "engine/platform/desktop/GlfwWindow.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/IblResources.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
@@ -204,6 +205,10 @@ int main()
         sd.cascadeCount = 1;
         shadow.init(sd);
     }
+
+    // -- IBL (procedural sky/ground) -----------------------------------------
+    IblResources ibl;
+    ibl.generateDefault();
 
     // -- ImGui ----------------------------------------------------------------
     // View 15 (kViewImGui) is reserved for the ImGui overlay; see ViewIds.h.
@@ -494,6 +499,16 @@ int main()
         frame.camPos[0] = cam.pos.x;
         frame.camPos[1] = cam.pos.y;
         frame.camPos[2] = cam.pos.z;
+
+        // Enable IBL ambient lighting.
+        if (ibl.isValid())
+        {
+            frame.iblEnabled = true;
+            frame.maxMipLevels = 7.0f;
+            frame.irradiance = ibl.irradiance();
+            frame.prefiltered = ibl.prefiltered();
+            frame.brdfLut = ibl.brdfLut();
+        }
         drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
@@ -536,6 +551,7 @@ int main()
 
     imguiDestroy();
 
+    ibl.shutdown();
     shadow.shutdown();
     if (bgfx::isValid(shadowProg))
         bgfx::destroy(shadowProg);

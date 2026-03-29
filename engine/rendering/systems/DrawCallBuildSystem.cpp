@@ -146,8 +146,9 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     // numLights=0 disables the clustered loop; screenW/H prevent tile div-by-zero.
     const float lightParamsData[4] = {0.0f, frameW, frameH, 0.0f};
 
-    // u_iblParams = {maxMipLevels, iblEnabled=0, 0, 0} — IBL disabled, uses flat ambient.
-    const float iblParamsData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // u_iblParams = {maxMipLevels, iblEnabled, 0, 0}
+    const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
+                                    frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
 
     auto visibleView =
         reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
@@ -204,16 +205,25 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             bgfx::setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
             bgfx::setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
             bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
-            bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
             bgfx::setTexture(12, uniforms.s_lightData, whiteTex);
             bgfx::setTexture(13, uniforms.s_lightGrid, whiteTex);
             bgfx::setTexture(14, uniforms.s_lightIndex, whiteTex);
             if (bgfx::isValid(frame.shadowAtlas))
                 bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+            // IBL textures: use real IBL when enabled, otherwise fall back to
+            // white/whiteCube placeholders.
+            if (frame.iblEnabled && bgfx::isValid(frame.brdfLut))
+            {
+                bgfx::setTexture(6, uniforms.s_irradiance, frame.irradiance);
+                bgfx::setTexture(7, uniforms.s_prefiltered, frame.prefiltered);
+                bgfx::setTexture(8, uniforms.s_brdfLut, frame.brdfLut);
+            }
+            else
             {
                 bgfx::TextureHandle cube = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
                 bgfx::setTexture(6, uniforms.s_irradiance, cube);
                 bgfx::setTexture(7, uniforms.s_prefiltered, cube);
+                bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
             }
 
             bgfx::setTransform(&wtc.matrix[0][0]);
@@ -243,8 +253,8 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
     auto shadowView_ = reg.view<ShadowVisibleTag, WorldTransformComponent, MeshComponent>();
 
     shadowView_.each(
-        [&](ecs::EntityID entity, const ShadowVisibleTag& tag,
-            const WorldTransformComponent& wtc, const MeshComponent& mc)
+        [&](ecs::EntityID entity, const ShadowVisibleTag& tag, const WorldTransformComponent& wtc,
+            const MeshComponent& mc)
         {
             if (!(tag.cascadeMask & cascadeBit))
                 return;
@@ -275,10 +285,11 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
 // Skinned shadow pass — depth-only with bone matrices.
 // ---------------------------------------------------------------------------
 
-void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(
-    ecs::Registry& reg, const RenderResources& res,
-    bgfx::ProgramHandle skinnedShadowProgram, uint32_t cascadeIndex,
-    const math::Mat4* boneBuffer)
+void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(ecs::Registry& reg,
+                                                       const RenderResources& res,
+                                                       bgfx::ProgramHandle skinnedShadowProgram,
+                                                       uint32_t cascadeIndex,
+                                                       const math::Mat4* boneBuffer)
 {
     if (!bgfx::isValid(skinnedShadowProgram) || !boneBuffer)
         return;
@@ -286,8 +297,7 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(
     const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
     const bgfx::ViewId shadowView = static_cast<bgfx::ViewId>(kViewShadowBase + cascadeIndex);
 
-    auto skinnedShadowView =
-        reg.view<ShadowVisibleTag, animation::SkinComponent, MeshComponent>();
+    auto skinnedShadowView = reg.view<ShadowVisibleTag, animation::SkinComponent, MeshComponent>();
 
     skinnedShadowView.each(
         [&](ecs::EntityID /*entity*/, const ShadowVisibleTag& tag,
@@ -325,8 +335,7 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(
 
 void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResources& res,
                                         bgfx::ProgramHandle skinnedProgram,
-                                        const ShaderUniforms& uniforms,
-                                        const PbrFrameParams& frame,
+                                        const ShaderUniforms& uniforms, const PbrFrameParams& frame,
                                         const math::Mat4* boneBuffer)
 {
     if (!bgfx::isValid(skinnedProgram) || !boneBuffer)
@@ -345,10 +354,11 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
         frame.camPos[0], frame.camPos[1], frame.camPos[2], 0.0f};
 
     const float lightParamsData[4] = {0.0f, frameW, frameH, 0.0f};
-    const float iblParamsData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
+                                    frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
 
-    auto skinnedView = reg.view<VisibleTag, animation::SkinComponent, MeshComponent,
-                                MaterialComponent>();
+    auto skinnedView =
+        reg.view<VisibleTag, animation::SkinComponent, MeshComponent, MaterialComponent>();
 
     skinnedView.each(
         [&](ecs::EntityID /*entity*/, const VisibleTag& /*tag*/,
@@ -397,16 +407,23 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             bgfx::setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
             bgfx::setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
             bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
-            bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
             bgfx::setTexture(12, uniforms.s_lightData, whiteTex);
             bgfx::setTexture(13, uniforms.s_lightGrid, whiteTex);
             bgfx::setTexture(14, uniforms.s_lightIndex, whiteTex);
             if (bgfx::isValid(frame.shadowAtlas))
                 bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+            if (frame.iblEnabled && bgfx::isValid(frame.brdfLut))
+            {
+                bgfx::setTexture(6, uniforms.s_irradiance, frame.irradiance);
+                bgfx::setTexture(7, uniforms.s_prefiltered, frame.prefiltered);
+                bgfx::setTexture(8, uniforms.s_brdfLut, frame.brdfLut);
+            }
+            else
             {
                 bgfx::TextureHandle cube = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
                 bgfx::setTexture(6, uniforms.s_irradiance, cube);
                 bgfx::setTexture(7, uniforms.s_prefiltered, cube);
+                bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
             }
 
             // Upload bone matrices via bgfx::setTransform with count > 1.
