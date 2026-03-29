@@ -453,12 +453,15 @@ add_library(engine_assets STATIC
     engine/assets/TextureLoader.cpp
     engine/assets/GltfLoader.cpp
     engine/assets/GltfSceneSpawner.cpp
+    engine/assets/ObjLoader.cpp
+    engine/assets/CompressedTextureLoader.cpp
 )
 
 target_include_directories(engine_assets PUBLIC ${CMAKE_SOURCE_DIR})
 target_include_directories(engine_assets PRIVATE
     ${stb_SOURCE_DIR}
     ${cgltf_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/tinyobjloader
 )
 target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading engine_scene engine_animation glm::glm)
 
@@ -631,6 +634,7 @@ add_executable(engine_tests
     tests/assets/TestAssetManager.cpp
     tests/assets/TestStdFileSystem.cpp
     tests/assets/TestGltfLoader.cpp
+    tests/assets/TestObjLoader.cpp
     tests/scene/TestSceneGraph.cpp
     tests/scene/TestTransformSystem.cpp
     tests/physics/TestPhysicsComponents.cpp

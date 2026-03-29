@@ -191,7 +191,7 @@ void AssetManager::uploadOne(UploadRequest& req)
 // providing pre-computed mips (updateTexture2D on Metal does not reliably
 // initialise levels that were created without initial data).
 static bgfx::TextureHandle createTexture2DWithMips(const uint8_t* pixels, int w, int h,
-                                                    uint64_t flags)
+                                                   uint64_t flags)
 {
     // Upload mip 0 only.  bgfx's Metal backend computes LOD=max when hasMips=true due to
     // an apparent UV-derivative issue on this GPU, producing near-black output.  Until the
@@ -199,8 +199,8 @@ static bgfx::TextureHandle createTexture2DWithMips(const uint8_t* pixels, int w,
     // LOD to 0 automatically when only one level exists, giving correct (if aliased) sampling.
     const bgfx::Memory* mem = bgfx::copy(pixels, static_cast<uint32_t>(w * h * 4));
     return bgfx::createTexture2D(static_cast<uint16_t>(w), static_cast<uint16_t>(h),
-                                 /*hasMips=*/false, /*numLayers=*/1,
-                                 bgfx::TextureFormat::RGBA8, flags, mem);
+                                 /*hasMips=*/false, /*numLayers=*/1, bgfx::TextureFormat::RGBA8,
+                                 flags, mem);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,9 +216,9 @@ void AssetManager::upload(Record& rec, CpuTextureData&& data)
         return;
     }
 
-    bgfx::TextureHandle handle =
-        createTexture2DWithMips(data.pixels.data(), static_cast<int>(data.width),
-                                static_cast<int>(data.height), BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE);
+    bgfx::TextureHandle handle = createTexture2DWithMips(
+        data.pixels.data(), static_cast<int>(data.width), static_cast<int>(data.height),
+        BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE);
 
     if (!bgfx::isValid(handle))
     {
@@ -236,6 +236,38 @@ void AssetManager::upload(Record& rec, CpuTextureData&& data)
     rec.state = AssetState::Ready;
 }
 
+void AssetManager::upload(Record& rec, CpuCompressedTextureData&& data)
+{
+    if (data.rawBytes.empty())
+    {
+        rec.state = AssetState::Failed;
+        rec.error = "CompressedTextureLoader produced empty data";
+        return;
+    }
+
+    const bgfx::Memory* mem =
+        bgfx::copy(data.rawBytes.data(), static_cast<uint32_t>(data.rawBytes.size()));
+
+    bgfx::TextureInfo info;
+    bgfx::TextureHandle handle =
+        bgfx::createTexture(mem, BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE, 0, &info);
+
+    if (!bgfx::isValid(handle))
+    {
+        rec.state = AssetState::Failed;
+        rec.error = "bgfx::createTexture failed for compressed texture: " + rec.path;
+        return;
+    }
+
+    Texture tex;
+    tex.handle = handle;
+    tex.width = info.width;
+    tex.height = info.height;
+
+    rec.payload = std::move(tex);
+    rec.state = AssetState::Ready;
+}
+
 void AssetManager::upload(Record& rec, CpuSceneData&& data)
 {
     GltfAsset asset;
@@ -248,10 +280,9 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
         Texture tex;
         if (!cpuTex.pixels.empty() && cpuTex.width > 0 && cpuTex.height > 0)
         {
-            tex.handle =
-                createTexture2DWithMips(cpuTex.pixels.data(), static_cast<int>(cpuTex.width),
-                                        static_cast<int>(cpuTex.height),
-                                        BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE);
+            tex.handle = createTexture2DWithMips(
+                cpuTex.pixels.data(), static_cast<int>(cpuTex.width),
+                static_cast<int>(cpuTex.height), BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE);
             tex.width = cpuTex.width;
             tex.height = cpuTex.height;
         }

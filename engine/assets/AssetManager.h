@@ -162,6 +162,7 @@ private:
     // Each overload creates bgfx handles and stores the result in rec.payload.
     void upload(Record& rec, CpuTextureData&& data);
     void upload(Record& rec, CpuSceneData&& data);
+    void upload(Record& rec, CpuCompressedTextureData&& data);
 
     // ------------------------------------------------------------------
     // State

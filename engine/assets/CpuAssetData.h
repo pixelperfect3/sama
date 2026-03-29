@@ -38,11 +38,11 @@ struct CpuMaterialData
     float roughness = 0.5f;
     float metallic = 0.0f;
     float emissiveScale = 0.0f;
-    int32_t albedoTexIndex = -1;    // index into CpuSceneData::textures
+    int32_t albedoTexIndex = -1;  // index into CpuSceneData::textures
     int32_t normalTexIndex = -1;
-    int32_t ormTexIndex = -1;       // G=roughness, B=metallic (R ignored per glTF spec)
-    int32_t emissiveTexIndex = -1;  // emissive color texture
-    int32_t occlusionTexIndex = -1; // separate occlusion texture (R=AO)
+    int32_t ormTexIndex = -1;        // G=roughness, B=metallic (R ignored per glTF spec)
+    int32_t emissiveTexIndex = -1;   // emissive color texture
+    int32_t occlusionTexIndex = -1;  // separate occlusion texture (R=AO)
 };
 
 // ---------------------------------------------------------------------------
@@ -125,12 +125,24 @@ struct CpuSceneData
 };
 
 // ---------------------------------------------------------------------------
+// CpuCompressedTextureData — raw KTX/DDS file bytes for bgfx upload.
+//
+// bgfx::createTexture() accepts raw KTX/DDS file data and handles format
+// detection and decompression internally. We just pass the bytes through.
+// ---------------------------------------------------------------------------
+
+struct CpuCompressedTextureData
+{
+    std::vector<uint8_t> rawBytes;
+};
+
+// ---------------------------------------------------------------------------
 // CpuAssetData — discriminated union over all CPU-side decoded types.
 //
 // AssetManager::uploadOne() visits this variant to dispatch to the correct
 // bgfx upload path.
 // ---------------------------------------------------------------------------
 
-using CpuAssetData = std::variant<CpuTextureData, CpuSceneData>;
+using CpuAssetData = std::variant<CpuTextureData, CpuSceneData, CpuCompressedTextureData>;
 
 }  // namespace engine::assets
