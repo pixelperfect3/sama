@@ -188,7 +188,7 @@ Tracks all decisions and progress made during development.
 - [x] Phase 10 — 2D sprite batching + UI pass (committed)
 - [x] Phase 11 — IBL: irradiance, prefiltered specular, BRDF LUT (committed)
 
-All 235 test cases pass (4472 assertions).
+All 412 test cases pass (5228 assertions).
 
 ### Status
 - [x] All 11 rendering phases complete and committed
@@ -337,7 +337,7 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
 - **Scale target:** ~20k–50k actively managed scene graph nodes at runtime, with region-based streaming loading/unloading around the player
 
 ### Status
-- [x] Scene graph implemented (HierarchyComponent, ChildrenComponent, TransformSystem, SceneGraph mutation API, GltfSceneSpawner integration — committed)
+- [x] Scene graph implemented (HierarchyComponent, ChildrenComponent, TransformSystem with dirty flags, SceneGraph mutation API, GltfSceneSpawner integration — committed)
 
 ---
 
@@ -396,8 +396,8 @@ namespace engine::io
 **Manifest parsing** uses SAX mode directly inside the asset system's manifest parser — the only site that needs high throughput. It processes entries as a stream rather than building a DOM.
 
 ### Status
-- [ ] rapidjson not yet integrated (FetchContent entry needed in CMakeLists.txt)
-- [ ] `engine/io/Json.h` wrapper not yet implemented
+- [x] rapidjson integrated (FetchContent in CMakeLists.txt)
+- [x] `engine/io/Json.h` wrapper implemented (JsonDocument, JsonValue, JsonWriter with pimpl — 22 tests)
 
 ---
 
@@ -586,7 +586,7 @@ The question is whether the engine should be 2D-first, 3D-first, or dual from th
 - Trigger when: first game concept that needs rigid body 2D physics
 
 ### Status
-- [ ] 2D orthographic camera + sprite rendering not started
+- [x] 2D orthographic camera + sprite rendering implemented (Phase 10 — sprite batching + UI pass, committed)
 - [ ] Box2D integration deferred
 
 ---
@@ -630,7 +630,7 @@ These have no value until a concrete game requires them. Build when the requirem
 | Paid DLC / in-app purchases | Business model requires it | NOTES.md → Networking → Deferred |
 | Lua scripting bridge | Non-programmer authoring needed, or hot-reload-without-recompile becomes a priority | NOTES.md → Editor → Scripting |
 | Depth prepass for alpha-tested geometry on TBDR | Game has dense foliage and mobile profiling shows masked overdraw is a bottleneck | RENDERING_ARCHITECTURE.md → View 1; `depthPrepassAlphaTestedOnly` flag already in `RenderSettings` |
-| Skeletal animation system | First game with animated characters or creatures | Not yet designed |
+| ~~Skeletal animation system~~ | ~~First game with animated characters or creatures~~ | **DONE** — Skeleton, AnimationClip, Pose, AnimationSampler, AnimationSystem, GPU skinning, glTF integration (committed) |
 | FMOD audio (replaces SoLoud) | Game requires AAA audio polish: HRTF, geometry-aware reverb, sound designer workflow, or revenue exceeds $200k | NOTES.md → Audio |
 
 ---
@@ -709,7 +709,7 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - Runs once per frame, single-threaded, before culling/rendering.
 - Finds roots (TransformComponent without HierarchyComponent), walks children recursively via ChildrenComponent.
 - Composes `world = parentWorld * T * R * S` top-down. Writes WorldTransformComponent.
-- **Dirty flag optimization deferred** — unconditional recompute at 50k nodes is <1ms. Will add when profiling shows need.
+- **Dirty flag optimization implemented** — TransformSystem uses dirty flags to skip unchanged subtrees.
 
 ### Mutation API (free functions in `engine::scene`)
 - `setParent(reg, child, newParent)` — cycle detection via ancestor walk, automatic cleanup of old parent's ChildrenComponent when empty.
@@ -805,6 +805,30 @@ Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera 
 - Serializes: TransformComponent (position/rotation/scale), CameraComponent, DirectionalLightComponent, PointLightComponent, SpotLightComponent
 - Hierarchy preserved via scene-local IDs and two-pass loading (create entities first, rebuild parent-child second)
 - 8 tests covering round-trip, hierarchy, deep chains, ordering independence, rotation/scale preservation
+
+---
+
+## Memory (`engine/memory/`)
+
+- FrameArena (per-frame bump allocator, reset each frame)
+- InlinedVector (small-buffer-optimized vector)
+- PoolAllocator (fixed-size block allocator)
+- ankerl::unordered_dense (vendored high-performance hash map)
+
+### Status
+- [x] Memory subsystem implemented (FrameArena, InlinedVector, PoolAllocator, ankerl::unordered_dense — committed)
+
+---
+
+## Skeletal Animation
+
+- Skeleton, AnimationClip, Pose, AnimationSampler, AnimationSystem
+- GPU skinning via bone matrix palette uploaded as uniforms
+- glTF integration: loads skeleton hierarchy, joint weights, animation clips from GLB
+- animation_demo app with playback controls
+
+### Status
+- [x] Skeletal animation implemented (Skeleton, AnimationClip, Pose, AnimationSampler, AnimationSystem, GPU skinning, glTF integration — committed)
 
 ---
 
