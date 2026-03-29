@@ -714,4 +714,16 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - **Ambient too bright:** Hemisphere ambient (sky 0.90/0.95/1.20) dominated the output through Reinhard tonemapping compression. Reduced to (0.15/0.18/0.25) so directional light specular punches through.
 - **Rotating light:** Helmet demo light orbits the model (6s period, 40° elevation) to sweep specular highlights across the surface.
 
+### Skinned Shadow Fix (Metal Non-Contiguous Vertex Streams)
+- **Problem:** Skinned entities (BrainStem.glb) rendered correctly with the PBR skinned shader but cast no shadow on the ground. Non-skinned entities (test cube) cast shadows correctly.
+- **Root cause:** The skinned shadow draw call bound vertex stream 0 (positions) and stream 2 (bone indices/weights) but skipped stream 1 (surface normals/tangents/UVs). The Metal backend requires contiguous vertex buffer stream bindings — skipping stream 1 caused stream 2 attributes (`a_indices`, `a_weight`) to not be found by the shader, so all bone weights were zero and vertices collapsed to the origin.
+- **Fix:** Bind the surface vertex buffer to stream 1 in `submitSkinnedShadowDrawCalls()` even though the shadow shader doesn't use those attributes. This makes the stream indices contiguous (0, 1, 2) which Metal requires.
+- **Why PBR skinned worked:** `updateSkinned()` already binds all three streams (position, surface, skinning) because the PBR shader needs normals/tangents/UVs.
+- **Lesson:** On Metal (via bgfx), always bind vertex buffer streams contiguously. Gaps in stream indices cause attribute binding failures on the Metal backend, even if the shader doesn't use attributes from the intermediate stream.
+
+### glTF Multi-Primitive Mesh Merging
+- **Problem:** BrainStem.glb has 59 primitives in a single mesh. The GltfLoader only processed `primitives[0]`, dropping 98% of the geometry.
+- **Fix:** Merge all primitives by concatenating positions, normals, tangents, UVs, bone indices/weights, and indices (with vertex offset applied to index values).
+- **Related fix:** BrainStem has no TEXCOORD_0 attribute. Without UVs, the surface vertex buffer wasn't created (requires normals + tangents + UVs). Fixed by generating zero UVs when TEXCOORD_0 is absent, enabling surface buffer creation for meshes with normals but no UVs.
+
 ---

@@ -300,11 +300,15 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(
             if (!mesh || !bgfx::isValid(mesh->positionVbh) || !bgfx::isValid(mesh->ibh))
                 return;
 
-            // Upload bone matrices.
+            // Upload bone matrices (already in world space from AnimationSystem).
             const math::Mat4* bones = boneBuffer + skin.boneMatrixOffset;
             bgfx::setTransform(&bones[0][0][0], skin.boneCount);
 
             bgfx::setVertexBuffer(0, mesh->positionVbh);
+            // Bind surface stream even though shadow shader doesn't use it —
+            // ensures stream indices are contiguous for Metal backend.
+            if (bgfx::isValid(mesh->surfaceVbh))
+                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
             if (bgfx::isValid(mesh->skinningVbh))
                 bgfx::setVertexBuffer(2, mesh->skinningVbh);
             bgfx::setIndexBuffer(mesh->ibh);
