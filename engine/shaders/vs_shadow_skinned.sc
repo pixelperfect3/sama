@@ -1,9 +1,10 @@
-$input a_position
+$input a_position, a_indices, a_weight
+#define SKINNED 1
 #include <bgfx_shader.sh>
 
-// Depth-only shadow pass — Stream 0 (position) only.
-// u_modelViewProj is provided by bgfx_shader.sh (model * view * proj).
-// When SKINNED is defined, bone matrices are blended from u_model[].
+// Skinned variant of the shadow depth-only vertex shader.
+// A separate .sc file is needed because bgfx's $input directive does not
+// support preprocessor conditionals.
 
 void main()
 {

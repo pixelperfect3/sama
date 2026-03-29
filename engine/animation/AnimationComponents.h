@@ -18,17 +18,21 @@ struct SkeletonComponent
 };
 static_assert(sizeof(SkeletonComponent) == 4);
 
-struct AnimatorComponent                // offset  size
+struct AnimatorComponent  // offset  size
 {
-    uint32_t clipId;                    //  0       4  -- current clip index
-    uint32_t nextClipId;                //  4       4  -- blend target clip (UINT32_MAX = none)
-    float playbackTime;                 //  8       4  -- current time in seconds
-    float speed;                        // 12       4  -- playback rate multiplier
-    float blendFactor;                  // 16       4  -- 0.0 = current, 1.0 = fully blended
-    float blendDuration;               // 20       4  -- total crossfade duration
-    float blendElapsed;                // 24       4  -- elapsed crossfade time
-    uint8_t flags;                      // 28       1  -- bit 0: looping, bit 1: playing, bit 2: blending
-    uint8_t _pad[3];                    // 29       3
+    static constexpr uint8_t kFlagLooping = 0x01;
+    static constexpr uint8_t kFlagPlaying = 0x02;
+    static constexpr uint8_t kFlagBlending = 0x04;
+
+    uint32_t clipId;      //  0       4  -- current clip index
+    uint32_t nextClipId;  //  4       4  -- blend target clip (UINT32_MAX = none)
+    float playbackTime;   //  8       4  -- current time in seconds
+    float speed;          // 12       4  -- playback rate multiplier
+    float blendFactor;    // 16       4  -- 0.0 = current, 1.0 = fully blended
+    float blendDuration;  // 20       4  -- total crossfade duration
+    float blendElapsed;   // 24       4  -- elapsed crossfade time
+    uint8_t flags;        // 28       1  -- bit 0: looping, bit 1: playing, bit 2: blending
+    uint8_t _pad[3];      // 29       3
 };  // total: 32 bytes
 static_assert(sizeof(AnimatorComponent) == 32);
 

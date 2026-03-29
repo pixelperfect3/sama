@@ -1,12 +1,11 @@
 #include "engine/animation/AnimationSystem.h"
 
 #include <cstdint>
-#include <memory_resource>
-#include <vector>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <memory_resource>
+#include <vector>
 
 #include "engine/animation/AnimationComponents.h"
 #include "engine/animation/AnimationSampler.h"
@@ -35,8 +34,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                              std::pmr::memory_resource* arena)
 {
     // Use the arena if provided, otherwise fall back to default allocator.
-    std::pmr::memory_resource* alloc =
-        arena ? arena : std::pmr::get_default_resource();
+    std::pmr::memory_resource* alloc = arena ? arena : std::pmr::get_default_resource();
 
     std::pmr::vector<math::Mat4> boneBuffer(alloc);
     boneBuffer.reserve(256);  // reasonable initial estimate
@@ -54,14 +52,14 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
             const uint32_t jointCount = skeleton->jointCount();
 
             // Advance playback time if playing.
-            if (animComp.flags & 0x02)  // bit 1: playing
+            if (animComp.flags & AnimatorComponent::kFlagPlaying)
             {
                 animComp.playbackTime += dt * animComp.speed;
 
                 const AnimationClip* clip = animRes.getClip(animComp.clipId);
                 if (clip && clip->duration > 0.0f)
                 {
-                    if (animComp.flags & 0x01)  // bit 0: looping
+                    if (animComp.flags & AnimatorComponent::kFlagLooping)
                     {
                         while (animComp.playbackTime >= clip->duration)
                             animComp.playbackTime -= clip->duration;
@@ -89,7 +87,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
 
             // Handle blending if active.
             Pose finalPose = poseA;
-            if (animComp.flags & 0x04)  // bit 2: blending
+            if (animComp.flags & AnimatorComponent::kFlagBlending)
             {
                 const AnimationClip* clipB = animRes.getClip(animComp.nextClipId);
                 if (clipB)
@@ -107,7 +105,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                         animComp.blendFactor = 0.0f;
                         animComp.blendElapsed = 0.0f;
                         animComp.blendDuration = 0.0f;
-                        animComp.flags &= ~0x04;  // clear blending flag
+                        animComp.flags &= ~AnimatorComponent::kFlagBlending;
 
                         // Sample the promoted clip.
                         sampleClip(*clipB, *skeleton, animComp.playbackTime, finalPose);
@@ -123,7 +121,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
 
             // Compute final bone matrices.
             // Forward pass: parent-first ordering guaranteed by Skeleton.
-            std::vector<math::Mat4> worldTransforms(jointCount);
+            std::pmr::vector<math::Mat4> worldTransforms(jointCount, math::Mat4(1.0f), alloc);
             for (uint32_t i = 0; i < jointCount; ++i)
             {
                 math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
@@ -140,8 +138,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
 
             for (uint32_t i = 0; i < jointCount; ++i)
             {
-                math::Mat4 finalMatrix =
-                    worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
+                math::Mat4 finalMatrix = worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
                 boneBuffer.push_back(finalMatrix);
             }
         });

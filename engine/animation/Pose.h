@@ -1,8 +1,7 @@
 #pragma once
 
-#include <vector>
-
 #include "engine/math/Types.h"
+#include "engine/memory/InlinedVector.h"
 
 namespace engine::animation
 {
@@ -16,7 +15,7 @@ struct JointPose
 
 struct Pose
 {
-    std::vector<JointPose> jointPoses;  // parallel to Skeleton::joints
+    memory::InlinedVector<JointPose, 128> jointPoses;  // parallel to Skeleton::joints
 };
 
 }  // namespace engine::animation

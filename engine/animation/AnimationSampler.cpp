@@ -1,8 +1,8 @@
 #include "engine/animation/AnimationSampler.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -28,9 +28,8 @@ T sampleChannel(const std::vector<Keyframe<T>>& keyframes, float time, const T& 
         return keyframes.back().value;
 
     // Binary search: find first keyframe with time > 'time'.
-    auto it = std::upper_bound(
-        keyframes.begin(), keyframes.end(), time,
-        [](float t, const Keyframe<T>& kf) { return t < kf.time; });
+    auto it = std::upper_bound(keyframes.begin(), keyframes.end(), time,
+                               [](float t, const Keyframe<T>& kf) { return t < kf.time; });
 
     // it points to the keyframe after 'time'; (it - 1) is the one before.
     const auto& kf1 = *(it - 1);
@@ -44,8 +43,8 @@ T sampleChannel(const std::vector<Keyframe<T>>& keyframes, float time, const T& 
 
 // Specialization for quaternion: use slerp instead of mix.
 template <>
-math::Quat sampleChannel<math::Quat>(const std::vector<Keyframe<math::Quat>>& keyframes,
-                                      float time, const math::Quat& defaultValue)
+math::Quat sampleChannel<math::Quat>(const std::vector<Keyframe<math::Quat>>& keyframes, float time,
+                                     const math::Quat& defaultValue)
 {
     if (keyframes.empty())
         return defaultValue;
@@ -56,9 +55,8 @@ math::Quat sampleChannel<math::Quat>(const std::vector<Keyframe<math::Quat>>& ke
     if (time >= keyframes.back().time)
         return keyframes.back().value;
 
-    auto it = std::upper_bound(
-        keyframes.begin(), keyframes.end(), time,
-        [](float t, const Keyframe<math::Quat>& kf) { return t < kf.time; });
+    auto it = std::upper_bound(keyframes.begin(), keyframes.end(), time,
+                               [](float t, const Keyframe<math::Quat>& kf) { return t < kf.time; });
 
     const auto& kf1 = *(it - 1);
     const auto& kf2 = *it;
@@ -99,6 +97,7 @@ void sampleClip(const AnimationClip& clip, const Skeleton& skeleton, float time,
 
 void blendPoses(const Pose& a, const Pose& b, float t, Pose& outPose)
 {
+    assert(a.jointPoses.size() == b.jointPoses.size());
     const size_t count = a.jointPoses.size();
     outPose.jointPoses.resize(count);
 
@@ -108,8 +107,7 @@ void blendPoses(const Pose& a, const Pose& b, float t, Pose& outPose)
             glm::mix(a.jointPoses[i].position, b.jointPoses[i].position, t);
         outPose.jointPoses[i].rotation =
             glm::slerp(a.jointPoses[i].rotation, b.jointPoses[i].rotation, t);
-        outPose.jointPoses[i].scale =
-            glm::mix(a.jointPoses[i].scale, b.jointPoses[i].scale, t);
+        outPose.jointPoses[i].scale = glm::mix(a.jointPoses[i].scale, b.jointPoses[i].scale, t);
     }
 }
 

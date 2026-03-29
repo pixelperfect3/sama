@@ -28,19 +28,23 @@
 #include "generated/shaders/vs_pbr_essl.bin.h"
 #include "generated/shaders/vs_pbr_glsl.bin.h"
 #include "generated/shaders/vs_pbr_mtl.bin.h"
+#include "generated/shaders/vs_pbr_skinned_essl.bin.h"
+#include "generated/shaders/vs_pbr_skinned_glsl.bin.h"
+#include "generated/shaders/vs_pbr_skinned_mtl.bin.h"
+#include "generated/shaders/vs_pbr_skinned_spv.bin.h"
 #include "generated/shaders/vs_pbr_spv.bin.h"
 #include "generated/shaders/vs_shadow_essl.bin.h"
 #include "generated/shaders/vs_shadow_glsl.bin.h"
 #include "generated/shaders/vs_shadow_mtl.bin.h"
+#include "generated/shaders/vs_shadow_skinned_essl.bin.h"
+#include "generated/shaders/vs_shadow_skinned_glsl.bin.h"
+#include "generated/shaders/vs_shadow_skinned_mtl.bin.h"
+#include "generated/shaders/vs_shadow_skinned_spv.bin.h"
 #include "generated/shaders/vs_shadow_spv.bin.h"
 #include "generated/shaders/vs_sprite_essl.bin.h"
 #include "generated/shaders/vs_sprite_glsl.bin.h"
 #include "generated/shaders/vs_sprite_mtl.bin.h"
 #include "generated/shaders/vs_sprite_spv.bin.h"
-#include "generated/shaders/vs_pbr_skinned_essl.bin.h"
-#include "generated/shaders/vs_pbr_skinned_glsl.bin.h"
-#include "generated/shaders/vs_pbr_skinned_mtl.bin.h"
-#include "generated/shaders/vs_pbr_skinned_spv.bin.h"
 #include "generated/shaders/vs_unlit_essl.bin.h"
 #include "generated/shaders/vs_unlit_glsl.bin.h"
 #include "generated/shaders/vs_unlit_mtl.bin.h"
@@ -81,6 +85,12 @@ static const bgfx::EmbeddedShader kShadowShaders[] = {
 static const bgfx::EmbeddedShader kSkinnedPbrShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_pbr_skinned),
     BGFX_EMBEDDED_SHADER(fs_pbr),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+static const bgfx::EmbeddedShader kSkinnedShadowShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_shadow_skinned),
+    BGFX_EMBEDDED_SHADER(fs_shadow),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -188,8 +198,30 @@ bgfx::ProgramHandle loadSkinnedPbrProgram()
     if (!bgfx::isValid(vsh))
         return BGFX_INVALID_HANDLE;
 
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSkinnedPbrShaders, renderer, "fs_pbr");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadSkinnedShadowProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh =
+        bgfx::createEmbeddedShader(kSkinnedShadowShaders, renderer, "vs_shadow_skinned");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
     bgfx::ShaderHandle fsh =
-        bgfx::createEmbeddedShader(kSkinnedPbrShaders, renderer, "fs_pbr");
+        bgfx::createEmbeddedShader(kSkinnedShadowShaders, renderer, "fs_shadow");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);

@@ -39,4 +39,9 @@ namespace engine::rendering
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadSkinnedPbrProgram();
 
+// Skinned shadow program — depth-only vertex shader with GPU skinning.
+// Used by the shadow pass for skinned meshes (bone matrices via u_model[]).
+// Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadSkinnedShadowProgram();
+
 }  // namespace engine::rendering

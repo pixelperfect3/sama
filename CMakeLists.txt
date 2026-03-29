@@ -324,6 +324,22 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_shadow.sc FRAGMENT ANDROID ""     fs_shadow_essl COMPILED_SHADERS)
 
+# Shadow Skinned — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow_skinned.sc VERTEX   OSX     metal  vs_shadow_skinned_mtl  COMPILED_SHADERS)
+
+# Shadow Skinned — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow_skinned.sc VERTEX   LINUX   spirv  vs_shadow_skinned_spv  COMPILED_SHADERS)
+
+# Shadow Skinned — GLSL (OpenGL)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow_skinned.sc VERTEX   LINUX   120    vs_shadow_skinned_glsl COMPILED_SHADERS)
+
+# Shadow Skinned — ESSL (OpenGLES / Android)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_shadow_skinned.sc VERTEX   ANDROID ""     vs_shadow_skinned_essl COMPILED_SHADERS)
+
 # Post-process fullscreen vertex × 4 platforms
 compile_shader_pp(
     ${SHADER_SRC_DIR}/vs_fullscreen.sc VERTEX OSX     metal vs_fullscreen_mtl  COMPILED_SHADERS)
@@ -627,6 +643,10 @@ add_executable(engine_tests
     tests/memory/TestPoolAllocator.cpp
     tests/io/TestJson.cpp
     tests/scene/TestSceneSerializer.cpp
+    tests/animation/TestAnimationComponents.cpp
+    tests/animation/TestSkeleton.cpp
+    tests/animation/TestAnimationSampler.cpp
+    tests/animation/TestPoseBlend.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio engine_animation glm::glm Catch2::Catch2WithMain)
