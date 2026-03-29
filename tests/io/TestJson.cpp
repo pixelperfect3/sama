@@ -2,6 +2,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "engine/io/Json.h"
 
@@ -9,23 +11,29 @@ using namespace engine::io;
 using namespace engine::math;
 
 // ---------------------------------------------------------------------------
-// Parsing
+// 1. Parse valid JSON object
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Parse valid JSON object", "[json]")
+TEST_CASE("parse valid JSON object", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"({"key": "value"})"));
+    REQUIRE(doc.parse(R"({"key":"value","num":42})"));
+    REQUIRE_FALSE(doc.hasError());
 
     auto root = doc.root();
     REQUIRE(root.isObject());
     CHECK(std::strcmp(root["key"].getString(), "value") == 0);
+    CHECK(root["num"].getInt() == 42);
 }
 
-TEST_CASE("Parse valid JSON array", "[json]")
+// ---------------------------------------------------------------------------
+// 2. Parse valid JSON array
+// ---------------------------------------------------------------------------
+
+TEST_CASE("parse valid JSON array", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"([1, 2, 3])"));
+    REQUIRE(doc.parse(R"([1,2,3])"));
 
     auto root = doc.root();
     REQUIRE(root.isArray());
@@ -35,7 +43,11 @@ TEST_CASE("Parse valid JSON array", "[json]")
     CHECK(root[static_cast<std::size_t>(2)].getInt() == 3);
 }
 
-TEST_CASE("Parse failure returns error", "[json]")
+// ---------------------------------------------------------------------------
+// 3. Parse failure returns error
+// ---------------------------------------------------------------------------
+
+TEST_CASE("parse failure returns error", "[json]")
 {
     JsonDocument doc;
     REQUIRE_FALSE(doc.parse("{invalid"));
@@ -44,66 +56,104 @@ TEST_CASE("Parse failure returns error", "[json]")
 }
 
 // ---------------------------------------------------------------------------
-// Typed getters
+// 4. Typed getters: bool
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Typed getters: bool, int, uint, float, string", "[json]")
+TEST_CASE("typed getters: bool", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"({
-        "b": true,
-        "i": -42,
-        "u": 100,
-        "f": 3.14,
-        "s": "hello"
-    })"));
+    REQUIRE(doc.parse(R"({"v":true})"));
 
-    auto root = doc.root();
-    CHECK(root["b"].isBool());
-    CHECK(root["b"].getBool() == true);
-
-    CHECK(root["i"].isInt());
-    CHECK(root["i"].getInt() == -42);
-
-    CHECK(root["u"].isUint());
-    CHECK(root["u"].getUint() == 100);
-
-    CHECK(root["f"].isFloat());
-    CHECK(root["f"].getFloat() == Catch::Approx(3.14f));
-
-    CHECK(root["s"].isString());
-    CHECK(std::strcmp(root["s"].getString(), "hello") == 0);
+    auto v = doc.root()["v"];
+    CHECK(v.isBool());
+    CHECK(v.getBool() == true);
 }
 
 // ---------------------------------------------------------------------------
-// Default-value getters on type mismatch
+// 5. Typed getters: int
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Default-value getters on type mismatch", "[json]")
+TEST_CASE("typed getters: int", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"({"s": "hello"})"));
+    REQUIRE(doc.parse(R"({"v":-42})"));
 
-    auto root = doc.root();
+    auto v = doc.root()["v"];
+    CHECK(v.isInt());
+    CHECK(v.getInt() == -42);
+}
+
+// ---------------------------------------------------------------------------
+// 6. Typed getters: uint
+// ---------------------------------------------------------------------------
+
+TEST_CASE("typed getters: uint", "[json]")
+{
+    JsonDocument doc;
+    REQUIRE(doc.parse(R"({"v":100})"));
+
+    auto v = doc.root()["v"];
+    CHECK(v.isUint());
+    CHECK(v.getUint() == 100);
+}
+
+// ---------------------------------------------------------------------------
+// 7. Typed getters: float
+// ---------------------------------------------------------------------------
+
+TEST_CASE("typed getters: float", "[json]")
+{
+    JsonDocument doc;
+    REQUIRE(doc.parse(R"({"v":3.14})"));
+
+    auto v = doc.root()["v"];
+    CHECK(v.isFloat());
+    CHECK(v.getFloat() == Catch::Approx(3.14f));
+}
+
+// ---------------------------------------------------------------------------
+// 8. Typed getters: string
+// ---------------------------------------------------------------------------
+
+TEST_CASE("typed getters: string", "[json]")
+{
+    JsonDocument doc;
+    REQUIRE(doc.parse(R"({"v":"hello"})"));
+
+    auto v = doc.root()["v"];
+    CHECK(v.isString());
+    CHECK(std::strcmp(v.getString(), "hello") == 0);
+}
+
+// ---------------------------------------------------------------------------
+// 9. Default-value getters on type mismatch
+// ---------------------------------------------------------------------------
+
+TEST_CASE("default-value getters on type mismatch", "[json]")
+{
+    JsonDocument doc;
+    REQUIRE(doc.parse(R"({"s":"hello"})"));
+
+    auto s = doc.root()["s"];
 
     // Asking for int on a string value returns the default.
-    CHECK(root["s"].getInt(42) == 42);
-    CHECK(root["s"].getBool(true) == true);
-    CHECK(root["s"].getUint(7u) == 7u);
-    CHECK(root["s"].getFloat(1.5f) == 1.5f);
+    CHECK(s.getInt(42) == 42);
+    CHECK(s.getBool(true) == true);
+    CHECK(s.getUint(7u) == 7u);
+    CHECK(s.getFloat(1.5f) == Catch::Approx(1.5f));
 
     // Asking for string on a missing member returns the default.
-    CHECK(std::strcmp(root["nope"].getString("fallback"), "fallback") == 0);
+    CHECK(std::strcmp(doc.root()["nope"].getString("fallback"), "fallback") == 0);
 }
 
 // ---------------------------------------------------------------------------
-// Null and missing member
+// 10. Null and missing member
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Null and missing member", "[json]")
+TEST_CASE("null and missing member", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"({"n": null})"));
+    REQUIRE(doc.parse(R"({"n":null})"));
 
     auto root = doc.root();
     CHECK(root["n"].isNull());
@@ -111,10 +161,23 @@ TEST_CASE("Null and missing member", "[json]")
 }
 
 // ---------------------------------------------------------------------------
-// Math round-trips
+// 11. Nested objects
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Vec3 round-trip (write then parse)", "[json]")
+TEST_CASE("nested objects", "[json]")
+{
+    JsonDocument doc;
+    REQUIRE(doc.parse(R"({"a":{"b":1}})"));
+
+    CHECK(doc.root()["a"].isObject());
+    CHECK(doc.root()["a"]["b"].getInt() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// 12. Vec3 round-trip
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Vec3 round-trip", "[json]")
 {
     Vec3 original(1.0f, 2.0f, 3.0f);
 
@@ -130,37 +193,9 @@ TEST_CASE("Vec3 round-trip (write then parse)", "[json]")
     CHECK(loaded.z == Catch::Approx(original.z));
 }
 
-TEST_CASE("Quat round-trip (write then parse)", "[json]")
-{
-    Quat original(0.707f, 0.0f, 0.707f, 0.0f);  // w, x, y, z
-
-    JsonWriter writer(false);
-    writer.writeQuat(original);
-
-    JsonDocument doc;
-    REQUIRE(doc.parse(writer.getString()));
-
-    Quat loaded = doc.root().getQuat();
-    CHECK(loaded.x == Catch::Approx(original.x));
-    CHECK(loaded.y == Catch::Approx(original.y));
-    CHECK(loaded.z == Catch::Approx(original.z));
-    CHECK(loaded.w == Catch::Approx(original.w));
-}
-
-TEST_CASE("Vec2 round-trip", "[json]")
-{
-    Vec2 original(5.5f, -3.2f);
-
-    JsonWriter writer(false);
-    writer.writeVec2(original);
-
-    JsonDocument doc;
-    REQUIRE(doc.parse(writer.getString()));
-
-    Vec2 loaded = doc.root().getVec2();
-    CHECK(loaded.x == Catch::Approx(original.x));
-    CHECK(loaded.y == Catch::Approx(original.y));
-}
+// ---------------------------------------------------------------------------
+// 13. Vec4 round-trip
+// ---------------------------------------------------------------------------
 
 TEST_CASE("Vec4 round-trip", "[json]")
 {
@@ -180,45 +215,79 @@ TEST_CASE("Vec4 round-trip", "[json]")
 }
 
 // ---------------------------------------------------------------------------
-// Object and array iteration
+// 14. Quat round-trip
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Object iteration", "[json]")
+TEST_CASE("Quat round-trip", "[json]")
+{
+    // glm::quat constructor: (w, x, y, z)
+    Quat original(0.707f, 0.0f, 0.707f, 0.0f);
+
+    JsonWriter writer(false);
+    writer.writeQuat(original);
+
+    JsonDocument doc;
+    REQUIRE(doc.parse(writer.getString()));
+
+    Quat loaded = doc.root().getQuat();
+    CHECK(loaded.x == Catch::Approx(original.x));
+    CHECK(loaded.y == Catch::Approx(original.y));
+    CHECK(loaded.z == Catch::Approx(original.z));
+    CHECK(loaded.w == Catch::Approx(original.w));
+}
+
+// ---------------------------------------------------------------------------
+// 15. Object iteration
+// ---------------------------------------------------------------------------
+
+TEST_CASE("object iteration", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"({"a": 1, "b": 2, "c": 3})"));
+    REQUIRE(doc.parse(R"({"a":1,"b":2})"));
 
-    int count = 0;
+    std::vector<std::string> keys;
+    std::vector<int> values;
+
     for (auto member : doc.root())
     {
         REQUIRE(member.memberName() != nullptr);
-        CHECK(member.isInt());
-        count++;
+        keys.emplace_back(member.memberName());
+        values.push_back(member.getInt());
     }
-    CHECK(count == 3);
+
+    REQUIRE(keys.size() == 2);
+    CHECK(keys[0] == "a");
+    CHECK(keys[1] == "b");
+    CHECK(values[0] == 1);
+    CHECK(values[1] == 2);
 }
 
-TEST_CASE("Array iteration", "[json]")
+// ---------------------------------------------------------------------------
+// 16. Array iteration
+// ---------------------------------------------------------------------------
+
+TEST_CASE("array iteration", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"([10, 20, 30])"));
+    REQUIRE(doc.parse(R"([10,20,30])"));
 
-    int sum = 0;
-    int count = 0;
+    std::vector<int> values;
     for (auto elem : doc.root())
     {
-        sum += elem.getInt();
-        count++;
+        values.push_back(elem.getInt());
     }
-    CHECK(count == 3);
-    CHECK(sum == 60);
+
+    REQUIRE(values.size() == 3);
+    CHECK(values[0] == 10);
+    CHECK(values[1] == 20);
+    CHECK(values[2] == 30);
 }
 
 // ---------------------------------------------------------------------------
-// Writer produces valid JSON
+// 17. Writer produces valid JSON
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Writer produces valid JSON", "[json]")
+TEST_CASE("writer produces valid JSON", "[json]")
 {
     JsonWriter writer(false);
     writer.startObject();
@@ -242,21 +311,26 @@ TEST_CASE("Writer produces valid JSON", "[json]")
     CHECK(std::strcmp(root["name"].getString(), "test") == 0);
     CHECK(root["count"].getInt() == 42);
     CHECK(root["enabled"].getBool() == true);
+    REQUIRE(root["values"].isArray());
     CHECK(root["values"].arraySize() == 2);
+    CHECK(root["values"][static_cast<std::size_t>(0)].getFloat() == Catch::Approx(1.0f));
+    CHECK(root["values"][static_cast<std::size_t>(1)].getFloat() == Catch::Approx(2.0f));
 }
 
 // ---------------------------------------------------------------------------
-// Writer file I/O
+// 18. Writer file I/O
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Writer file I/O", "[json]")
+TEST_CASE("writer file I/O", "[json]")
 {
-    const char* path = "/tmp/nimbus_test_json.json";
+    const char* path = "/tmp/test_json_write.json";
 
     JsonWriter writer(true);
     writer.startObject();
     writer.key("msg");
     writer.writeString("file test");
+    writer.key("number");
+    writer.writeInt(99);
     writer.endObject();
 
     REQUIRE(writer.writeToFile(path));
@@ -266,27 +340,16 @@ TEST_CASE("Writer file I/O", "[json]")
 
     auto root = doc.root();
     CHECK(std::strcmp(root["msg"].getString(), "file test") == 0);
+    CHECK(root["number"].getInt() == 99);
 
     std::remove(path);
 }
 
 // ---------------------------------------------------------------------------
-// Nested objects
+// 19. Empty document
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Nested objects", "[json]")
-{
-    JsonDocument doc;
-    REQUIRE(doc.parse(R"({"a": {"b": 1}})"));
-
-    CHECK(doc.root()["a"]["b"].getInt() == 1);
-}
-
-// ---------------------------------------------------------------------------
-// Empty document
-// ---------------------------------------------------------------------------
-
-TEST_CASE("Empty document", "[json]")
+TEST_CASE("empty document", "[json]")
 {
     JsonDocument doc;
     REQUIRE(doc.parse("{}"));
@@ -294,23 +357,33 @@ TEST_CASE("Empty document", "[json]")
     auto root = doc.root();
     CHECK(root.isObject());
     CHECK_FALSE(root.hasMember("anything"));
+
+    // Iteration over an empty object yields nothing.
+    int count = 0;
+    for ([[maybe_unused]] auto member : root)
+    {
+        count++;
+    }
+    CHECK(count == 0);
 }
 
 // ---------------------------------------------------------------------------
-// hasMember
+// 20. hasMember
 // ---------------------------------------------------------------------------
 
 TEST_CASE("hasMember", "[json]")
 {
     JsonDocument doc;
-    REQUIRE(doc.parse(R"({"exists": 1})"));
+    REQUIRE(doc.parse(R"({"key":"value","num":42})"));
 
-    CHECK(doc.root().hasMember("exists"));
-    CHECK_FALSE(doc.root().hasMember("nope"));
+    CHECK(doc.root().hasMember("key"));
+    CHECK(doc.root().hasMember("num"));
+    CHECK_FALSE(doc.root().hasMember("missing"));
+    CHECK_FALSE(doc.root().hasMember(""));
 }
 
 // ---------------------------------------------------------------------------
-// writeNull
+// Bonus: writeNull round-trip
 // ---------------------------------------------------------------------------
 
 TEST_CASE("writeNull round-trip", "[json]")
@@ -324,4 +397,23 @@ TEST_CASE("writeNull round-trip", "[json]")
     JsonDocument doc;
     REQUIRE(doc.parse(writer.getString()));
     CHECK(doc.root()["n"].isNull());
+}
+
+// ---------------------------------------------------------------------------
+// Bonus: Vec2 round-trip
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Vec2 round-trip", "[json]")
+{
+    Vec2 original(5.5f, -3.2f);
+
+    JsonWriter writer(false);
+    writer.writeVec2(original);
+
+    JsonDocument doc;
+    REQUIRE(doc.parse(writer.getString()));
+
+    Vec2 loaded = doc.root().getVec2();
+    CHECK(loaded.x == Catch::Approx(original.x));
+    CHECK(loaded.y == Catch::Approx(original.y));
 }
