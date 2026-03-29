@@ -34,4 +34,9 @@ namespace engine::rendering
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadShadowProgram();
 
+// Skinned PBR program — same fragment shader as PBR, but vertex shader
+// performs GPU skinning via u_model[] bone matrices + a_indices/a_weight.
+// Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadSkinnedPbrProgram();
+
 }  // namespace engine::rendering

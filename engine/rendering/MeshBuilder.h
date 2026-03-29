@@ -40,6 +40,12 @@ struct MeshData
     // 16-bit index buffer
     std::vector<uint16_t> indices;
 
+    // Stream 2 -- skinning (optional, empty for static meshes)
+    // boneIndices: 4 uint8 per vertex (joint indices)
+    std::vector<uint8_t> boneIndices;
+    // boneWeights: 4 uint8 per vertex (normalized: 255 = 1.0)
+    std::vector<uint8_t> boneWeights;
+
     // Axis-aligned bounding box in local space
     math::Vec3 boundsMin{};
     math::Vec3 boundsMax{};

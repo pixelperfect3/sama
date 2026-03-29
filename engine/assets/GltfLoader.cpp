@@ -28,6 +28,21 @@ namespace
 constexpr std::string_view kExtensions[] = {".gltf", ".glb"};
 
 // ---------------------------------------------------------------------------
+// FNV-1a hash for joint name strings (32-bit).
+// ---------------------------------------------------------------------------
+
+uint32_t fnv1aHash(const char* str)
+{
+    uint32_t hash = 2166136261u;
+    while (*str)
+    {
+        hash ^= static_cast<uint32_t>(*str++);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// ---------------------------------------------------------------------------
 // Decode an embedded or externally referenced image into CpuTextureData.
 // ---------------------------------------------------------------------------
 
@@ -198,6 +213,8 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
     const cgltf_accessor* normAcc = nullptr;
     const cgltf_accessor* tanAcc = nullptr;
     const cgltf_accessor* uvAcc = nullptr;
+    const cgltf_accessor* jointsAcc = nullptr;
+    const cgltf_accessor* weightsAcc = nullptr;
 
     for (size_t a = 0; a < prim.attributes_count; ++a)
     {
@@ -216,6 +233,14 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
             case cgltf_attribute_type_texcoord:
                 if (attr.index == 0)
                     uvAcc = attr.data;
+                break;
+            case cgltf_attribute_type_joints:
+                if (attr.index == 0)
+                    jointsAcc = attr.data;
+                break;
+            case cgltf_attribute_type_weights:
+                if (attr.index == 0)
+                    weightsAcc = attr.data;
                 break;
             default:
                 break;
@@ -398,6 +423,37 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
 
             encodeOctTangent(tx, ty, tz, sign, md.tangents[i * 4 + 0], md.tangents[i * 4 + 1],
                              md.tangents[i * 4 + 2], md.tangents[i * 4 + 3]);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Skinning attributes: JOINTS_0 and WEIGHTS_0
+    // -----------------------------------------------------------------------
+    if (jointsAcc && weightsAcc)
+    {
+        // Read joints as uint (indices into the skin's joint array).
+        md.boneIndices.resize(vertCount * 4);
+        for (size_t i = 0; i < vertCount; ++i)
+        {
+            cgltf_uint joints[4] = {};
+            cgltf_accessor_read_uint(jointsAcc, i, joints, 4);
+            md.boneIndices[i * 4 + 0] = static_cast<uint8_t>(joints[0]);
+            md.boneIndices[i * 4 + 1] = static_cast<uint8_t>(joints[1]);
+            md.boneIndices[i * 4 + 2] = static_cast<uint8_t>(joints[2]);
+            md.boneIndices[i * 4 + 3] = static_cast<uint8_t>(joints[3]);
+        }
+
+        // Read weights as float, then quantize to uint8.
+        auto weightData = readFloatAccessor(weightsAcc);
+        md.boneWeights.resize(vertCount * 4);
+        for (size_t i = 0; i < vertCount; ++i)
+        {
+            for (int j = 0; j < 4; ++j)
+            {
+                float w = weightData[i * 4 + j];
+                md.boneWeights[i * 4 + j] =
+                    static_cast<uint8_t>(glm::clamp(w, 0.0f, 1.0f) * 255.0f + 0.5f);
+            }
         }
     }
 

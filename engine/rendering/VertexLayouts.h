@@ -44,4 +44,18 @@ namespace engine::rendering
     return l;  // stride: 12 bytes (half UV) or 16 bytes (float UV fallback)
 }
 
+// Stream 2 -- skinning data (optional, only for skinned meshes).
+//   4x uint8 bone indices (supports up to 256 bones per skeleton)
+//   4x uint8 bone weights (normalized: 0-255 mapped to 0.0-1.0)
+// Total: 8 bytes per vertex.
+[[nodiscard]] inline bgfx::VertexLayout skinningLayout()
+{
+    bgfx::VertexLayout l;
+    l.begin()
+        .add(bgfx::Attrib::Indices, 4, bgfx::AttribType::Uint8, /*normalized=*/false)
+        .add(bgfx::Attrib::Weight, 4, bgfx::AttribType::Uint8, /*normalized=*/true)
+        .end();
+    return l;  // stride: 8 bytes
+}
+
 }  // namespace engine::rendering

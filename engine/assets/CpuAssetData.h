@@ -58,6 +58,40 @@ struct CpuMaterialData
 // need to look up textures by index directly.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CPU-side animation data — decoded from glTF skins and animations.
+// ---------------------------------------------------------------------------
+
+struct CpuJointData
+{
+    math::Mat4 inverseBindMatrix{1.0f};
+    int32_t parentIndex = -1;
+    std::string name;  // kept as string during loading; hashed to uint32_t at upload
+};
+
+struct CpuSkeletonData
+{
+    std::vector<CpuJointData> joints;
+};
+
+struct CpuAnimationClipData
+{
+    std::string name;
+    float duration = 0.0f;
+
+    struct Channel
+    {
+        uint32_t jointIndex;
+        std::vector<float> positionTimes;
+        std::vector<math::Vec3> positionValues;
+        std::vector<float> rotationTimes;
+        std::vector<math::Quat> rotationValues;
+        std::vector<float> scaleTimes;
+        std::vector<math::Vec3> scaleValues;
+    };
+    std::vector<Channel> channels;
+};
+
 struct CpuSceneData
 {
     // Geometry — uses the existing MeshData type so buildMesh() can be called
@@ -81,6 +115,13 @@ struct CpuSceneData
     };
     std::vector<Node> nodes;
     std::vector<uint32_t> rootNodeIndices;
+
+    // Animation data (optional, empty for non-animated assets).
+    std::vector<CpuSkeletonData> skeletons;
+    std::vector<CpuAnimationClipData> animations;
+    // Per-mesh: which skin (skeleton) index applies. -1 = no skin.
+    // Parallel to meshes vector.
+    std::vector<int32_t> meshSkinIndices;
 };
 
 // ---------------------------------------------------------------------------

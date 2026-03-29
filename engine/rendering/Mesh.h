@@ -23,6 +23,7 @@ struct Mesh
 {
     bgfx::VertexBufferHandle positionVbh = BGFX_INVALID_HANDLE;
     bgfx::VertexBufferHandle surfaceVbh = BGFX_INVALID_HANDLE;
+    bgfx::VertexBufferHandle skinningVbh = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle ibh = BGFX_INVALID_HANDLE;
 
     math::Vec3 boundsMin{};
@@ -46,6 +47,8 @@ struct Mesh
             bgfx::destroy(positionVbh);
         if (bgfx::isValid(surfaceVbh))
             bgfx::destroy(surfaceVbh);
+        if (bgfx::isValid(skinningVbh))
+            bgfx::destroy(skinningVbh);
         if (bgfx::isValid(ibh))
             bgfx::destroy(ibh);
         *this = Mesh{};

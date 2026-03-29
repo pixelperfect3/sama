@@ -172,6 +172,63 @@ Mesh buildMesh(const MeshData& data)
     }
 
     // -----------------------------------------------------------------------
+    // Stream 2 -- skinning buffer (optional)
+    // -----------------------------------------------------------------------
+    const bool hasSkinning =
+        !data.boneIndices.empty() && !data.boneWeights.empty();
+
+    if (hasSkinning)
+    {
+        // Validate sizes: 4 uint8 per vertex for both indices and weights.
+        if (data.boneIndices.size() != static_cast<size_t>(vertexCount) * 4 ||
+            data.boneWeights.size() != static_cast<size_t>(vertexCount) * 4)
+        {
+            bgfx::destroy(mesh.positionVbh);
+            if (bgfx::isValid(mesh.surfaceVbh))
+                bgfx::destroy(mesh.surfaceVbh);
+            return {};
+        }
+
+        // Pack interleaved: [uint8 idx0, idx1, idx2, idx3, uint8 w0, w1, w2, w3]
+        // Stride = 8 bytes per vertex.
+        const uint32_t stride = 8u;
+        const uint32_t byteSize = vertexCount * stride;
+        std::vector<uint8_t> buf(byteSize);
+
+        for (uint32_t i = 0; i < vertexCount; ++i)
+        {
+            uint8_t* dst = buf.data() + i * stride;
+            dst[0] = data.boneIndices[i * 4 + 0];
+            dst[1] = data.boneIndices[i * 4 + 1];
+            dst[2] = data.boneIndices[i * 4 + 2];
+            dst[3] = data.boneIndices[i * 4 + 3];
+            dst[4] = data.boneWeights[i * 4 + 0];
+            dst[5] = data.boneWeights[i * 4 + 1];
+            dst[6] = data.boneWeights[i * 4 + 2];
+            dst[7] = data.boneWeights[i * 4 + 3];
+        }
+
+        const bgfx::VertexLayout layout = skinningLayout();
+        const bgfx::Memory* mem = bgfx::copy(buf.data(), byteSize);
+        if (!mem)
+        {
+            bgfx::destroy(mesh.positionVbh);
+            if (bgfx::isValid(mesh.surfaceVbh))
+                bgfx::destroy(mesh.surfaceVbh);
+            return {};
+        }
+
+        mesh.skinningVbh = bgfx::createVertexBuffer(mem, layout);
+        if (!bgfx::isValid(mesh.skinningVbh))
+        {
+            bgfx::destroy(mesh.positionVbh);
+            if (bgfx::isValid(mesh.surfaceVbh))
+                bgfx::destroy(mesh.surfaceVbh);
+            return {};
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Index buffer (16-bit)
     // -----------------------------------------------------------------------
     {
@@ -181,6 +238,7 @@ Mesh buildMesh(const MeshData& data)
         {
             mesh.positionVbh = BGFX_INVALID_HANDLE;
             mesh.surfaceVbh = BGFX_INVALID_HANDLE;
+            mesh.skinningVbh = BGFX_INVALID_HANDLE;
             return {};
         }
 
@@ -190,6 +248,8 @@ Mesh buildMesh(const MeshData& data)
             bgfx::destroy(mesh.positionVbh);
             if (bgfx::isValid(mesh.surfaceVbh))
                 bgfx::destroy(mesh.surfaceVbh);
+            if (bgfx::isValid(mesh.skinningVbh))
+                bgfx::destroy(mesh.skinningVbh);
             return {};
         }
     }

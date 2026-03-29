@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "engine/animation/AnimationClip.h"
+#include "engine/animation/Skeleton.h"
 #include "engine/assets/Texture.h"
 #include "engine/math/Types.h"
 #include "engine/rendering/Material.h"
@@ -41,6 +43,12 @@ struct GltfAsset
     };
     std::vector<Node> nodes;
     std::vector<uint32_t> rootNodeIndices;
+
+    // Animation data (CPU-only, no GPU upload needed).
+    std::vector<animation::Skeleton> skeletons;
+    std::vector<animation::AnimationClip> animations;
+    // Per-mesh: which skeleton index applies. -1 = no skin.
+    std::vector<int32_t> meshSkinIndices;
 
     // Release all bgfx GPU handles. Called by AssetManager on slot destruction.
     void destroy()
