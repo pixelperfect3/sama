@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "engine/memory/InlinedVector.h"
+
 namespace engine::input
 {
 
@@ -34,8 +36,7 @@ void InputSystem::update(InputState& state)
         TouchPoint::Phase phase;
         bool seenEvent;
     };
-    std::vector<FrameTouch> frameTouches;
-    frameTouches.reserve(activeTouches_.size() + 4);
+    memory::InlinedVector<FrameTouch, 8> frameTouches;
     for (const auto& at : activeTouches_)
         frameTouches.push_back({at.id, at.x, at.y, TouchPoint::Phase::Moved, false});
 
