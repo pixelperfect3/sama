@@ -280,7 +280,7 @@ int main()
         if (ibl.isValid())
         {
             frame.iblEnabled = true;
-            frame.maxMipLevels = 7.0f;
+            frame.maxMipLevels = 8.0f;
             frame.irradiance = ibl.irradiance();
             frame.prefiltered = ibl.prefiltered();
             frame.brdfLut = ibl.brdfLut();

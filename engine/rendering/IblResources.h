@@ -35,10 +35,10 @@ public:
     // Upload precomputed IBL data to GPU. Call after bgfx::init().
     bool upload(const assets::EnvironmentAsset& env);
 
-    // Generate a simple procedural IBL for testing (no external asset needed):
-    //   - Solid-color irradiance (sky=0.5,0.7,1.0; ground=0.1,0.08,0.05)
-    //   - Flat grey prefiltered cubemap
-    //   - Analytically computed BRDF LUT (1024-sample Hammersley GGX integration)
+    // Generate a procedural IBL with a realistic sunset-like sky model:
+    //   - 64×64 irradiance cubemap (cosine-weighted hemisphere integration)
+    //   - 128×128 prefiltered cubemap with 8 mip levels (GGX importance sampling)
+    //   - 128×128 BRDF LUT (1024-sample Hammersley GGX split-sum integration)
     bool generateDefault();
 
     // Destroy all GPU handles.

@@ -1,11 +1,11 @@
 #include "engine/rendering/IblResources.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <vector>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <vector>
 
 #include "engine/math/Types.h"
 
@@ -45,9 +45,83 @@ static float geometrySmithIBL(float NdotV, float NdotL, float roughness)
 {
     // IBL geometry term uses k = r²/2 (not the direct-lighting (r+1)²/8).
     float k = (roughness * roughness) / 2.0f;
-    auto G1 = [k](float NdotX)
-    { return NdotX / (NdotX * (1.0f - k) + k); };
+    auto G1 = [k](float NdotX) { return NdotX / (NdotX * (1.0f - k) + k); };
     return G1(NdotV) * G1(NdotL);
+}
+
+// ---------------------------------------------------------------------------
+// Float → half-float conversion
+// ---------------------------------------------------------------------------
+
+static uint16_t floatToHalf(float val)
+{
+    uint32_t f32 = 0;
+    std::memcpy(&f32, &val, 4);
+    uint16_t sign = static_cast<uint16_t>((f32 >> 16u) & 0x8000u);
+    int32_t exponent = static_cast<int32_t>(((f32 >> 23u) & 0xFFu)) - 112;
+    uint16_t mantissa = static_cast<uint16_t>((f32 >> 13u) & 0x3FFu);
+    if (exponent <= 0)
+    {
+        exponent = 0;
+        mantissa = 0;
+    }
+    else if (exponent > 30)
+    {
+        exponent = 30;
+        mantissa = 0x3FFu;
+    }
+    return sign | static_cast<uint16_t>(exponent << 10u) | mantissa;
+}
+
+// ---------------------------------------------------------------------------
+// Procedural sky model — sunset-like atmosphere
+// ---------------------------------------------------------------------------
+
+static Vec3 proceduralSky(const Vec3& dir)
+{
+    float y = dir.y;
+
+    // Sky colors
+    Vec3 zenith{0.08f, 0.15f, 0.45f};      // deep blue at top
+    Vec3 horizon{0.55f, 0.65f, 0.85f};     // lighter blue at horizon
+    Vec3 sunsetWarm{0.85f, 0.45f, 0.20f};  // warm orange near horizon
+    Vec3 sunsetPink{0.75f, 0.35f, 0.40f};  // pinkish tint
+
+    // Ground colors
+    Vec3 groundDark{0.04f, 0.03f, 0.02f};  // dark ground directly below
+    Vec3 groundMid{0.08f, 0.06f, 0.04f};   // brown earth
+
+    if (y >= 0.0f)
+    {
+        // Sky hemisphere
+        float skyT = glm::clamp(y, 0.0f, 1.0f);
+
+        // Base gradient: horizon → zenith
+        Vec3 base = glm::mix(horizon, zenith, glm::pow(skyT, 0.6f));
+
+        // Warm sunset band near horizon (exponential falloff)
+        float sunsetBand = glm::exp(-skyT * 8.0f);
+        base = glm::mix(base, sunsetWarm, sunsetBand * 0.5f);
+
+        // Pink tint slightly above horizon
+        float pinkBand = glm::exp(-glm::pow((skyT - 0.05f) * 10.0f, 2.0f));
+        base = glm::mix(base, sunsetPink, pinkBand * 0.25f);
+
+        return base;
+    }
+    else
+    {
+        // Ground hemisphere
+        float groundT = glm::clamp(-y, 0.0f, 1.0f);
+        Vec3 base = glm::mix(groundMid, groundDark, glm::pow(groundT, 0.5f));
+
+        // Warm glow near horizon on ground side
+        float horizonGlow = glm::exp(-groundT * 6.0f);
+        Vec3 warmGround{0.18f, 0.12f, 0.06f};
+        base = glm::mix(base, warmGround, horizonGlow * 0.6f);
+
+        return base;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -69,14 +143,25 @@ static Vec3 cubeUvToDir(uint32_t faceIndex, float u, float v)
         case 1:
             return glm::normalize(Vec3(-1.0f, -t, s));  // -X
         case 2:
-            return glm::normalize(Vec3(s, 1.0f, t));    // +Y
+            return glm::normalize(Vec3(s, 1.0f, t));  // +Y
         case 3:
             return glm::normalize(Vec3(s, -1.0f, -t));  // -Y
         case 4:
-            return glm::normalize(Vec3(s, -t, 1.0f));   // +Z
+            return glm::normalize(Vec3(s, -t, 1.0f));  // +Z
         default:
             return glm::normalize(Vec3(-s, -t, -1.0f));  // -Z
     }
+}
+
+// ---------------------------------------------------------------------------
+// Build an orthonormal basis (TBN) around N for importance sampling
+// ---------------------------------------------------------------------------
+
+static void buildTBN(const Vec3& N, Vec3& T, Vec3& B)
+{
+    Vec3 up = (glm::abs(N.y) < 0.999f) ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+    T = glm::normalize(glm::cross(up, N));
+    B = glm::cross(N, T);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,8 +186,8 @@ bool IblResources::upload(const assets::EnvironmentAsset& env)
             std::memcpy(dst + f * sz * sz * 4, face.data(), faceBytes);
         }
 
-        irradiance_ = bgfx::createTextureCube(
-            static_cast<uint16_t>(sz), false, 1, bgfx::TextureFormat::RGBA32F, 0, mem);
+        irradiance_ = bgfx::createTextureCube(static_cast<uint16_t>(sz), false, 1,
+                                              bgfx::TextureFormat::RGBA32F, 0, mem);
     }
 
     // --- Prefiltered specular cubemap ---
@@ -156,8 +241,8 @@ bool IblResources::upload(const assets::EnvironmentAsset& env)
             }
         }
 
-        prefiltered_ = bgfx::createTextureCube(
-            static_cast<uint16_t>(sz), true, 1, bgfx::TextureFormat::RGBA16F, 0, mem);
+        prefiltered_ = bgfx::createTextureCube(static_cast<uint16_t>(sz), true, 1,
+                                               bgfx::TextureFormat::RGBA16F, 0, mem);
     }
 
     // --- BRDF LUT ---
@@ -167,14 +252,8 @@ bool IblResources::upload(const assets::EnvironmentAsset& env)
         const bgfx::Memory* mem = bgfx::alloc(bytes);
         std::memcpy(mem->data, env.brdfLutData.data(), bytes);
 
-        brdfLut_ = bgfx::createTexture2D(
-            static_cast<uint16_t>(sz),
-            static_cast<uint16_t>(sz),
-            false,
-            1,
-            bgfx::TextureFormat::RG32F,
-            0,
-            mem);
+        brdfLut_ = bgfx::createTexture2D(static_cast<uint16_t>(sz), static_cast<uint16_t>(sz),
+                                         false, 1, bgfx::TextureFormat::RG32F, 0, mem);
     }
 
     return bgfx::isValid(brdfLut_);
@@ -188,15 +267,13 @@ bool IblResources::generateDefault()
 {
     shutdown();
 
-    // --- Irradiance cubemap (32×32×6, RGBA32F) ---
-    // Sky/ground hemisphere gradient per-face.
+    // --- Irradiance cubemap (64×64×6, RGBA32F) ---
+    // Cosine-weighted hemisphere integration of the procedural sky model.
+    // This gives a physically plausible diffuse irradiance map.
     {
-        constexpr uint32_t sz = 32;
-        constexpr Vec3 skyColor{0.5f, 0.7f, 1.0f};
-        constexpr Vec3 groundColor{0.1f, 0.08f, 0.05f};
-
-        constexpr uint32_t facePixels = sz * sz * 4;
-        constexpr uint32_t totalBytes = facePixels * 6 * sizeof(float);
+        constexpr uint32_t sz = 64;
+        constexpr uint32_t irradianceSamples = 256;
+        constexpr uint32_t totalBytes = sz * sz * 6 * 4 * sizeof(float);
 
         const bgfx::Memory* mem = bgfx::alloc(totalBytes);
         auto* dst = reinterpret_cast<float*>(mem->data);
@@ -209,68 +286,153 @@ bool IblResources::generateDefault()
                 {
                     float u = (float(x) + 0.5f) / float(sz);
                     float v = (float(y) + 0.5f) / float(sz);
-                    Vec3 dir = cubeUvToDir(f, u, v);
-                    float t = glm::max(dir.y, 0.0f);
-                    Vec3 color = glm::mix(groundColor, skyColor, t);
+                    Vec3 N = cubeUvToDir(f, u, v);
+
+                    // Cosine-weighted hemisphere integration via uniform sampling.
+                    Vec3 T, B;
+                    buildTBN(N, T, B);
+
+                    Vec3 irradiance{0.0f};
+                    for (uint32_t s = 0; s < irradianceSamples; ++s)
+                    {
+                        Vec2 xi = hammersley(s, irradianceSamples);
+                        // Cosine-weighted hemisphere: pdf = cos(theta)/pi
+                        float phi = 2.0f * glm::pi<float>() * xi.x;
+                        float cosTheta = glm::sqrt(1.0f - xi.y);
+                        float sinTheta = glm::sqrt(xi.y);
+
+                        // Tangent-space → world
+                        Vec3 sampleDir = T * (glm::cos(phi) * sinTheta) +
+                                         B * (glm::sin(phi) * sinTheta) + N * cosTheta;
+                        sampleDir = glm::normalize(sampleDir);
+
+                        // For cosine-weighted sampling, the weight is just
+                        // the sky color (the cos/pi and pdf cancel).
+                        irradiance += proceduralSky(sampleDir);
+                    }
+                    irradiance *= glm::pi<float>() / float(irradianceSamples);
 
                     uint32_t base = (f * sz * sz + y * sz + x) * 4;
-                    dst[base + 0] = color.x;
-                    dst[base + 1] = color.y;
-                    dst[base + 2] = color.z;
+                    dst[base + 0] = irradiance.x;
+                    dst[base + 1] = irradiance.y;
+                    dst[base + 2] = irradiance.z;
                     dst[base + 3] = 1.0f;
                 }
             }
         }
 
-        irradiance_ = bgfx::createTextureCube(
-            static_cast<uint16_t>(sz), false, 1, bgfx::TextureFormat::RGBA32F, 0, mem);
+        irradiance_ = bgfx::createTextureCube(static_cast<uint16_t>(sz), false, 1,
+                                              bgfx::TextureFormat::RGBA32F, 0, mem);
     }
 
-    // --- Prefiltered specular cubemap (64×64×6, RGBA16F, 7 mips) ---
-    // All mips: solid grey (0.5, 0.5, 0.5, 1.0).
+    // --- Prefiltered specular cubemap (128×128×6, RGBA16F, 8 mips) ---
+    // Mip 0 = sharp sky, progressively blurred via GGX importance sampling.
     {
-        constexpr uint32_t sz = 64;
-        constexpr uint8_t mips = 7;  // log2(64)+1
+        constexpr uint32_t sz = 128;
+        constexpr uint8_t mips = 8;  // log2(128)+1
+        constexpr uint32_t prefilteredSamples = 128;
 
-        // Calculate total size: sum of mip sizes × 6 faces × 4 channels × sizeof(half).
-        uint32_t totalBytes = 0;
-        for (uint8_t m = 0; m < mips; ++m)
+        // First generate all mips into a float buffer, then convert to half.
+        // Structure: mip -> face -> pixels (RGBA float).
+        struct MipData
         {
-            uint32_t mipSz = sz >> m;
-            if (mipSz < 1)
-                mipSz = 1;
-            totalBytes += mipSz * mipSz * 4 * sizeof(uint16_t) * 6;
-        }
-
-        const bgfx::Memory* mem = bgfx::alloc(totalBytes);
-        auto* dst = reinterpret_cast<uint16_t*>(mem->data);
-        uint32_t offset = 0;
-
-        // Half-float representation of 0.5f = 0x3800
-        // Half-float representation of 1.0f = 0x3C00
-        constexpr uint16_t half05 = 0x3800u;
-        constexpr uint16_t half10 = 0x3C00u;
+            uint32_t size;
+            std::vector<float> pixels;  // 6 faces * size * size * 4
+        };
+        std::vector<MipData> mipLevels(mips);
 
         for (uint8_t m = 0; m < mips; ++m)
         {
-            uint32_t mipSz = sz >> m;
-            if (mipSz < 1)
-                mipSz = 1;
+            uint32_t mipSz = std::max(sz >> m, 1u);
+            float roughness = float(m) / float(mips - 1);
+            mipLevels[m].size = mipSz;
+            mipLevels[m].pixels.resize(6 * mipSz * mipSz * 4);
+            float* dst = mipLevels[m].pixels.data();
 
             for (uint32_t f = 0; f < 6; ++f)
             {
-                for (uint32_t p = 0; p < mipSz * mipSz; ++p)
+                for (uint32_t y = 0; y < mipSz; ++y)
                 {
-                    dst[offset++] = half05;  // R
-                    dst[offset++] = half05;  // G
-                    dst[offset++] = half05;  // B
-                    dst[offset++] = half10;  // A
+                    for (uint32_t x = 0; x < mipSz; ++x)
+                    {
+                        float u = (float(x) + 0.5f) / float(mipSz);
+                        float v = (float(y) + 0.5f) / float(mipSz);
+                        Vec3 N = cubeUvToDir(f, u, v);
+                        Vec3 R = N;  // View = Normal assumption for prefilter
+
+                        Vec3 color{0.0f};
+                        float totalWeight = 0.0f;
+
+                        if (roughness < 0.01f)
+                        {
+                            // Mip 0: direct sky lookup (mirror reflection)
+                            color = proceduralSky(N);
+                            totalWeight = 1.0f;
+                        }
+                        else
+                        {
+                            // GGX importance sampling around the reflection
+                            // direction
+                            Vec3 T, B;
+                            buildTBN(N, T, B);
+
+                            for (uint32_t s = 0; s < prefilteredSamples; ++s)
+                            {
+                                Vec2 xi = hammersley(s, prefilteredSamples);
+                                Vec3 H = importanceSampleGGX(xi, roughness);
+
+                                // Tangent → world
+                                Vec3 Hw = T * H.x + B * H.y + N * H.z;
+                                Hw = glm::normalize(Hw);
+
+                                Vec3 L = glm::normalize(2.0f * glm::dot(R, Hw) * Hw - R);
+                                float NdotL = glm::dot(N, L);
+
+                                if (NdotL > 0.0f)
+                                {
+                                    color += proceduralSky(L) * NdotL;
+                                    totalWeight += NdotL;
+                                }
+                            }
+                        }
+
+                        if (totalWeight > 0.0f)
+                            color /= totalWeight;
+
+                        uint32_t base = (f * mipSz * mipSz + y * mipSz + x) * 4;
+                        dst[base + 0] = color.x;
+                        dst[base + 1] = color.y;
+                        dst[base + 2] = color.z;
+                        dst[base + 3] = 1.0f;
+                    }
                 }
             }
         }
 
-        prefiltered_ = bgfx::createTextureCube(
-            static_cast<uint16_t>(sz), true, 1, bgfx::TextureFormat::RGBA16F, 0, mem);
+        // Calculate total half-float buffer size and convert.
+        uint32_t totalBytes = 0;
+        for (uint8_t m = 0; m < mips; ++m)
+        {
+            uint32_t mipSz = mipLevels[m].size;
+            totalBytes += mipSz * mipSz * 4 * sizeof(uint16_t) * 6;
+        }
+
+        const bgfx::Memory* mem = bgfx::alloc(totalBytes);
+        auto* halfDst = reinterpret_cast<uint16_t*>(mem->data);
+        uint32_t offset = 0;
+
+        for (uint8_t m = 0; m < mips; ++m)
+        {
+            const float* src = mipLevels[m].pixels.data();
+            uint32_t pixelCount = mipLevels[m].size * mipLevels[m].size * 6;
+            for (uint32_t p = 0; p < pixelCount * 4; ++p)
+            {
+                halfDst[offset++] = floatToHalf(src[p]);
+            }
+        }
+
+        prefiltered_ = bgfx::createTextureCube(static_cast<uint16_t>(sz), true, 1,
+                                               bgfx::TextureFormat::RGBA16F, 0, mem);
     }
 
     // --- BRDF LUT (128×128, RG32F) ---
@@ -283,12 +445,13 @@ bool IblResources::generateDefault()
 
         for (uint32_t y = 0; y < size; ++y)
         {
-            float NdotV = (float(y) + 0.5f) / float(size);
-            Vec3 V{0.0f, 0.0f, NdotV};
+            float NdotV = glm::max((float(y) + 0.5f) / float(size), 0.001f);
+            // V must be a unit vector with correct x component
+            Vec3 V{glm::sqrt(1.0f - NdotV * NdotV), 0.0f, NdotV};
 
             for (uint32_t x = 0; x < size; ++x)
             {
-                float roughness = (float(x) + 0.5f) / float(size);
+                float roughness = glm::max((float(x) + 0.5f) / float(size), 0.01f);
                 float scale = 0.0f;
                 float bias = 0.0f;
 
@@ -321,14 +484,8 @@ bool IblResources::generateDefault()
         const bgfx::Memory* mem = bgfx::alloc(bytes);
         std::memcpy(mem->data, lut.data(), bytes);
 
-        brdfLut_ = bgfx::createTexture2D(
-            static_cast<uint16_t>(size),
-            static_cast<uint16_t>(size),
-            false,
-            1,
-            bgfx::TextureFormat::RG32F,
-            0,
-            mem);
+        brdfLut_ = bgfx::createTexture2D(static_cast<uint16_t>(size), static_cast<uint16_t>(size),
+                                         false, 1, bgfx::TextureFormat::RG32F, 0, mem);
     }
 
     return bgfx::isValid(brdfLut_);

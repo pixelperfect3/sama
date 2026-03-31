@@ -1,11 +1,9 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-
 #include <cstdint>
-#include <vector>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <vector>
 
 #include "engine/math/Types.h"
 #include "engine/rendering/IblResources.h"
@@ -70,8 +68,7 @@ static Vec3 importanceSampleGGXCpu(Vec2 xi, float roughness)
 static float geometrySmithIBLCpu(float NdotV, float NdotL, float roughness)
 {
     float k = (roughness * roughness) / 2.0f;
-    auto G1 = [k](float NdotX)
-    { return NdotX / (NdotX * (1.0f - k) + k); };
+    auto G1 = [k](float NdotX) { return NdotX / (NdotX * (1.0f - k) + k); };
     return G1(NdotV) * G1(NdotL);
 }
 
@@ -79,7 +76,9 @@ static float geometrySmithIBLCpu(float NdotV, float NdotL, float roughness)
 // no bgfx required.
 static Vec2 computeBrdfLut(float NdotV, float roughness, uint32_t numSamples = 1024)
 {
-    Vec3 V{0.0f, 0.0f, NdotV};
+    NdotV = glm::max(NdotV, 0.001f);
+    roughness = glm::max(roughness, 0.01f);
+    Vec3 V{glm::sqrt(1.0f - NdotV * NdotV), 0.0f, NdotV};
     float scale = 0.0f;
     float bias = 0.0f;
 
