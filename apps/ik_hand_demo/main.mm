@@ -20,9 +20,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <string>
+#include <vector>
 
 #include "engine/animation/AnimationComponents.h"
 #include "engine/animation/AnimationResources.h"
+#include "engine/animation/AnimationSampler.h"
 #include "engine/animation/AnimationSystem.h"
 #include "engine/animation/IkComponents.h"
 #include "engine/animation/IkSolvers.h"
@@ -62,37 +64,125 @@ using namespace engine::threading;
 // Helpers
 // =============================================================================
 
-// Find a joint index by substring match in debug joint names.
-// Returns -1 if not found.
-static int32_t findJointBySubstring(const Skeleton& skel, const std::string& substr)
+// Discover arm chains by skeleton topology and bind-pose joint positions.
+// Finds 3-joint chains branching off the spine that extend sideways (X axis).
+// Returns true if a valid chain was found.
+struct ArmChain
 {
-#if !defined(NDEBUG)
-    for (uint32_t i = 0; i < skel.debugJointNames.size(); ++i)
-    {
-        if (skel.debugJointNames[i].find(substr) != std::string::npos)
-            return static_cast<int32_t>(i);
-    }
-#else
-    (void)skel;
-    (void)substr;
-#endif
-    return -1;
-}
+    int32_t shoulder = -1;
+    int32_t elbow = -1;
+    int32_t hand = -1;
+};
 
-// Find a joint index by exact debug name match.
-static int32_t findJointByName(const Skeleton& skel, const std::string& name)
+static void discoverArmChains(const Skeleton& skel, const Pose& bindPose, ArmChain& rightArm,
+                              ArmChain& leftArm)
 {
-#if !defined(NDEBUG)
-    for (uint32_t i = 0; i < skel.debugJointNames.size(); ++i)
+    const uint32_t jointCount = skel.jointCount();
+
+    // Compute world positions from bind pose.
+    std::vector<glm::vec3> worldPos(jointCount);
     {
-        if (skel.debugJointNames[i] == name)
-            return static_cast<int32_t>(i);
+        std::vector<glm::mat4> worldXform(jointCount, glm::mat4(1.0f));
+        for (uint32_t i = 0; i < jointCount; ++i)
+        {
+            const auto& jp = bindPose.jointPoses[i];
+            glm::mat4 local = glm::translate(glm::mat4(1.0f), jp.position);
+            local *= glm::mat4_cast(jp.rotation);
+            local = glm::scale(local, jp.scale);
+            int32_t parent = skel.joints[i].parentIndex;
+            worldXform[i] = (parent >= 0) ? worldXform[parent] * local : local;
+            worldPos[i] = glm::vec3(worldXform[i][3]);
+        }
     }
-#else
-    (void)skel;
-    (void)name;
-#endif
-    return -1;
+
+    // Build children lists.
+    std::vector<std::vector<uint32_t>> children(jointCount);
+    for (uint32_t i = 0; i < jointCount; ++i)
+    {
+        int32_t parent = skel.joints[i].parentIndex;
+        if (parent >= 0)
+            children[parent].push_back(i);
+    }
+
+    // Find the "upper spine" joint: a joint with 3+ children (head + 2 arms).
+    // Prefer non-root joints since the root often branches into legs + spine.
+    int32_t spineJoint = -1;
+    for (uint32_t i = 0; i < jointCount; ++i)
+    {
+        if (children[i].size() >= 3 && skel.joints[i].parentIndex >= 0)
+        {
+            spineJoint = static_cast<int32_t>(i);
+            break;
+        }
+    }
+    // Fallback to root if no non-root joint with 3+ children.
+    if (spineJoint < 0)
+    {
+        for (uint32_t i = 0; i < jointCount; ++i)
+        {
+            if (children[i].size() >= 3)
+            {
+                spineJoint = static_cast<int32_t>(i);
+                break;
+            }
+        }
+    }
+    if (spineJoint < 0)
+        return;
+
+    // Among the spine's children, find the two that extend most in +/-X.
+    int32_t bestRight = -1, bestLeft = -1;
+    float maxRightX = -1e9f, minLeftX = 1e9f;
+    for (uint32_t child : children[spineJoint])
+    {
+        float xOff = worldPos[child].x - worldPos[spineJoint].x;
+        if (xOff > 0.05f && xOff > maxRightX)
+        {
+            maxRightX = xOff;
+            bestRight = static_cast<int32_t>(child);
+        }
+        if (xOff < -0.05f && xOff < minLeftX)
+        {
+            minLeftX = xOff;
+            bestLeft = static_cast<int32_t>(child);
+        }
+    }
+
+    // For each arm root, walk down to find elbow and hand.
+    auto findChain = [&](int32_t armRoot) -> ArmChain
+    {
+        ArmChain chain;
+        if (armRoot < 0)
+            return chain;
+        chain.shoulder = armRoot;
+
+        // The elbow is the first child of the shoulder.
+        if (children[armRoot].empty())
+        {
+            // Only 1 joint — can't form a two-bone chain.
+            // Use the spine as root instead: spine→shoulder→first_child_of_shoulder
+            // But if shoulder has no children, we can't form a chain.
+            return chain;
+        }
+        chain.elbow = static_cast<int32_t>(children[armRoot][0]);
+
+        // The hand is the first child of the elbow.
+        if (!children[chain.elbow].empty())
+        {
+            chain.hand = static_cast<int32_t>(children[chain.elbow][0]);
+        }
+        else
+        {
+            // Elbow has no children — use spine as root: spine→armRoot→elbow
+            chain.hand = chain.elbow;
+            chain.elbow = chain.shoulder;
+            chain.shoulder = spineJoint;
+        }
+        return chain;
+    };
+
+    rightArm = findChain(bestRight);
+    leftArm = findChain(bestLeft);
 }
 
 // Unproject a screen-space point (in pixels) to a world-space ray direction.
@@ -407,7 +497,7 @@ int main()
 
             // Find arm joints and set up IK chains.
             reg.view<SkeletonComponent, AnimatorComponent>().each(
-                [&](EntityID entity, const SkeletonComponent& sc, AnimatorComponent& /*ac*/)
+                [&](EntityID entity, const SkeletonComponent& sc, AnimatorComponent& ac)
                 {
                     const Skeleton* skel = animRes.getSkeleton(sc.skeletonId);
                     if (!skel || skel->jointCount() < 3)
@@ -415,69 +505,25 @@ int main()
 
                     skinnedEntity = entity;
 
-                // Discover joint indices by name.
-                // BrainStem uses joint names from the glTF hierarchy.
-                // We search for common arm joint name patterns.
-#if !defined(NDEBUG)
-                    // Print all joint names for discovery.
-                    fprintf(stderr, "ik_hand_demo: skeleton has %u joints:\n", skel->jointCount());
-                    for (uint32_t i = 0; i < skel->jointCount(); ++i)
+                    // Discover arm chains by skeleton topology (works even
+                    // when joint names are empty, as in BrainStem.glb).
+                    Pose discoveryPose;
+                    discoveryPose.jointPoses.resize(skel->jointCount());
+                    const AnimationClip* clip0 = animRes.getClip(ac.clipId);
+                    if (clip0)
                     {
-                        fprintf(stderr, "  [%u] %s (parent=%d)\n", i,
-                                skel->debugJointNames[i].c_str(), skel->joints[i].parentIndex);
+                        sampleClip(*clip0, *skel, 0.0f, discoveryPose);
                     }
-#endif
 
-                    // Try common naming patterns for BrainStem humanoid.
-                    // Right arm chain.
-                    rightShoulderIdx = findJointBySubstring(*skel, "RightArm");
-                    if (rightShoulderIdx < 0)
-                        rightShoulderIdx = findJointBySubstring(*skel, "rightArm");
-                    if (rightShoulderIdx < 0)
-                        rightShoulderIdx = findJointBySubstring(*skel, "R_Arm");
-                    if (rightShoulderIdx < 0)
-                        rightShoulderIdx = findJointBySubstring(*skel, "right_arm");
+                    ArmChain rightArm, leftArm;
+                    discoverArmChains(*skel, discoveryPose, rightArm, leftArm);
 
-                    rightElbowIdx = findJointBySubstring(*skel, "RightForeArm");
-                    if (rightElbowIdx < 0)
-                        rightElbowIdx = findJointBySubstring(*skel, "rightForeArm");
-                    if (rightElbowIdx < 0)
-                        rightElbowIdx = findJointBySubstring(*skel, "R_ForeArm");
-                    if (rightElbowIdx < 0)
-                        rightElbowIdx = findJointBySubstring(*skel, "right_forearm");
-
-                    rightHandIdx = findJointBySubstring(*skel, "RightHand");
-                    if (rightHandIdx < 0)
-                        rightHandIdx = findJointBySubstring(*skel, "rightHand");
-                    if (rightHandIdx < 0)
-                        rightHandIdx = findJointBySubstring(*skel, "R_Hand");
-                    if (rightHandIdx < 0)
-                        rightHandIdx = findJointBySubstring(*skel, "right_hand");
-
-                    // Left arm chain.
-                    leftShoulderIdx = findJointBySubstring(*skel, "LeftArm");
-                    if (leftShoulderIdx < 0)
-                        leftShoulderIdx = findJointBySubstring(*skel, "leftArm");
-                    if (leftShoulderIdx < 0)
-                        leftShoulderIdx = findJointBySubstring(*skel, "L_Arm");
-                    if (leftShoulderIdx < 0)
-                        leftShoulderIdx = findJointBySubstring(*skel, "left_arm");
-
-                    leftElbowIdx = findJointBySubstring(*skel, "LeftForeArm");
-                    if (leftElbowIdx < 0)
-                        leftElbowIdx = findJointBySubstring(*skel, "leftForeArm");
-                    if (leftElbowIdx < 0)
-                        leftElbowIdx = findJointBySubstring(*skel, "L_ForeArm");
-                    if (leftElbowIdx < 0)
-                        leftElbowIdx = findJointBySubstring(*skel, "left_forearm");
-
-                    leftHandIdx = findJointBySubstring(*skel, "LeftHand");
-                    if (leftHandIdx < 0)
-                        leftHandIdx = findJointBySubstring(*skel, "leftHand");
-                    if (leftHandIdx < 0)
-                        leftHandIdx = findJointBySubstring(*skel, "L_Hand");
-                    if (leftHandIdx < 0)
-                        leftHandIdx = findJointBySubstring(*skel, "left_hand");
+                    rightShoulderIdx = rightArm.shoulder;
+                    rightElbowIdx = rightArm.elbow;
+                    rightHandIdx = rightArm.hand;
+                    leftShoulderIdx = leftArm.shoulder;
+                    leftElbowIdx = leftArm.elbow;
+                    leftHandIdx = leftArm.hand;
 
                     fprintf(stderr, "ik_hand_demo: Right arm: shoulder=%d elbow=%d hand=%d\n",
                             rightShoulderIdx, rightElbowIdx, rightHandIdx);
