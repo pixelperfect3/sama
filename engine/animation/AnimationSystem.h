@@ -31,6 +31,15 @@ public:
     void update(ecs::Registry& reg, float dt, AnimationResources& animRes,
                 std::pmr::memory_resource* arena);
 
+    // Phase 1: sample FK poses and store them in PoseComponent.
+    // Call this, then run IkSystem::update(), then call computeBoneMatrices().
+    void updatePoses(ecs::Registry& reg, float dt, AnimationResources& animRes,
+                     std::pmr::memory_resource* arena);
+
+    // Phase 2: compute bone matrices from (potentially IK-modified) poses.
+    void computeBoneMatrices(ecs::Registry& reg, AnimationResources& animRes,
+                             std::pmr::memory_resource* arena);
+
     // Access the bone matrix buffer written by the last update() call.
     // Valid until the arena is reset at frame end.
     [[nodiscard]] const math::Mat4* boneBuffer() const noexcept

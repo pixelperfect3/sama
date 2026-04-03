@@ -407,14 +407,25 @@ target_compile_options(engine_io PRIVATE -Wno-deprecated-declarations)
 add_library(engine_memory STATIC engine/memory/FrameArena.cpp)
 target_include_directories(engine_memory PUBLIC ${CMAKE_SOURCE_DIR})
 
+# --- IK compile-time solver toggles ---
+option(ENGINE_IK_ENABLE_CCD "Enable CCD IK solver" ON)
+option(ENGINE_IK_ENABLE_FABRIK "Enable FABRIK IK solver" ON)
+
 # --- engine_animation static library ---
 add_library(engine_animation STATIC
     engine/animation/AnimationResources.cpp
     engine/animation/AnimationSampler.cpp
     engine/animation/AnimationSystem.cpp
+    engine/animation/IkSolvers.cpp
+    engine/animation/IkSystem.cpp
+    engine/animation/FootIkHelper.cpp
 )
 target_include_directories(engine_animation PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(engine_animation PUBLIC engine_ecs glm::glm)
+target_compile_definitions(engine_animation PUBLIC
+    ENGINE_IK_ENABLE_CCD=$<BOOL:${ENGINE_IK_ENABLE_CCD}>
+    ENGINE_IK_ENABLE_FABRIK=$<BOOL:${ENGINE_IK_ENABLE_FABRIK}>
+)
 
 # --- engine_threading static library ---
 add_library(engine_threading STATIC engine/threading/ThreadPool.cpp)
@@ -653,6 +664,7 @@ add_executable(engine_tests
     tests/animation/TestSkeleton.cpp
     tests/animation/TestAnimationSampler.cpp
     tests/animation/TestPoseBlend.cpp
+    tests/animation/TestIkSolvers.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio engine_animation glm::glm Catch2::Catch2WithMain)
@@ -987,5 +999,38 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
             "$<TARGET_FILE_DIR:animation_demo>/BrainStem.glb"
         COMMENT "Copying BrainStem.glb to build directory"
+    )
+endif()
+
+# --- ik_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(ik_demo apps/ik_demo/main.mm)
+
+    target_include_directories(ik_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(ik_demo PRIVATE
+        engine_core
+        engine_assets
+        engine_scene
+        engine_animation
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(ik_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+
+    # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
+    add_custom_command(TARGET ik_demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
+            "$<TARGET_FILE_DIR:ik_demo>/BrainStem.glb"
+        COMMENT "Copying BrainStem.glb to ik_demo build directory"
     )
 endif()
