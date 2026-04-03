@@ -1,4 +1,4 @@
-# Skeletal Animation Architecture for the Nimbus Engine
+# Skeletal Animation Architecture for the Sama Engine
 
 ## docs/ANIMATION_ARCHITECTURE.md
 

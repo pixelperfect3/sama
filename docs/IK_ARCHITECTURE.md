@@ -1,4 +1,4 @@
-# Inverse Kinematics Architecture for the Nimbus Engine
+# Inverse Kinematics Architecture for the Sama Engine
 
 ## docs/IK_ARCHITECTURE.md
 

@@ -1,4 +1,4 @@
-kmkk## JSON Integration Architecture for Nimbus Engine
+kmkk## JSON Integration Architecture for Sama Engine
 
 ### Document: `docs/JSON_ARCHITECTURE.md`
 

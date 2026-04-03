@@ -1,4 +1,4 @@
-# Nimbus Engine
+# Sama Engine
 
 A modern C++20 3D game engine built with an ECS architecture, PBR rendering, and a modular subsystem design.
 

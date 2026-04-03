@@ -1,4 +1,4 @@
-# Audio Architecture for Nimbus Engine
+# Audio Architecture for Sama Engine
 
 ## Document: `docs/AUDIO_ARCHITECTURE.md`
 

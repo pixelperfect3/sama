@@ -1,4 +1,4 @@
-# Threading Architecture Analysis for Nimbus Engine
+# Threading Architecture Analysis for Sama Engine
 
 ### 0. Thread Count Summary
 

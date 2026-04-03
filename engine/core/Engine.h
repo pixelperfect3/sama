@@ -31,7 +31,7 @@ struct EngineDesc
 {
     uint32_t windowWidth = 1280;
     uint32_t windowHeight = 720;
-    const char* windowTitle = "Nimbus";
+    const char* windowTitle = "Sama";
     uint32_t shadowResolution = 2048;
     uint32_t shadowCascades = 1;
     size_t frameArenaSize = 2 * 1024 * 1024;  // 2 MB

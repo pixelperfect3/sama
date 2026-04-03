@@ -1,4 +1,4 @@
-# Nimbus Engine — Claude Code Instructions
+# Sama Engine — Claude Code Instructions
 
 ## Git Workflow
 

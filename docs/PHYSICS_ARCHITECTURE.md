@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This document defines the architecture for integrating physics simulation into the Nimbus engine. The physics backend is Jolt Physics, accessed exclusively through an `IPhysicsEngine` interface so the backend can be replaced (e.g., with PhysX) without touching game code or other engine systems.
+This document defines the architecture for integrating physics simulation into the Sama engine. The physics backend is Jolt Physics, accessed exclusively through an `IPhysicsEngine` interface so the backend can be replaced (e.g., with PhysX) without touching game code or other engine systems.
 
 The design follows the same conventions as the existing scene graph: hierarchy is encoded in ECS components, systems operate on views of those components, and ground truth flows in one direction per frame phase.
 

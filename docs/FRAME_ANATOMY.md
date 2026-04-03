@@ -1,6 +1,6 @@
-# Anatomy of a Frame -- Nimbus Engine
+# Anatomy of a Frame -- Sama Engine
 
-This document traces what happens during a single game frame in the Nimbus
+This document traces what happens during a single game frame in the Sama
 engine, from the moment `Engine::beginFrame()` is called to the moment
 `bgfx::frame()` presents the result. Every statement is grounded in the
 actual source code under `engine/`.
@@ -464,7 +464,7 @@ back to full res. Total bloom views: 1 (threshold) + 4 (down) + 4 (up) = 9.
 
 ### View Ordering (bgfx view IDs)
 
-bgfx executes views in ascending ID order. The Nimbus layout
+bgfx executes views in ascending ID order. The Sama layout
 (`engine/rendering/ViewIds.h`):
 
 ```
@@ -592,7 +592,7 @@ allocator).
 
 ### Current: Single-Threaded Main Loop
 
-The Nimbus engine currently runs the entire frame on a single thread:
+The Sama engine currently runs the entire frame on a single thread:
 
 ```
 Main Thread:

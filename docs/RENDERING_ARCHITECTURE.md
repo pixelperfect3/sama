@@ -969,7 +969,7 @@ Rendered last, on top of everything. Orthographic projection — no depth test.
 
 **`UiRenderSystem` clears view state:** `UiRenderSystem::update()` calls `bgfx::setViewClear(kViewUi, BGFX_CLEAR_NONE)` to configure the UI view for production use (UI overlays the 3D scene). Any caller that wants a solid background for the UI view (e.g. tests) must re-apply `setViewClear` and `setViewFrameBuffer` *after* calling `update()`.
 
-**ImGui:** Rendered in View 5 in editor mode. In shipped builds, the ImGui render step is compiled out (`#ifndef NIMBUS_EDITOR`).
+**ImGui:** Rendered in View 5 in editor mode. In shipped builds, the ImGui render step is compiled out (`#ifndef SAMA_EDITOR`).
 
 ---
 
@@ -1043,10 +1043,10 @@ Tier 0 — always on, zero overhead in release
     bgfx view names          → pass labels in RenderDoc, Instruments, Android GPU Inspector
     bgfx::Stats (post-frame) → per-view CPU+GPU time, draw counts → in-game visualiser
 
-Tier 1 — profiling builds only (NIMBUS_PROFILING=ON)
-    NIMBUS_CPU_ZONE macros   → CPU timeline in Tracy viewer
+Tier 1 — profiling builds only (SAMA_PROFILING=ON)
+    SAMA_CPU_ZONE macros   → CPU timeline in Tracy viewer
     Tracy bgfx callback      → per-draw GPU timeline in Tracy, sourced from bgfx profiler API
-    NIMBUS_GPU_ZONE macros   → explicit GPU zones for sub-pass work not covered by bgfx
+    SAMA_GPU_ZONE macros   → explicit GPU zones for sub-pass work not covered by bgfx
 ```
 
 ### CPU Zone Macros
@@ -1056,15 +1056,15 @@ All engine systems instrument their work with zone macros. In non-profiling buil
 ```cpp
 // engine/profiling/Profiler.h
 
-#ifdef NIMBUS_PROFILING
+#ifdef SAMA_PROFILING
   #include <tracy/Tracy.hpp>
-  #define NIMBUS_FRAME_MARK         FrameMark
-  #define NIMBUS_CPU_ZONE(name)     ZoneScopedN(name)
-  #define NIMBUS_CPU_ZONE_COLOR(name, color) ZoneScopedNC(name, color)
+  #define SAMA_FRAME_MARK         FrameMark
+  #define SAMA_CPU_ZONE(name)     ZoneScopedN(name)
+  #define SAMA_CPU_ZONE_COLOR(name, color) ZoneScopedNC(name, color)
 #else
-  #define NIMBUS_FRAME_MARK
-  #define NIMBUS_CPU_ZONE(name)
-  #define NIMBUS_CPU_ZONE_COLOR(name, color)
+  #define SAMA_FRAME_MARK
+  #define SAMA_CPU_ZONE(name)
+  #define SAMA_CPU_ZONE_COLOR(name, color)
 #endif
 ```
 
@@ -1073,26 +1073,26 @@ Every render system uses these at the start of its `update()`:
 ```cpp
 void FrustumCullSystem::update(Registry& reg, float dt)
 {
-    NIMBUS_CPU_ZONE("FrustumCull");
+    SAMA_CPU_ZONE("FrustumCull");
     // worker tasks also zone themselves:
     pool.submit([chunk] {
-        NIMBUS_CPU_ZONE("FrustumCull::worker");
+        SAMA_CPU_ZONE("FrustumCull::worker");
         // ...
     });
 }
 
 void DrawCallBuildSystem::update(Registry& reg, float dt)
 {
-    NIMBUS_CPU_ZONE("DrawCallBuild");
+    SAMA_CPU_ZONE("DrawCallBuild");
     // ...
 }
 
 void PostProcessSystem::update(Registry& reg, float dt)
 {
-    NIMBUS_CPU_ZONE("PostProcess");
-    { NIMBUS_CPU_ZONE("PostProcess::SSAO");  submitSsao();  }
-    { NIMBUS_CPU_ZONE("PostProcess::Bloom"); submitBloom(); }
-    { NIMBUS_CPU_ZONE("PostProcess::Tonemap+FXAA"); submitTonemapFxaa(); }
+    SAMA_CPU_ZONE("PostProcess");
+    { SAMA_CPU_ZONE("PostProcess::SSAO");  submitSsao();  }
+    { SAMA_CPU_ZONE("PostProcess::Bloom"); submitBloom(); }
+    { SAMA_CPU_ZONE("PostProcess::Tonemap+FXAA"); submitTonemapFxaa(); }
 }
 ```
 
@@ -1147,7 +1147,7 @@ Tracy integrates with bgfx via `bgfx::CallbackI` — bgfx calls `profilerBegin` 
 
 ```cpp
 // engine/profiling/TracyBgfxCallback.h  (profiling builds only)
-#ifdef NIMBUS_PROFILING
+#ifdef SAMA_PROFILING
 #include <tracy/TracyBgfx.hpp>
 
 // Pass to bgfx::init() in profiling builds.
@@ -1161,16 +1161,16 @@ struct TracyBgfxCallback : public bgfx::CallbackI { /* ... */ };
 bgfx::Init init;
 init.type     = bgfx::RendererType::Vulkan; // or Metal
 init.vendorId = BGFX_PCI_ID_NONE;
-#ifdef NIMBUS_PROFILING
+#ifdef SAMA_PROFILING
 init.callback = &m_tracyCallback;  // Tracy hooks in here
 #endif
 bgfx::init(init);
 ```
 
 With this in place, the Tracy desktop viewer shows:
-- **CPU timeline**: all `NIMBUS_CPU_ZONE` zones across all threads, including thread pool workers
+- **CPU timeline**: all `SAMA_CPU_ZONE` zones across all threads, including thread pool workers
 - **GPU timeline**: per-pass zones from bgfx's internal profiler regions, aligned with the CPU timeline
-- **Frame markers**: frame boundaries from `NIMBUS_FRAME_MARK`
+- **Frame markers**: frame boundaries from `SAMA_FRAME_MARK`
 - **Memory**: optional heap tracking via Tracy's overridden `new`/`delete`
 
 ### Debug Markers and View Names (Tier 0)
@@ -1199,7 +1199,7 @@ bgfx::submit(kViewOpaque, skinnedProgram);
 
 | Tool | Platform | How to use | What you get |
 |---|---|---|---|
-| **Tracy** | Win / Mac / Linux / iOS / Android | Enable `NIMBUS_PROFILING`, pass `TracyBgfxCallback` | Full CPU+GPU timeline, per-draw zones, memory tracking |
+| **Tracy** | Win / Mac / Linux / iOS / Android | Enable `SAMA_PROFILING`, pass `TracyBgfxCallback` | Full CPU+GPU timeline, per-draw zones, memory tracking |
 | **RenderDoc** | Win / Mac / Linux / Android | Launch via RenderDoc or `BGFX_DEBUG_IFH`; view names + markers appear automatically | Frame capture, per-draw state inspection, resource viewer |
 | **Apple Instruments** (Metal GPU Trace) | Mac / iOS | Run from Xcode with Metal GPU Trace template | Full GPU timeline, per-encoder timing, shader execution stats, bandwidth |
 | **Android GPU Inspector** | Android | `adb` + AGI; Vulkan debug labels from view names appear automatically | GPU timeline, shader profiling, memory heatmaps |

@@ -1,8 +1,8 @@
-# Nimbus Editor Architecture -- Native Platform GUI
+# Sama Editor Architecture -- Native Platform GUI
 
 ## Document Purpose
 
-This document specifies the architecture for a native-GUI editor for the Nimbus game engine. The editor replaces the existing ImGui-based plan described in NOTES.md with platform-native controls (AppKit on macOS, Win32/WinUI on Windows) while still rendering the 3D viewport through bgfx. The rationale: native UI provides superior text rendering, accessibility, system integration (drag-and-drop, file dialogs, dark mode), and "feels right" on each platform without the visual compromises of an immediate-mode overlay.
+This document specifies the architecture for a native-GUI editor for the Sama game engine. The editor replaces the existing ImGui-based plan described in NOTES.md with platform-native controls (AppKit on macOS, Win32/WinUI on Windows) while still rendering the 3D viewport through bgfx. The rationale: native UI provides superior text rendering, accessibility, system integration (drag-and-drop, file dialogs, dark mode), and "feels right" on each platform without the visual compromises of an immediate-mode overlay.
 
 ---
 
@@ -56,7 +56,7 @@ struct EditorWindowDesc
 {
     uint32_t width = 1600;
     uint32_t height = 1000;
-    const char* title = "Nimbus Editor";
+    const char* title = "Sama Editor";
 };
 
 class IEditorWindow
@@ -227,7 +227,7 @@ Uses standard Win32 controls: `TreeView` (hierarchy), `ListView` (asset browser)
 
 ```
 +-----------------------------------------------------------------------------------+
-|  File   Edit   View   Entity   Component   Window                       [Nimbus]  |
+|  File   Edit   View   Entity   Component   Window                       [Sama]  |
 +-----------------------------------------------------------------------------------+
 | [Move] [Rotate] [Scale] [Local|World] [Snap: 0.5] | [Play] [Pause] [Stop]        |
 +-----------------------------------------------------------------------------------+
@@ -809,7 +809,7 @@ Dragging an asset file from the browser to the 3D viewport:
 
 **Window:**
 - Preferences
-- About Nimbus
+- About Sama
 
 ### 9.2 Implementation
 
@@ -837,7 +837,7 @@ serializer.loadScene(filepath, registry, renderResources, assetManager);
 
 ### 10.2 Project File
 
-A separate JSON file (`.nimbus-project`) at the project root:
+A separate JSON file (`.sama-project`) at the project root:
 
 ```json
 {
@@ -860,7 +860,7 @@ A separate JSON file (`.nimbus-project`) at the project root:
 
 ### 10.3 Auto-Save / Crash Recovery
 
-- Every 60 seconds (configurable), the editor saves the current scene to a temporary file: `<project>/.nimbus/autosave.json`
+- Every 60 seconds (configurable), the editor saves the current scene to a temporary file: `<project>/.sama/autosave.json`
 - On startup, if an autosave exists that is newer than the last saved scene, prompt: "Recover unsaved changes?"
 - The autosave file is deleted on clean exit or after a successful manual save
 
@@ -936,18 +936,18 @@ if(APPLE)
 endif()
 
 # Editor executable
-add_executable(nimbus_editor apps/editor/main.cpp)  # or main.mm on macOS
-target_link_libraries(nimbus_editor PRIVATE engine_editor)
+add_executable(sama_editor apps/editor/main.cpp)  # or main.mm on macOS
+target_link_libraries(sama_editor PRIVATE engine_editor)
 ```
 
 ### 11.2 Conditional Compilation
 
-The editor target (`nimbus_editor`) is separate from the game runtime. Game builds (`nimbus_game`) link only the engine libraries, not `engine_editor`. This matches the NOTES.md requirement that "release builds have editor code stripped."
+The editor target (`sama_editor`) is separate from the game runtime. Game builds (`sama_game`) link only the engine libraries, not `engine_editor`. This matches the NOTES.md requirement that "release builds have editor code stripped."
 
-Preprocessor guard `NIMBUS_EDITOR` is defined only for the editor target, allowing engine code to include optional editor hooks:
+Preprocessor guard `SAMA_EDITOR` is defined only for the editor target, allowing engine code to include optional editor hooks:
 
 ```cpp
-#ifdef NIMBUS_EDITOR
+#ifdef SAMA_EDITOR
     // Register editor-only debug visualizations
 #endif
 ```
@@ -1256,11 +1256,11 @@ using PluginInitFn = void (*)(const EditorPluginAPI& api);
 } // namespace engine::editor
 ```
 
-Plugins are shared libraries loaded via `dlopen` (macOS/Linux) or `LoadLibrary` (Windows). The editor scans a `plugins/` directory at startup and calls each plugin's `nimbus_editor_plugin_init` exported symbol.
+Plugins are shared libraries loaded via `dlopen` (macOS/Linux) or `LoadLibrary` (Windows). The editor scans a `plugins/` directory at startup and calls each plugin's `sama_editor_plugin_init` exported symbol.
 
 ### 17.2 Hot Reload (Future)
 
-Watch the plugin `.dylib` / `.dll` for changes. On change: call a `nimbus_editor_plugin_shutdown` export (if present), `dlclose`, `dlopen` the new version, call `nimbus_editor_plugin_init` again. Requires plugins to not hold persistent pointers into their own memory.
+Watch the plugin `.dylib` / `.dll` for changes. On change: call a `sama_editor_plugin_shutdown` export (if present), `dlclose`, `dlopen` the new version, call `sama_editor_plugin_init` again. Requires plugins to not hold persistent pointers into their own memory.
 
 ---
 

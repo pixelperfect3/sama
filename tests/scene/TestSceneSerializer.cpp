@@ -50,7 +50,7 @@ struct TempFile
 
     TempFile()
     {
-        auto p = std::filesystem::temp_directory_path() / "nimbus_test_XXXXXX.json";
+        auto p = std::filesystem::temp_directory_path() / "sama_test_XXXXXX.json";
         path = p.string();
         // Make the path unique by appending the address of this object.
         path += std::to_string(reinterpret_cast<uintptr_t>(this));
