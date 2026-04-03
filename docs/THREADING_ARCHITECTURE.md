@@ -1,4 +1,48 @@
-# ## Threading Architecture Analysis for Nimbus Engine
+# Threading Architecture Analysis for Nimbus Engine
+
+### 0. Thread Count Summary
+
+**How many threads run simultaneously once fully implemented?**
+
+| Thread | Role | Always active? |
+|--------|------|----------------|
+| **Main thread** | OS events, input, ImGui, asset uploads, bgfx::frame(), audio API | Yes |
+| **Worker 1..N** | System execution (animation, cull, draw call recording) | Only during parallel phases |
+| **Jolt internal** | Physics broadphase/narrowphase/solver (managed by Jolt, not us) | Only during physics.step() |
+| **bgfx render** | GPU command buffer submission (created by bgfx internally) | Yes |
+
+**Default worker count:** `std::thread::hardware_concurrency() - 2` (reserve 1 for main, 1 for bgfx render thread). Clamped to `[1, 16]`. On a typical 8-core machine: **6 worker threads**.
+
+**Total threads at peak (8-core machine):** 8 — main + 6 workers + bgfx render. Jolt reuses the same worker pool (see below).
+
+**Game developer configuration:**
+
+Thread count is specified at engine init time via `EngineDesc` and cannot change at runtime:
+
+```cpp
+EngineDesc desc;
+desc.windowTitle = "My Game";
+desc.workerThreadCount = 4;           // explicit count (0 = auto-detect)
+desc.physicsThreadCount = 2;          // Jolt-specific (0 = share worker pool)
+desc.singleThreaded = false;          // true = no workers, everything on main thread
+
+// Auto-detect (default): workerThreadCount = 0
+// -> uses std::thread::hardware_concurrency() - 2, clamped to [1, 16]
+```
+
+The `ThreadPool` is created once in `Engine::init()` with the resolved count. All engine systems use this shared pool. Jolt can either share the same pool (recommended, avoids oversubscription) or get its own via `physicsThreadCount`.
+
+**Platform guidelines for game developers:**
+
+| Platform | Recommended workers | Rationale |
+|----------|-------------------|-----------|
+| Desktop (8+ cores) | 4-6 | Plenty of cores, leave headroom for OS |
+| Desktop (4 cores) | 2 | Avoid oversubscription |
+| Mobile (4 big + 4 little) | 2-3 | Only use big cores, battery/thermal |
+| Mobile (2 cores) | 1 | Minimal threading, or `singleThreaded = true` |
+| Web/Wasm | 0 (`singleThreaded = true`) | SharedArrayBuffer support varies |
+
+**Single-threaded mode:** When `singleThreaded = true`, no `ThreadPool` is created. All systems run sequentially on the main thread. This is the safest option for debugging, profiling, and platforms with limited threading support. The frame schedule collapses to a flat list.
 
 ### 1. System Dependency Graph
 
