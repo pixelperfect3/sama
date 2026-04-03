@@ -1,6 +1,8 @@
-# Engine Development Notes
+# Sama Engine — Development Notes
 
 Tracks all decisions and progress made during development.
+
+**Engine name:** Sama (سما — sky, heaven in Urdu). Renamed from "Nimbus" on 2026-04-03.
 
 ---
 
@@ -188,10 +190,11 @@ Tracks all decisions and progress made during development.
 - [x] Phase 10 — 2D sprite batching + UI pass (committed)
 - [x] Phase 11 — IBL: irradiance, prefiltered specular, BRDF LUT (committed)
 
-All 412 test cases pass (5228 assertions).
+All 437 test cases pass (5373 assertions).
 
 ### Status
 - [x] All 11 rendering phases complete and committed
+- [x] IBL improved: procedural sky model (blue zenith, warm horizon), GGX importance sampling for prefiltered cubemap (128x128, 8 mip levels), cosine-weighted irradiance (64x64), BRDF LUT view vector bug fixed
 
 ### Screenshot Tests
 
@@ -852,6 +855,12 @@ Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera 
 - **Phased implementation:** (1) Two-Bone solver + IkSystem + unit tests, (2) IK demo app with foot placement, (3) CCD + look-at, (4) FABRIK + hand reach, (5) joint constraints + polish.
 
 ### Status
-- [ ] IK architecture proposed (design doc written, not yet implemented)
+- [x] IK architecture proposed (design doc: `docs/IK_ARCHITECTURE.md`)
+- [x] IK implemented: Three solvers (Two-Bone analytical, CCD iterative, FABRIK position-based), IkSystem, IkComponents, FootIkHelper, LookAtHelper — committed
+- [x] CCD and FABRIK compile-time disableable via `ENGINE_IK_ENABLE_CCD` / `ENGINE_IK_ENABLE_FABRIK`
+- [x] 15 IK unit tests (54 assertions) + 1 IK screenshot test — all passing
+- [x] `ik_demo` app: foot IK on uneven terrain with ImGui controls
+- [x] `ik_hand_demo` app: interactive mouse-driven arm IK on BrainStem.glb T-pose
+- [ ] Joint angle constraints (Phase 5) — not yet implemented
 
 ---
