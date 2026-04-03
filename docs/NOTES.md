@@ -839,3 +839,19 @@ Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera 
 - 22 tests covering parsing, typed getters, math round-trips (Vec2/3/4, Quat), object/array iteration, file I/O, error handling
 
 ---
+
+## Inverse Kinematics (Architecture Proposal)
+
+- **Design doc:** `docs/IK_ARCHITECTURE.md`
+- **Approach:** IK as a post-process on FK poses -- runs after AnimationSystem samples clips, before bone matrix computation. Requires splitting `AnimationSystem::update()` into `updatePoses()` + `computeBoneMatrices()` with an `IkSystem::update()` call in between.
+- **Solvers:** Three solvers in priority order: Two-Bone IK (analytical, O(1), for arms/legs), CCD (iterative, for spines/tails), FABRIK (iterative, better convergence for natural motion). All operate on local joint rotations within the existing `Pose` structure.
+- **ECS integration:** `IkChainsComponent` (chain definitions with solver type, joints, blend weight) and `IkTargetsComponent` (per-frame world-space targets). Uses `InlinedVector<T, 4>` for up to 4 chains per entity without heap allocation. New `PoseComponent` holds the intermediate arena-allocated pose between FK and bone matrix computation.
+- **Memory:** All per-frame temporaries from FrameArena. Estimated ~1.3 KB per entity, ~65 KB for 50 characters -- well within the 1 MB arena budget.
+- **Tradeoff -- pose handoff:** Chose PoseComponent over an internal buffer in AnimationSystem. Adds one component per animated entity but makes the data flow explicit in the system DAG and allows future systems (ragdoll, procedural animation) to also modify the pose without special-casing.
+- **Tradeoff -- joint constraints:** Starting with per-axis Euler angle limits (simpler) rather than swing-twist decomposition (more physically correct). Euler limits work well for humanoid characters; swing-twist can be added later if gimbal lock becomes a practical issue.
+- **Phased implementation:** (1) Two-Bone solver + IkSystem + unit tests, (2) IK demo app with foot placement, (3) CCD + look-at, (4) FABRIK + hand reach, (5) joint constraints + polish.
+
+### Status
+- [ ] IK architecture proposed (design doc written, not yet implemented)
+
+---
