@@ -725,11 +725,37 @@ If IK becomes a bottleneck:
 
 **Recommendation:** Start with per-axis min/max angle limits (Euler) for Phase 5. If gimbal lock becomes a practical issue for specific joint configurations, add swing-twist as an alternative constraint type. Most game engines ship with Euler limits and they work fine for humanoid characters.
 
-### 10.3 CCD vs. FABRIK Default for Chains
+### 10.3 CCD vs. FABRIK — Compile-Time Disable
 
 Both CCD and FABRIK solve the same problem. CCD is simpler to implement but tends to curl. FABRIK has better convergence but requires position-to-rotation conversion.
 
-**Recommendation:** Implement both (Phases 3 and 4). Default to CCD for initial work, let users choose per-chain. Evaluate which produces better results for specific use cases (spines, tails) during the demo phase.
+Either solver can be completely stripped from the build with compile-time defines:
+
+```cpp
+// CMakeLists.txt or per-target defines:
+#define ENGINE_IK_ENABLE_CCD    1   // set to 0 to strip CCD solver
+#define ENGINE_IK_ENABLE_FABRIK 1   // set to 0 to strip FABRIK solver
+```
+
+When disabled:
+- The solver function (`solveCcd()` / `solveFabrik()`) is not compiled.
+- `IkSystem::update()` skips chains with that solver type and logs a warning on first encounter.
+- The corresponding `IkSolverType` enum value still exists (to keep serialization stable), but selecting it at runtime is a no-op.
+- Two-Bone IK is always available — it cannot be disabled.
+
+This keeps binary size minimal for projects that only need Two-Bone IK (the most common case). In `IkSolvers.cpp`:
+
+```cpp
+#if ENGINE_IK_ENABLE_CCD
+void solveCcd(/* ... */) { /* ... */ }
+#endif
+
+#if ENGINE_IK_ENABLE_FABRIK
+void solveFabrik(/* ... */) { /* ... */ }
+#endif
+```
+
+**Recommendation:** Both enabled by default. Projects targeting minimal binary size or mobile can disable unused solvers via CMake options (`-DENGINE_IK_ENABLE_CCD=0`).
 
 ### 10.4 Interaction with Physics Ragdoll (Future)
 
