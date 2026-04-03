@@ -1035,3 +1035,36 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         COMMENT "Copying BrainStem.glb to ik_demo build directory"
     )
 endif()
+
+# --- ik_hand_demo app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(ik_hand_demo apps/ik_hand_demo/main.mm)
+
+    target_include_directories(ik_hand_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(ik_hand_demo PRIVATE
+        engine_core
+        engine_assets
+        engine_scene
+        engine_animation
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(ik_hand_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+
+    # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
+    add_custom_command(TARGET ik_hand_demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
+            "$<TARGET_FILE_DIR:ik_hand_demo>/BrainStem.glb"
+        COMMENT "Copying BrainStem.glb to ik_hand_demo build directory"
+    )
+endif()
