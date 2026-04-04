@@ -48,6 +48,20 @@ static NSTextField* makeEditableField(float value, int fieldId, void (^onChange)
 }
 
 // ---------------------------------------------------------------------------
+// FlippedView -- NSView with origin at top-left (for top-aligned content).
+// ---------------------------------------------------------------------------
+
+@interface FlippedView : NSView
+@end
+
+@implementation FlippedView
+- (BOOL)isFlipped
+{
+    return YES;
+}
+@end
+
+// ---------------------------------------------------------------------------
 // Impl
 // ---------------------------------------------------------------------------
 
@@ -74,7 +88,9 @@ CocoaPropertiesView::CocoaPropertiesView() : impl_(std::make_unique<Impl>())
         impl_->scrollView.drawsBackground = NO;
 
         // Use a flipped NSView as the document view to get top-to-bottom layout.
-        NSView* container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 250, 400)];
+        // Standard NSView has origin at bottom-left; FlippedView puts origin at
+        // top-left so the stack view content aligns to the top, not the bottom.
+        NSView* container = [[FlippedView alloc] initWithFrame:NSMakeRect(0, 0, 250, 400)];
 
         impl_->stackView = [NSStackView stackViewWithViews:@[]];
         impl_->stackView.orientation = NSUserInterfaceLayoutOrientationVertical;
