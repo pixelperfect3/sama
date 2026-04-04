@@ -62,6 +62,7 @@ struct EditorApp::Impl
     bgfx::TextureHandle whiteTex = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle neutralNormalTex = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle whiteCubeTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle dummyShadowTex = BGFX_INVALID_HANDLE;  // 1x1 depth for shadow sampler
 
     // ECS
     Registry registry;
@@ -122,11 +123,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     bgfx::Init init;
     init.type = bgfx::RendererType::Metal;
     init.platformData.nwh = impl_->window->nativeLayer();
-    // Use logical (points) resolution so debug text is readable on HiDPI.
-    // Native AppKit panels will replace debug text, then we can switch to
-    // framebuffer resolution for full Retina rendering.
-    init.resolution.width = impl_->window->width();
-    init.resolution.height = impl_->window->height();
+    init.resolution.width = impl_->window->framebufferWidth();
+    init.resolution.height = impl_->window->framebufferHeight();
     init.resolution.reset = BGFX_RESET_VSYNC;
 
     if (!bgfx::init(init))
@@ -137,8 +135,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 
-    impl_->fbW = static_cast<uint16_t>(impl_->window->width());
-    impl_->fbH = static_cast<uint16_t>(impl_->window->height());
+    impl_->fbW = static_cast<uint16_t>(impl_->window->framebufferWidth());
+    impl_->fbH = static_cast<uint16_t>(impl_->window->framebufferHeight());
 
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
     bgfx::setViewRect(0, 0, 0, impl_->fbW, impl_->fbH);
@@ -171,6 +169,12 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
                                     bgfx::copy(cubeFaces, sizeof(cubeFaces)));
         impl_->resources.setWhiteCubeTexture(impl_->whiteCubeTex);
+
+        // 1x1 dummy shadow map so the PBR shader has a valid sampler.
+        const uint8_t kWhiteDepth[4] = {255, 255, 255, 255};
+        impl_->dummyShadowTex =
+            bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                                  bgfx::copy(kWhiteDepth, sizeof(kWhiteDepth)));
     }
 
     // -- Scene ----------------------------------------------------------------
@@ -285,8 +289,8 @@ void EditorApp::run()
         impl_->window->pollEvents();
 
         // -- Resize -----------------------------------------------------------
-        uint32_t fbW = impl_->window->width();
-        uint32_t fbH = impl_->window->height();
+        uint32_t fbW = impl_->window->framebufferWidth();
+        uint32_t fbH = impl_->window->framebufferHeight();
         if ((fbW != impl_->fbW || fbH != impl_->fbH) && fbW > 0 && fbH > 0)
         {
             bgfx::reset(fbW, fbH, BGFX_RESET_VSYNC);
@@ -327,12 +331,9 @@ void EditorApp::run()
         impl_->transformSys.update(impl_->registry);
 
         // -- Render -----------------------------------------------------------
-        // Touch shadow view to avoid bgfx warnings.
-        RenderPass(kViewShadowBase).touch();
-
-        // Opaque pass (direct to backbuffer, no post-processing).
-        RenderPass(kViewOpaque).framebuffer(BGFX_INVALID_HANDLE);
-
+        // DrawCallBuildSystem submits to kViewOpaque (view 9). Set that up
+        // as the only active view. Touch view 0 with a 1x1 clear to satisfy
+        // bgfx's sequential view requirement. No shadow or post-process views.
         const auto W = impl_->fbW;
         const auto H = impl_->fbH;
         float aspect = static_cast<float>(W) / static_cast<float>(H);
@@ -340,10 +341,22 @@ void EditorApp::run()
         glm::mat4 view = impl_->camera.view();
         glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
 
-        RenderPass(kViewOpaque)
-            .rect(0, 0, W, H)
-            .clearColorAndDepth(0x303030FF)
-            .transform(view, proj);
+        // Touch views 1..8 with minimal 1x1 clear to prevent pink artifacts.
+        // View 0 is kept full-size for bgfx debug text overlay.
+        bgfx::setViewRect(0, 0, 0, W, H);
+        bgfx::setViewClear(0, BGFX_CLEAR_NONE);
+        bgfx::touch(0);
+        for (bgfx::ViewId v = 1; v < kViewOpaque; ++v)
+        {
+            bgfx::setViewRect(v, 0, 0, 1, 1);
+            bgfx::setViewClear(v, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000FF, 1.0f, 0);
+            bgfx::touch(v);
+        }
+
+        // Main scene on kViewOpaque (view 9) — where DrawCallBuildSystem submits.
+        bgfx::setViewRect(kViewOpaque, 0, 0, W, H);
+        bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
+        bgfx::setViewTransform(kViewOpaque, glm::value_ptr(view), glm::value_ptr(proj));
 
         // Directional light (fixed sun direction).
         const glm::vec3 lightDir = glm::normalize(glm::vec3(0.4f, 0.7f, 0.5f));
@@ -362,7 +375,7 @@ void EditorApp::run()
         PbrFrameParams frame{};
         frame.lightData = lightData;
         frame.shadowMatrix = glm::value_ptr(identMat);
-        frame.shadowAtlas = BGFX_INVALID_HANDLE;
+        frame.shadowAtlas = impl_->dummyShadowTex;
         frame.viewportW = W;
         frame.viewportH = H;
         frame.nearPlane = 0.05f;
@@ -491,6 +504,8 @@ void EditorApp::shutdown()
         bgfx::destroy(impl_->neutralNormalTex);
     if (bgfx::isValid(impl_->whiteCubeTex))
         bgfx::destroy(impl_->whiteCubeTex);
+    if (bgfx::isValid(impl_->dummyShadowTex))
+        bgfx::destroy(impl_->dummyShadowTex);
 
     impl_->resources.destroyAll();
     impl_->uniforms.destroy();

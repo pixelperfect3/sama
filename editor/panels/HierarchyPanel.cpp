@@ -40,10 +40,12 @@ void HierarchyPanel::update(float /*dt*/)
         double mx = window_.mouseX();
         double my = window_.mouseY();
 
-        // bgfx resolution is set to logical (points) in the editor,
-        // so debug text chars are 8x16 in the same coordinate space as mouse.
-        double charW = 8.0;
-        double charH = 16.0;
+        // bgfx renders at framebuffer (Retina) resolution. Debug text chars
+        // are 8x16 in framebuffer pixels. Mouse is in logical (points), so
+        // scale mouse coords to framebuffer space for hit testing.
+        float scale = window_.contentScale();
+        double charW = 8.0 / scale;   // char width in logical points
+        double charH = 16.0 / scale;  // char height in logical points
 
         uint16_t col = static_cast<uint16_t>(mx / charW);
         uint16_t row = static_cast<uint16_t>(my / charH);

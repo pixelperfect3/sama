@@ -27,11 +27,13 @@ TransformGizmo::TransformGizmo(Registry& registry, EditorState& state, const IEd
 void TransformGizmo::screenToRay(const glm::mat4& invVP, glm::vec3& origin,
                                  glm::vec3& direction) const
 {
-    // bgfx resolution matches logical (points) coords in the editor.
-    float mx = static_cast<float>(window_.mouseX());
-    float my = static_cast<float>(window_.mouseY());
-    float w = static_cast<float>(window_.width());
-    float h = static_cast<float>(window_.height());
+    // Mouse is in logical (points); convert to framebuffer pixels since
+    // bgfx renders at framebuffer resolution.
+    float scale = window_.contentScale();
+    float mx = static_cast<float>(window_.mouseX()) * scale;
+    float my = static_cast<float>(window_.mouseY()) * scale;
+    float w = static_cast<float>(window_.framebufferWidth());
+    float h = static_cast<float>(window_.framebufferHeight());
 
     // Convert to NDC [-1, 1].
     float ndcX = (2.0f * mx / w) - 1.0f;
