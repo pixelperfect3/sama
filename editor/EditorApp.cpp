@@ -20,6 +20,8 @@
 #include "editor/platform/IEditorWindow.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
 #include "editor/undo/CommandStack.h"
+#include "editor/undo/CreateEntityCommand.h"
+#include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
@@ -34,6 +36,7 @@
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/NameComponent.h"
+#include "engine/scene/SceneSerializer.h"
 #include "engine/scene/TransformSystem.h"
 
 using engine::ecs::EntityID;
@@ -90,6 +93,13 @@ struct EditorApp::Impl
 
     // Undo/redo
     CommandStack commandStack;
+
+    // Scene serialization
+    scene::SceneSerializer sceneSerializer;
+
+    // Status message (shown briefly in HUD)
+    char statusMsg[128] = {};
+    float statusTimer = 0.0f;
 
     // Selection highlight material
     uint32_t selectionMatId = 0;
@@ -262,6 +272,9 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->camera.pitch = 25.0f;
     impl_->camera.target = {0.0f, 0.5f, 0.0f};
 
+    // -- Scene serializer -----------------------------------------------------
+    impl_->sceneSerializer.registerEngineComponents();
+
     // -- Frame arena ----------------------------------------------------------
     impl_->frameArena = std::make_unique<engine::memory::FrameArena>(2 * 1024 * 1024);
 
@@ -360,6 +373,52 @@ void EditorApp::run()
             {
                 impl_->commandStack.undo();
             }
+        }
+
+        // -- Keyboard shortcuts -----------------------------------------------
+        // Cmd+S = save scene
+        if (impl_->window->isKeyPressed('S') && impl_->window->isCommandDown())
+        {
+            if (impl_->sceneSerializer.saveScene(impl_->registry, impl_->resources,
+                                                 "editor_scene.json"))
+            {
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                         "Scene saved to editor_scene.json");
+            }
+            else
+            {
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Failed to save scene!");
+            }
+            impl_->statusTimer = 3.0f;
+        }
+
+        // Cmd+N = create new entity
+        if (impl_->window->isKeyPressed('N') && impl_->window->isCommandDown())
+        {
+            auto cmd = std::make_unique<CreateEntityCommand>(impl_->registry, impl_->editorState);
+            impl_->commandStack.execute(std::move(cmd));
+            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Created new entity");
+            impl_->statusTimer = 2.0f;
+        }
+
+        // Delete/Backspace = delete selected entity
+        if (impl_->window->isKeyPressed(0x08) || impl_->window->isKeyPressed(0x7F))
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                auto cmd = std::make_unique<DeleteEntityCommand>(impl_->registry,
+                                                                 impl_->editorState, selE);
+                impl_->commandStack.execute(std::move(cmd));
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Deleted entity");
+                impl_->statusTimer = 2.0f;
+            }
+        }
+
+        // Decrement status timer.
+        if (impl_->statusTimer > 0.0f)
+        {
+            impl_->statusTimer -= dt;
         }
 
         // -- Transform system -------------------------------------------------
@@ -510,6 +569,17 @@ void EditorApp::run()
         if (impl_->commandStack.canRedo())
         {
             bgfx::dbgTextPrintf(60, 2, 0x07, "Redo: %s", impl_->commandStack.redoDescription());
+        }
+
+        // Keyboard shortcuts help.
+        bgfx::dbgTextPrintf(1, 3, 0x08,
+                            "Cmd+S=save  Cmd+N=new entity  Del=delete  "
+                            "Cmd+Z=undo  Cmd+Shift+Z=redo");
+
+        // Status message.
+        if (impl_->statusTimer > 0.0f)
+        {
+            bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
         }
 
         // Render panels (hierarchy, properties) as debug text.

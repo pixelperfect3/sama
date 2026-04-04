@@ -1106,6 +1106,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/gizmo/GizmoRenderer.cpp
         editor/undo/CommandStack.cpp
         editor/undo/SetTransformCommand.cpp
+        editor/undo/CreateEntityCommand.cpp
+        editor/undo/DeleteEntityCommand.cpp
         editor/platform/cocoa/CocoaEditorWindow.mm
     )
 
