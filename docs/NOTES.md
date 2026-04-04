@@ -998,6 +998,23 @@ Architecture is documented in `docs/EDITOR_ARCHITECTURE.md`. The editor uses nat
 - **Singleton pattern:** EditorLog is a process-wide singleton because log messages can originate from any subsystem (panels, commands, serializers). A passed-reference pattern would require threading the logger through every component, which is excessive for diagnostic output.
 - **Mutex over lock-free:** The ring buffer uses `std::mutex` rather than a lock-free queue. Log writes are infrequent (a few per frame at most), so the mutex cost is negligible. Lock-free would add complexity without measurable benefit at this scale.
 
+### Native AppKit Panels (Complete)
+
+Replaced all bgfx debug text panels with native AppKit views. Debug text was unreadable on Retina (8x16 pixels in 2x framebuffer) and all panels overlapped on the 3D viewport.
+
+**What was built:**
+- `editor/platform/cocoa/CocoaHierarchyView.h/.mm` — NSTableView with entity name + component tag columns, selection callback
+- `editor/platform/cocoa/CocoaPropertiesView.h/.mm` — NSStackView with float fields, sliders, color wells; rebuilds on selection change (dirty flag)
+- `editor/platform/cocoa/CocoaConsoleView.h/.mm` — NSTextView with color-coded messages (NSAttributedString), auto-scroll
+- NSSplitView layout in CocoaEditorWindow: vertical split (top + console), horizontal split (hierarchy + viewport + properties)
+- Titled panel headers ("Scene Hierarchy", "Properties", "Console") with Auto Layout
+- bgfx renders only to the center viewport's CAMetalLayer; mouse input gated by `isMouseOverViewport()`
+
+**Key decisions:**
+- **NSSplitView over custom layout:** Provides user-resizable panels for free, matches native macOS UX
+- **Dirty flag updates:** Hierarchy rebuilds only on entity create/delete, properties only on selection change or gizmo drag end — prevents per-frame NSTableView/NSStackView churn
+- **All Pimpl:** Zero AppKit headers in any .h file
+
 ---
 
 ## Game Layer
