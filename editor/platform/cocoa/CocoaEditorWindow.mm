@@ -424,10 +424,54 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         impl_->horizontalSplit.dividerStyle = NSSplitViewDividerStyleThin;
         impl_->horizontalSplit.delegate = impl_->hSplitDelegate;
 
-        // Get the native NSView* for each panel.
-        NSView* leftView = (__bridge NSView*)impl_->hierarchyView->nativeView();
-        NSView* rightView = (__bridge NSView*)impl_->propertiesView->nativeView();
-        NSView* bottomView = (__bridge NSView*)impl_->consoleView->nativeView();
+        // Helper: wrap a view in a container with a title bar.
+        auto wrapWithTitle = [](NSView* contentView, NSString* title) -> NSView*
+        {
+            NSView* container = [[NSView alloc] initWithFrame:contentView.frame];
+            container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+            // Title label.
+            NSTextField* label = [NSTextField labelWithString:title];
+            label.font = [NSFont boldSystemFontOfSize:11.0];
+            label.textColor = [NSColor secondaryLabelColor];
+            label.translatesAutoresizingMaskIntoConstraints = NO;
+
+            // Separator line.
+            NSBox* separator = [[NSBox alloc] init];
+            separator.boxType = NSBoxSeparator;
+            separator.translatesAutoresizingMaskIntoConstraints = NO;
+
+            contentView.translatesAutoresizingMaskIntoConstraints = NO;
+
+            [container addSubview:label];
+            [container addSubview:separator];
+            [container addSubview:contentView];
+
+            [NSLayoutConstraint activateConstraints:@[
+                [label.topAnchor constraintEqualToAnchor:container.topAnchor constant:4],
+                [label.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:8],
+                [label.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-8],
+
+                [separator.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:4],
+                [separator.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+                [separator.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+
+                [contentView.topAnchor constraintEqualToAnchor:separator.bottomAnchor],
+                [contentView.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+                [contentView.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+                [contentView.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],
+            ]];
+
+            return container;
+        };
+
+        // Get the native NSView* for each panel, wrapped with titles.
+        NSView* leftView = wrapWithTitle(
+            (__bridge NSView*)impl_->hierarchyView->nativeView(), @"Scene Hierarchy");
+        NSView* rightView = wrapWithTitle(
+            (__bridge NSView*)impl_->propertiesView->nativeView(), @"Properties");
+        NSView* bottomView = wrapWithTitle(
+            (__bridge NSView*)impl_->consoleView->nativeView(), @"Console");
 
         // Add panels to horizontal split: left, center (viewport), right.
         [impl_->horizontalSplit addSubview:leftView];
