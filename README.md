@@ -26,6 +26,8 @@ All demos are built as standalone executables and run from the `build/` director
 | `physics_demo` | Falling cubes on a tilting plane using Jolt Physics rigid body simulation |
 | `audio_demo` | Spatial 3D audio sources with per-category volume sliders using SoLoud |
 | `animation_demo` | Skeletal animation playback with blend controls and timeline scrubbing |
+| `ik_demo` | Inverse kinematics with foot placement on uneven terrain |
+| `ik_hand_demo` | Interactive mouse-driven arm IK on a T-pose model |
 
 ## Building
 
@@ -64,10 +66,10 @@ cd build
 ## Running Tests
 
 ```bash
-# All unit tests (~412 cases)
+# All unit tests (~437 cases)
 build/engine_tests
 
-# Screenshot tests (11 cases)
+# Screenshot tests (12 cases)
 build/engine_screenshot_tests
 
 # Regenerate golden reference images
@@ -83,6 +85,7 @@ build/engine_tests "[memory]"
 build/engine_tests "[scenegraph]"
 build/engine_tests "[transform]"
 build/engine_tests "[config]"
+build/engine_tests "[ik]"
 ```
 
 ## Architecture
@@ -100,20 +103,27 @@ Detailed architecture documents:
 - [docs/JSON_ARCHITECTURE.md](docs/JSON_ARCHITECTURE.md) -- rapidjson wrapper, scene serialization, config files
 - [docs/EDITOR_ARCHITECTURE.md](docs/EDITOR_ARCHITECTURE.md) -- Editor tooling and debug UI
 
-## Technology Stack
+## Acknowledgments
 
-| Library | Purpose | Integration |
-|---------|---------|-------------|
-| [bgfx](https://github.com/bkaradzic/bgfx) | Cross-platform rendering (Metal, Vulkan) | FetchContent via bgfx.cmake |
-| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | Rigid body physics simulation | FetchContent (v5.2.0) |
-| [SoLoud](https://github.com/jarikomppa/soloud) | Audio engine (mixing, 3D spatialization) | Vendored in third_party/soloud |
-| [miniaudio](https://github.com/mackron/miniaudio) | Platform audio backend | SoLoud backend |
-| [rapidjson](https://github.com/Tencent/rapidjson) | JSON parsing and writing | FetchContent (header-only) |
-| [cgltf](https://github.com/jsmn-impl/cgltf) | glTF/GLB asset parsing | FetchContent (header-only) |
-| [GLM](https://github.com/g-truc/glm) | Math library (vectors, matrices, quaternions) | FetchContent (v1.0.1) |
-| [GLFW](https://github.com/glfw/glfw) | Windowing and input | FetchContent (v3.3.9) |
-| [Catch2](https://github.com/catchorg/Catch2) | Testing framework | FetchContent (v3.4.0) |
-| [ankerl::unordered_dense](https://github.com/martinus/unordered_dense) | Flat open-addressing hash map | Vendored single header |
+Sama Engine is built on the following open-source libraries. Thank you to all the authors and contributors who make their work freely available.
+
+| Library | Purpose | License | Version |
+|---------|---------|---------|---------|
+| [bgfx](https://github.com/bkaradzic/bgfx) | Cross-platform rendering abstraction (Metal, Vulkan) | BSD 2-Clause | via [bgfx.cmake](https://github.com/widberg/bgfx.cmake) |
+| [bimg](https://github.com/bkaradzic/bimg) | Image loading and texture processing (bundled with bgfx) | BSD 2-Clause | — |
+| [bx](https://github.com/bkaradzic/bx) | Base library for bgfx (allocators, math, platform) | BSD 2-Clause | — |
+| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | Rigid body physics simulation | MIT | v5.2.0 |
+| [SoLoud](https://github.com/jarikomppa/soloud) | Audio engine (mixing, filters, 3D spatialization) | zlib/libpng | 20200207 |
+| [miniaudio](https://github.com/mackron/miniaudio) | Platform audio backend (CoreAudio, WASAPI, AAudio) | MIT-0 | v0.11.25 |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Debug UI overlays in demo apps (bundled with bgfx) | MIT | — |
+| [rapidjson](https://github.com/Tencent/rapidjson) | JSON parsing and writing | MIT | v1.1.0 |
+| [cgltf](https://github.com/jkuhlmann/cgltf) | glTF/GLB asset parsing (single-header) | MIT | v1.14 |
+| [GLM](https://github.com/g-truc/glm) | Math library (vectors, matrices, quaternions) | MIT | v1.0.1 |
+| [GLFW](https://github.com/glfw/glfw) | Windowing, input, and context creation | zlib/libpng | v3.3.9 |
+| [stb](https://github.com/nothings/stb) | Image loading/writing (stb_image, stb_image_write) | MIT / Public Domain | latest |
+| [tinyobjloader](https://github.com/tinyobjloader/tinyobjloader) | OBJ mesh file parsing | MIT | vendored |
+| [ankerl::unordered_dense](https://github.com/martinus/unordered_dense) | Fast flat open-addressing hash map | MIT | vendored |
+| [Catch2](https://github.com/catchorg/Catch2) | Unit and screenshot testing framework | BSL-1.0 | v3.4.0 |
 
 ## Code Style
 
