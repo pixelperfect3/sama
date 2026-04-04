@@ -31,3 +31,13 @@
 - Update `docs/NOTES.md` when making architectural decisions — include reasoning and tradeoffs, not just summaries
 - Architecture docs go in `docs/` (e.g., `SCENE_GRAPH_ARCHITECTURE.md`)
 - App-specific READMEs go in the app directory (e.g., `apps/hierarchy_demo/README.md`)
+
+## AI Quick Reference
+
+- **API cheat sheet with copy-pasteable code:** `docs/AI_NATIVE.md` — read this first for any engine API question
+- **Common pitfalls:** `docs/AI_NATIVE.md` Section 6 — check before submitting code
+- **Component reference:** `docs/AI_NATIVE.md` Section 5 — lists all component types with fields
+- **Minimal game template:** `docs/AI_NATIVE.md` Section 4 — copy and modify to start a new game
+- Always add `WorldTransformComponent` alongside `TransformComponent`
+- Always add `VisibleTag` for entities that should render
+- Always call `assets.processUploads()` each frame after async loading
