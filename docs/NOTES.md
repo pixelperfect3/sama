@@ -875,3 +875,29 @@ Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera 
 - [ ] Joint angle constraints (Phase 5) — not yet implemented
 
 ---
+
+## Editor
+
+Architecture is documented in `docs/EDITOR_ARCHITECTURE.md`. The editor uses native platform UI (AppKit on macOS, Win32 on Windows) rather than ImGui, for superior text rendering, accessibility, and system integration. The 3D viewport renders through bgfx Metal.
+
+### Phase 1 — Native macOS Window with 3D Viewport (Complete)
+
+**What was built:**
+- `editor/platform/IEditorWindow.h` — platform-agnostic window interface
+- `editor/platform/cocoa/CocoaEditorWindow.h/.mm` — native NSWindow + CAMetalLayer implementation (Pimpl, no AppKit headers in .h)
+- `editor/EditorApp.h/.cpp` — owns window, bgfx renderer, scene, camera; runs the frame loop
+- `editor/main.mm` — minimal entry point
+- `sama_editor` CMake target — links engine_rendering, engine_scene, engine_memory, engine_ecs; does NOT link GLFW or ImGui
+
+**Key decisions:**
+- **No GLFW:** The editor uses `NSApplication` with poll-based event draining (`[NSApp nextEventMatchingMask:...]`) instead of GLFW's run loop. This gives full control over frame timing and avoids the GLFW dependency entirely.
+- **Pimpl everything:** `CocoaEditorWindow::Impl` holds all ObjC pointers. The .h file is pure C++ — no `#import <Cocoa/Cocoa.h>`.
+- **Direct bgfx init:** Rather than routing through `engine::core::Engine` (which pulls in GLFW and ImGui), the editor initializes bgfx directly with the CAMetalLayer as `nwh`. This is intentional — the editor will eventually own its own render pipeline with panel-specific framebuffers.
+- **CAMetalLayer via NSView subclass:** `EditorMetalView` overrides `makeBackingLayer` to return a `CAMetalLayer`, which is cleaner than the runtime-API approach used by GlfwWindow.cpp.
+- **Scroll handling:** The NSView accumulates scroll deltas via `-scrollWheel:`, consumed and reset each frame in `pollEvents()`.
+
+**Test scene:** A red PBR cube on a gray ground plane, lit by a fixed directional light. Right-drag orbits, scroll zooms. Debug text shows FPS.
+
+**What's next (Phase 2):** NSSplitView layout with panel system, ViewportPanel with its own bgfx framebuffer, hierarchy panel with NSOutlineView.
+
+---

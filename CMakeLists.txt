@@ -1068,3 +1068,38 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         COMMENT "Copying BrainStem.glb to ik_hand_demo build directory"
     )
 endif()
+
+# --- sama_editor app (macOS only) ---
+# Native Cocoa window with bgfx Metal viewport.  No GLFW, no ImGui.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(sama_editor
+        editor/main.mm
+        editor/EditorApp.cpp
+        editor/platform/cocoa/CocoaEditorWindow.mm
+    )
+
+    add_dependencies(sama_editor engine_shaders)
+
+    target_include_directories(sama_editor PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+    )
+    target_link_libraries(sama_editor PRIVATE
+        engine_rendering
+        engine_scene
+        engine_memory
+        engine_ecs
+        glm::glm
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(sama_editor PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+endif()
