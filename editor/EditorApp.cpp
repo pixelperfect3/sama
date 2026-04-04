@@ -12,7 +12,9 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "editor/EditorState.h"
+#include "editor/inspectors/TransformInspector.h"
 #include "editor/panels/HierarchyPanel.h"
+#include "editor/panels/PropertiesPanel.h"
 #include "editor/platform/IEditorWindow.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
 #include "engine/core/OrbitCamera.h"
@@ -75,6 +77,7 @@ struct EditorApp::Impl
     // Editor state and panels
     EditorState editorState;
     std::unique_ptr<HierarchyPanel> hierarchyPanel;
+    std::unique_ptr<PropertiesPanel> propertiesPanel;
 
     // Selection highlight material
     uint32_t selectionMatId = 0;
@@ -223,6 +226,11 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->hierarchyPanel =
         std::make_unique<HierarchyPanel>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->hierarchyPanel->init();
+
+    impl_->propertiesPanel =
+        std::make_unique<PropertiesPanel>(impl_->registry, impl_->editorState, *impl_->window);
+    impl_->propertiesPanel->addInspector(std::make_unique<TransformInspector>(*impl_->window));
+    impl_->propertiesPanel->init();
 
     // -- Camera ---------------------------------------------------------------
     impl_->camera.distance = 5.0f;
@@ -395,6 +403,7 @@ void EditorApp::run()
 
         // -- Panels -----------------------------------------------------------
         impl_->hierarchyPanel->update(dt);
+        impl_->propertiesPanel->update(dt);
 
         // -- HUD --------------------------------------------------------------
         bgfx::dbgTextClear();
@@ -404,6 +413,7 @@ void EditorApp::run()
 
         // Render panels (hierarchy, properties) as debug text.
         impl_->hierarchyPanel->render();
+        impl_->propertiesPanel->render();
 
         // -- End frame --------------------------------------------------------
         impl_->frameArena->reset();
@@ -420,6 +430,10 @@ void EditorApp::shutdown()
     if (impl_->hierarchyPanel)
     {
         impl_->hierarchyPanel->shutdown();
+    }
+    if (impl_->propertiesPanel)
+    {
+        impl_->propertiesPanel->shutdown();
     }
 
     // Destroy shader programs.

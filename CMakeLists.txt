@@ -1076,6 +1076,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/main.mm
         editor/EditorApp.cpp
         editor/panels/HierarchyPanel.cpp
+        editor/panels/PropertiesPanel.cpp
+        editor/inspectors/TransformInspector.cpp
         editor/platform/cocoa/CocoaEditorWindow.mm
     )
 
