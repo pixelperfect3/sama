@@ -1027,6 +1027,69 @@ void EditorApp::run()
         // ~ (backtick) = toggle console (no-op for now, console always visible in panel)
         // Tab = toggle asset browser (kept as debug text for now since it's rarely used)
 
+        // -- Play/Pause/Stop controls ----------------------------------------
+        // Space = play/pause toggle, Escape = stop (when playing/paused).
+        if (impl_->window->isKeyPressed(' ') && !impl_->addComponentMenuOpen)
+        {
+            auto ps = impl_->editorState.playState();
+            if (ps == EditorPlayState::Editing)
+            {
+                // Snapshot all transforms before entering play mode.
+                std::vector<EditorState::TransformSnapshot> snapshot;
+                impl_->registry.forEachEntity(
+                    [&](EntityID e)
+                    {
+                        auto* tc = impl_->registry.get<TransformComponent>(e);
+                        if (tc)
+                        {
+                            snapshot.push_back({e, *tc});
+                        }
+                    });
+                impl_->editorState.saveSnapshot(snapshot);
+                impl_->editorState.play();
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Play mode");
+                impl_->statusTimer = 2.0f;
+                EditorLog::instance().info("Entered play mode");
+            }
+            else if (ps == EditorPlayState::Playing)
+            {
+                impl_->editorState.pause();
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Paused");
+                impl_->statusTimer = 2.0f;
+                EditorLog::instance().info("Paused");
+            }
+            else if (ps == EditorPlayState::Paused)
+            {
+                impl_->editorState.play();
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Resumed");
+                impl_->statusTimer = 2.0f;
+                EditorLog::instance().info("Resumed play mode");
+            }
+        }
+        if (impl_->window->isKeyPressed(0x1B) && !impl_->addComponentMenuOpen)
+        {
+            auto ps = impl_->editorState.playState();
+            if (ps == EditorPlayState::Playing || ps == EditorPlayState::Paused)
+            {
+                // Restore transforms from snapshot.
+                for (const auto& snap : impl_->editorState.transformSnapshot())
+                {
+                    auto* tc = impl_->registry.get<TransformComponent>(snap.entity);
+                    if (tc)
+                    {
+                        *tc = snap.transform;
+                        tc->flags |= 0x01;  // mark dirty
+                    }
+                }
+                impl_->editorState.stop();
+                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Stopped - state restored");
+                impl_->statusTimer = 2.0f;
+                EditorLog::instance().info("Stopped play mode, transforms restored");
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+        }
+
         // Decrement status timer.
         if (impl_->statusTimer > 0.0f)
         {
@@ -1163,6 +1226,23 @@ void EditorApp::run()
             1, 2, 0x07,
             "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  Cmd+Shift+Z=redo",
             modeStr);
+
+        // Play state indicator.
+        {
+            auto ps = impl_->editorState.playState();
+            if (ps == EditorPlayState::Playing)
+            {
+                bgfx::dbgTextPrintf(1, 3, 0x0a, "> PLAYING  (Space=pause, Esc=stop)");
+            }
+            else if (ps == EditorPlayState::Paused)
+            {
+                bgfx::dbgTextPrintf(1, 3, 0x0e, "|| PAUSED  (Space=resume, Esc=stop)");
+            }
+            else
+            {
+                bgfx::dbgTextPrintf(1, 3, 0x08, "Space=play");
+            }
+        }
 
         // Status message.
         if (impl_->statusTimer > 0.0f)
