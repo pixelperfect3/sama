@@ -512,7 +512,7 @@ add_library(engine_scene STATIC
     engine/scene/SceneManager.cpp
 )
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_scene PUBLIC engine_ecs engine_io engine_rendering engine_assets glm::glm)
+target_link_libraries(engine_scene PUBLIC engine_ecs engine_io engine_rendering glm::glm)
 
 # --- engine_audio static library ---
 # Compiles SoLoud core + miniaudio backend + engine audio code into a single
