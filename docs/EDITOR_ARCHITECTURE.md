@@ -1484,3 +1484,330 @@ Watch the plugin `.dylib` / `.dll` for changes. On change: call a `sama_editor_p
 - `/Users/shayanj/claude/engine/engine/scene/SceneGraph.h` -- the hierarchy API (`setParent`, `getChildren`, `destroyHierarchy`) that the hierarchy panel and reparent commands call directly
 - `/Users/shayanj/claude/engine/engine/scene/SceneSerializer.h` -- the extensible serialization system that the editor's save/load and undo/redo snapshot features build on
 - `/Users/shayanj/claude/engine/engine/rendering/ViewIds.h` -- the bgfx view ID layout; the editor must allocate IDs above 47 for viewport framebuffers and gizmo overlay passes
+
+---
+
+## 18. Performance Requirements Review
+
+This section establishes binding performance requirements for all editor implementation work. Every subsection includes concrete targets, identified risks, and required mitigations. Code that violates these requirements must not be merged.
+
+---
+
+### 18.1 Compile Time
+
+**Risks identified in the architecture:**
+
+1. **Objective-C++ compilation.** Every `.mm` file in `engine/editor/platform/cocoa/` must parse Objective-C runtime headers (`<AppKit/AppKit.h>`, `<QuartzCore/QuartzCore.h>`). These are massive headers (AppKit alone pulls in >100K lines). If any `.h` file in the editor includes them, the cost propagates to every translation unit that includes that header.
+
+2. **Template-heavy engine headers.** The editor depends on `Registry` (heavily templated `view<Components...>()`, `emplace<T>()`, etc.), `InlinedVector<T, N>`, and `PoolAllocator<T, MaxCount>`. Each editor `.cpp` that touches the ECS will instantiate these templates.
+
+3. **`IComponentInspector` implementations.** There are 7+ built-in inspectors (Section 4.2). If each inspector header pulls in its component type's full definition plus the ECS registry, the include graph fans out quickly.
+
+4. **`std::function` in `MenuItem`.** The `MenuCallback = std::function<void()>` in `IEditorMenuBar.h` pulls in `<functional>`, which is a heavy standard library header.
+
+**Required mitigations:**
+
+- **No platform headers in any `.h` file.** The following headers must never appear in any file under `engine/editor/` with a `.h` extension:
+  - `<Cocoa/Cocoa.h>`, `<AppKit/AppKit.h>`, `<QuartzCore/QuartzCore.h>`
+  - `<objc/runtime.h>`, `<objc/message.h>`
+  - `<windows.h>`, `<commctrl.h>`, `<d3d11.h>`, `<d3d12.h>`
+  - Any Objective-C `@class` or `@protocol` forward declaration (use `void*` opaque handles in the C++ interface instead)
+  - Platform types are confined to `.mm` and `.cpp` implementation files only.
+
+- **Pimpl pattern for all platform panel implementations.** Each Cocoa/Win32 panel class must use a forward-declared `struct Impl` in its header and `std::unique_ptr<Impl>` as its only data member. The `Impl` definition (containing NSView*, HWND, etc.) lives in the `.mm` / `.cpp` file. Example:
+  ```cpp
+  // CocoaHierarchyPanel.h
+  class CocoaHierarchyPanel : public IEditorPanel
+  {
+  public:
+      CocoaHierarchyPanel();
+      ~CocoaHierarchyPanel();
+      // ...IEditorPanel overrides...
+  private:
+      struct Impl;
+      std::unique_ptr<Impl> impl_;
+  };
+  ```
+
+- **Forward-declare all engine types in editor headers.** Editor headers must forward-declare `ecs::Registry`, `ecs::EntityID`, `rendering::RenderResources`, etc. rather than including their full definitions. Only the `.cpp` files include the full headers.
+
+- **Precompiled header (PCH) for the editor target.** Create `engine/editor/EditorPCH.h` containing only:
+  - `<cstdint>`, `<cstddef>`, `<string>`, `<memory>`, `<vector>`
+  - `engine/ecs/EntityID.h` (a lightweight typedef)
+  - Do NOT include `Registry.h`, `bgfx/bgfx.h`, or any rendering headers in the PCH.
+
+- **Translation unit organization.** Each inspector (TransformInspector, MaterialInspector, etc.) must be its own `.cpp` file. Do not create "unity builds" that merge inspector files -- they each pull in different component headers and would defeat incremental compilation.
+
+- **Target: a single-file change in an inspector `.cpp` must recompile in <3 seconds.** A full clean build of `engine_editor` must complete in <30 seconds (excluding third-party dependencies).
+
+---
+
+### 18.2 Startup Time
+
+**What happens at editor launch (from the architecture):**
+
+1. Create native window (`NSWindow` / `HWND`)
+2. Create split view layout and all panel native views
+3. Initialize bgfx with the viewport's `CAMetalLayer` / `HWND`
+4. Load shaders (PBR, shadow, skinned PBR, skinned shadow -- 4 programs)
+5. Create default textures (white 1x1, neutral normal, white cubemap)
+6. Load the last-open scene from `.sama-project` (`editorSettings.lastOpenScene`)
+7. Build the hierarchy panel's tree from the loaded scene
+8. Generate asset browser thumbnails
+9. Load plugins from `plugins/` directory
+
+**Risks:**
+
+- Loading a large scene (10K entities, many textures/meshes) blocks the main thread during step 6. The user stares at a blank window.
+- Shader compilation on first launch (no pipeline cache) can take 100ms+ per program on Metal.
+- Asset browser thumbnail generation (mesh preview renders) is unbounded in cost.
+- Plugin loading (`dlopen` + initialization) is serial and unpredictable.
+
+**Required mitigations:**
+
+- **Window must be visible before any asset loading.** The startup sequence must be:
+  1. Create window and show it with the editor layout (empty panels) -- this must complete in <500ms.
+  2. Display a lightweight splash/loading indicator in the viewport area (a simple "Loading..." label or progress bar rendered by the native UI, not bgfx).
+  3. Initialize bgfx and load shaders.
+  4. Begin async scene load on a background thread via `AssetManager`.
+  5. As assets arrive, incrementally populate the hierarchy panel and viewport.
+  6. Generate asset browser thumbnails lazily (only for visible items, on a background thread).
+
+- **Deferred shader compilation.** Use bgfx's pipeline state cache (`BGFX_CONFIG_MAX_DRAW_CALLS` is already set). On first launch, accept the one-time cost. On subsequent launches, the Metal pipeline cache should make shader compilation near-instant. Do not block window creation on shader load.
+
+- **Plugin loading is async and non-blocking.** Plugins load on a background thread after the main window is visible. Plugin UI elements appear as they finish loading.
+
+- **Targets:**
+  - Editor window visible and responsive: **<1 second** from process launch.
+  - Empty scene fully rendered in viewport: **<2 seconds**.
+  - Scene with 1000 entities fully loaded and hierarchy populated: **<3 seconds**.
+  - Scene with 10,000 entities fully loaded: **<10 seconds** (with progressive hierarchy population -- the tree fills in as entities load).
+
+---
+
+### 18.3 UI Responsiveness
+
+**Interaction paths analyzed:**
+
+1. **Hierarchy panel click** (select entity): reads `EntityID` from `NSOutlineView` selection, updates `EditorState::selection`, triggers inspector refresh.
+2. **Inspector field edit** (type a number): validates input, writes to ECS component, marks transform dirty, viewport re-renders next frame.
+3. **Gizmo drag** (translate/rotate/scale): per-frame mouse delta projection, component write, viewport re-render.
+4. **Viewport orbit** (RMB drag): camera matrix update, re-render.
+5. **Search/filter in hierarchy**: string match against all entity names, rebuild visible tree.
+
+**Risks:**
+
+- **Scene graph traversal on every hierarchy click.** If the hierarchy panel calls `scene::getChildren()` recursively for the entire tree on every selection change, a 10K-entity scene could take several milliseconds.
+- **Full scene re-render on every property change.** If typing a digit in a position field triggers a full shadow + opaque + transparent + post-process pass, the editor will feel sluggish with complex scenes.
+- **Synchronous file operations.** Saving a scene on the main thread blocks all UI. Auto-save every 60 seconds (Section 10.3) must not cause a hitch.
+- **Inspector refresh polling.** If the inspector calls `refresh()` on all component inspectors every frame (even when nothing changed), this wastes CPU.
+
+**Required mitigations:**
+
+- **Event-driven hierarchy updates.** The hierarchy panel must not rebuild from the ECS every frame. Instead, it rebuilds only when:
+  - An entity is created or destroyed (listen for ECS events or use a dirty flag on `EditorState`).
+  - An entity is reparented.
+  - The search filter text changes.
+  - The panel is first shown.
+  Between these events, the native `NSOutlineView` / `TreeView` data remains static.
+
+- **Dirty-flag rendering.** The viewport must track whether the scene is "dirty" (a component changed, the camera moved, a gizmo is being dragged). If nothing changed since the last frame, skip the full render pass and present the previous frame's content. This reduces GPU load to zero when the user is editing inspector fields without moving the camera.
+
+- **Debounced inspector updates.** When the user is actively typing in a text field, do not commit to the ECS on every keystroke. Instead:
+  - On keystroke: update a local "pending value" and re-render the viewport with a preview (write to a temporary transform, not the ECS).
+  - On focus loss or Enter key: commit the final value to the ECS and create the undo command.
+  - Exception: slider drags commit per-frame (they already batch into a single undo command on mouse-up).
+
+- **Async file I/O.** All file operations (save, auto-save, scene load, asset import) must run on a background thread. The main thread receives a completion callback. During save, the status bar shows "Saving..." but the UI remains fully interactive.
+
+- **Targets:**
+  - Any UI event handler (click, keystroke, menu action): **<16ms** (one frame at 60fps).
+  - Viewport response to gizmo drag: **<1 frame** of latency (the gizmo position updates in the same frame as the mouse input).
+  - Hierarchy panel search on 10K entities: **<50ms** to filter and update the tree.
+  - Scene save (10K entities): **<500ms** on a background thread, zero main-thread hitch.
+
+---
+
+### 18.4 Asset Loading Performance
+
+**Pipeline analyzed (from existing engine patterns):**
+
+1. `StdFileSystem` reads raw bytes from disk.
+2. `GltfParser` parses JSON/binary glTF.
+3. `AssetManager` orchestrates loading, calls `RenderResources` to upload meshes and textures.
+4. Texture data is decoded (PNG/JPG decompression) and uploaded via `bgfx::createTexture2D`.
+5. Mesh data is uploaded via `bgfx::createVertexBuffer` / `bgfx::createIndexBuffer`.
+
+**Risks:**
+
+- **Main-thread blocking.** If `AssetManager::load()` is synchronous (as the current `StdFileSystem` implies), loading a scene with 50 unique meshes and 200 textures freezes the editor for seconds.
+- **Large texture decompression.** A 4096x4096 PNG takes 50-100ms to decompress on CPU. A scene with 20 such textures means 1-2 seconds of CPU time just for decompression.
+- **Many small file reads.** A glTF scene with external `.bin` + separate texture files can trigger hundreds of small disk reads, which is slow on spinning disks and suboptimal even on SSDs due to syscall overhead.
+- **Duplicate asset loading.** If two entities reference the same mesh file, it must not be loaded twice.
+
+**Required mitigations:**
+
+- **Async loading is mandatory.** The existing `AssetManager` pattern must be extended (or already supports) async loading. All scene loads must:
+  1. Parse the scene file on a background thread.
+  2. Enqueue asset load requests.
+  3. Process asset loads on a thread pool (one thread per CPU core, minus one for the main thread).
+  4. Upload GPU resources on the main thread (bgfx requirement) but only the `bgfx::createTexture` / `createVertexBuffer` calls, which are fast submission calls.
+  5. Entities appear in the viewport progressively as their assets finish loading.
+
+- **Memory-mapped file I/O.** For large binary assets (baked `.mesh.bin`, `.ktx2` textures from Phase 14), use `mmap` (macOS) / `MapViewOfFile` (Windows) instead of `fread`. This avoids copying data into userspace and lets the OS manage page faults efficiently.
+
+- **Texture streaming.** Large textures should load a low-resolution mip first (fast, small) and stream in higher mips on demand. This requires the baked `.ktx2` format (Phase 14) which stores mip levels independently. For the initial phases (pre-baking), accept full texture loads but do them asynchronously.
+
+- **Asset deduplication.** `RenderResources` must use path-based caching for meshes and textures. If a mesh at path `assets/cube.glb` is already loaded, return the existing handle. This is likely already implemented but must be verified and enforced.
+
+- **Targets:**
+  - Opening a scene with 100 entities and 20 unique assets: **<500ms** to first frame, **<2 seconds** to fully loaded.
+  - Opening a scene with 1,000 entities and 100 unique assets: **<1 second** to first frame (with placeholder materials), **<5 seconds** to fully loaded.
+  - Opening a scene with 10,000 entities and 500 unique assets: **<3 seconds** to first frame, **<15 seconds** to fully loaded.
+  - Hot-reloading a single texture (file watcher trigger): **<200ms** from file change to viewport update.
+
+---
+
+### 18.5 Memory Usage
+
+**Memory sources analyzed:**
+
+1. **ECS storage.** `Registry` uses sparse sets. Each component type has a dense array. `TransformComponent` is 64 bytes; with 10K entities that is 640KB. Total ECS for a 10K-entity scene with typical components: ~5-10MB.
+2. **Render resources.** Mesh vertex/index buffers live on the GPU (managed by bgfx). CPU-side mesh data can be freed after upload unless needed for CPU raycasting. Textures: a 2048x2048 RGBA8 texture is 16MB on GPU. A scene with 50 such textures uses 800MB of VRAM.
+3. **Asset cache.** `RenderResources` holds CPU-side copies of materials, mesh metadata, texture metadata. Typically small (<1MB).
+4. **Undo stack.** Each `ICommand` captures before/after state. A `SetTransformCommand` is ~192 bytes (two transforms + entity ID + vtable). A `DeleteEntityCommand` captures the full component set of the deleted entity plus all children -- potentially kilobytes per command.
+5. **UI state.** `EditorState` is small (<1KB). Native UI objects (NSOutlineView data, NSTextField instances) are managed by the platform and typically modest.
+6. **Frame arena.** The existing `FrameArena` (default 2MB, configurable via `EngineDesc::frameArenaSize`) resets every frame. This is already well-designed.
+7. **Play mode snapshot.** `EditorState::playModeSnapshot` serializes the entire scene to a JSON string in memory. A 10K-entity scene could be 5-20MB of JSON.
+8. **Log entries.** `EditorLog::entries()` stores a `std::vector<LogEntry>` that grows unboundedly.
+
+**Risks:**
+
+- **Unbounded undo history.** The `CommandStack` has a configurable `maxDepth_` (default 100), which is good. However, `DeleteEntityCommand` for a subtree of 500 entities could capture megabytes of component data. 100 such commands = hundreds of MB.
+- **Texture cache growth.** If the editor loads scenes A, B, and C in sequence without unloading, all textures remain in GPU memory.
+- **Leaked asset references.** If a `MeshComponent` references a mesh handle that was destroyed (e.g., after a scene close), the handle is a dangling reference and the memory may not be reclaimed.
+- **Play mode snapshot.** Entering and exiting play mode repeatedly without clearing `playModeSnapshot` wastes memory (though it is overwritten each time, so only one copy exists).
+- **Log entry accumulation.** A long editing session with verbose logging could accumulate thousands of log entries, each with a heap-allocated `std::string`.
+
+**Required mitigations:**
+
+- **Undo stack size limit.** Keep the default at 100 commands. Additionally, impose a **total memory budget** of 50MB for the undo stack. When a new command would exceed this budget, evict the oldest commands. Each `ICommand` must implement `size_t estimatedMemoryUsage() const` to enable this tracking.
+
+- **LRU asset cache with eviction.** `RenderResources` must track which meshes/textures are currently referenced by entities in the active scene. Unreferenced assets are candidates for eviction. Implement an LRU policy: when total texture memory exceeds a configurable limit (default 1GB VRAM), evict the least-recently-used unreferenced textures.
+
+- **Scene close cleanup.** When the editor opens a new scene (File > Open, File > New), all assets from the previous scene must be explicitly released. This means:
+  1. Destroy all bgfx texture/buffer handles for assets not shared with the new scene.
+  2. Clear the undo stack (it references entities/components from the old scene).
+  3. Clear the play mode snapshot.
+
+- **Log ring buffer.** `EditorLog` must use a ring buffer capped at 10,000 entries (configurable). Oldest entries are evicted when the cap is reached. Use `std::deque<LogEntry>` or a fixed-size circular buffer rather than an unbounded `std::vector`.
+
+- **Frame arena discipline.** All per-frame temporary allocations in editor code must use `engine::memory::FrameArena` (via `Engine::frameArena().resource()`). This includes:
+  - Temporary entity lists for hierarchy traversal
+  - Gizmo intersection test scratch data
+  - String formatting for status bar updates
+  - The arena must be reset exactly once per frame in `endFrame()` (already the case in `Engine::endFrame()`).
+
+- **Targets:**
+  - Empty editor (no scene loaded): **<200MB** RSS (including the bgfx runtime, native UI framework overhead, and the editor binary itself).
+  - Editor with a 1K-entity scene: **<400MB** RSS.
+  - Editor with a 10K-entity scene and 100 unique textures (2048x2048): **<500MB** RSS (CPU side) + GPU memory for textures.
+  - All arena allocators must reset per frame. No arena memory may persist across frames.
+  - No `std::shared_ptr` cycles. If `shared_ptr` is used at all (discouraged), the dependency graph must be acyclic and documented.
+
+---
+
+### 18.6 Memory Leak Prevention
+
+**RAII is mandatory.** All resource ownership in editor code must follow RAII. Specific requirements:
+
+- **No raw `new` or `malloc` outside of arena allocators and pool allocators.** All heap allocations must go through `std::unique_ptr`, `std::make_unique`, `PoolAllocator::allocate()`, or `FrameArena::resource()`. Raw `new` is permitted only inside `PoolAllocator` and `FrameArena` internals (which already use placement new correctly).
+
+- **bgfx resource lifecycle.** Every `bgfx::createTexture*`, `bgfx::createVertexBuffer`, `bgfx::createIndexBuffer`, `bgfx::createFrameBuffer`, and `bgfx::createProgram` call must have a corresponding `bgfx::destroy*` call. Use RAII wrappers:
+  ```cpp
+  // Suggested pattern (not mandating a specific wrapper, but the guarantee must hold)
+  struct FrameBufferGuard
+  {
+      bgfx::FrameBufferHandle handle = BGFX_INVALID_HANDLE;
+      ~FrameBufferGuard() { if (bgfx::isValid(handle)) bgfx::destroy(handle); }
+  };
+  ```
+
+- **Platform-specific requirements:**
+
+  - **macOS (Cocoa/Objective-C):** Each `.mm` file that creates Objective-C objects must use `@autoreleasepool` blocks. Specifically:
+    - The editor's main run loop iteration must be wrapped in `@autoreleasepool { ... }`.
+    - Any Cocoa object created in a background thread must have its own `@autoreleasepool`.
+    - ARC (Automatic Reference Counting) must be enabled for all `.mm` files (`-fobjc-arc` compiler flag). Do not use manual `retain`/`release`.
+    - Delegate and data source references from Cocoa views (e.g., `NSOutlineView.dataSource`) must be set to `nil` in `destroyNativeView()` to break retain cycles.
+
+  - **Windows (Win32/COM):** All COM interface pointers must use `ComPtr<T>` (from `<wrl/client.h>`). Raw `IUnknown*` pointers that are not wrapped in `ComPtr` are prohibited. All `HWND` resources must be destroyed via `DestroyWindow` in the panel's destructor or `destroyNativeView()`. GDI objects (`HBRUSH`, `HFONT`, `HBITMAP`) must be wrapped in RAII guards.
+
+- **Undo system leak prevention:**
+  - `ICommand` subclasses must not hold strong references (owning pointers, `shared_ptr`) to entities that may have been destroyed. Use `EntityID` values, which can be validated against the `Registry` before use.
+  - `DeleteEntityCommand` captures component data by value, not by pointer. When the command is evicted from the undo stack, the captured data is destroyed with the command object.
+  - `CreateEntityCommand::undo()` must destroy the entity and release its components cleanly. `CreateEntityCommand::redo()` must re-create from captured data without leaking the previous entity.
+
+- **Asset system leak prevention:**
+  - Asset cache entries in `RenderResources` must use reference counting or weak references. When an asset's reference count drops to zero (no entities reference it and no inspector is displaying it), it becomes eligible for eviction.
+  - On scene close, iterate all asset handles and destroy those with zero references. Log a warning if any handles remain referenced after the scene's `Registry` is destroyed (indicates a leak).
+
+- **Plugin system leak prevention:**
+  - On plugin unload (`dlclose` / `FreeLibrary`), verify:
+    1. All panels registered by the plugin have been removed from the window.
+    2. All menu items registered by the plugin have been removed.
+    3. All inspector registrations from the plugin have been removed.
+    4. No callbacks registered by the plugin remain in any event handler or delegate.
+  - If any of these checks fail, log an error and force-remove the dangling registrations before unloading the library.
+
+- **Testing and CI integration:**
+  - **AddressSanitizer (ASAN) + LeakSanitizer (LSAN) must be enabled in CI.** Add a CMake build configuration:
+    ```cmake
+    if(SAMA_SANITIZE)
+        target_compile_options(engine_editor PRIVATE -fsanitize=address,leak)
+        target_link_options(engine_editor PRIVATE -fsanitize=address,leak)
+    endif()
+    ```
+  - The CI pipeline must run the editor in headless mode (or with a short-lived test harness) under ASAN/LSAN and fail the build if any leaks are detected.
+  - **Periodic Instruments runs (macOS).** At least once per phase milestone, run the editor under Instruments' "Leaks" and "Allocations" instruments to catch leaks that sanitizers miss (e.g., Objective-C retain cycles).
+  - **Periodic Valgrind runs (Linux, when supported).** Memcheck for the cross-platform editor core.
+
+---
+
+### 18.7 Implementation Guidelines
+
+The following checklist applies to ALL editor code. Every pull request must verify compliance.
+
+**Header hygiene:**
+- [ ] Forward-declare everything possible in `.h` files. Include full definitions only in `.cpp` / `.mm`.
+- [ ] No platform headers (`AppKit`, `windows.h`, `commctrl.h`) in any `.h` file.
+- [ ] Pimpl all platform types. The only data member in a platform panel header is `std::unique_ptr<Impl>`.
+- [ ] `IEditorPanel`, `IEditorWindow`, `IComponentInspector` headers include only `<cstdint>` and forward declarations.
+
+**Memory allocators (use the engine's existing infrastructure):**
+- [ ] Use `FrameArena` (`engine::memory::FrameArena`) for all per-frame temporaries: scratch entity lists, formatted strings, intersection results.
+- [ ] Use `InlinedVector<T, N>` (`engine::memory::InlinedVector`) for small, bounded collections: panel lists (`InlinedVector<IEditorPanel*, 8>`), selection sets (`InlinedVector<EntityID, 16>`), gizmo axis hit results (`InlinedVector<float, 3>`).
+- [ ] Use `PoolAllocator<T, MaxCount>` (`engine::memory::PoolAllocator`) for undo commands. Size the pool to `maxDepth_` (default 100). When the pool is full and a new command arrives, destroy the oldest command and recycle its slot.
+- [ ] No `std::shared_ptr` unless the ownership graph is documented and proven acyclic. Prefer `std::unique_ptr`.
+
+**I/O:**
+- [ ] Async by default for all file I/O (scene save/load, asset import, auto-save).
+- [ ] Never call `fread`, `fwrite`, or `std::ifstream::read` on the main thread for files larger than 4KB.
+- [ ] Use `mmap` / `MapViewOfFile` for baked binary assets.
+
+**Rendering:**
+- [ ] Dirty-flag the viewport. Do not re-render if nothing changed.
+- [ ] Gizmo and grid rendering must complete in <2ms total.
+- [ ] Selection highlight (stencil outline) must not double the draw call count; use a single stencil pass, not per-entity passes.
+
+**Profiling:**
+- [ ] Profile before optimizing, but design for performance from the start.
+- [ ] Every system that runs per-frame must be measurable via `std::chrono::high_resolution_clock` wrappers (Section 10, Resource Usage Inspector).
+- [ ] Add `SAMA_PROFILE_SCOPE("name")` markers (to be implemented) at the top of every per-frame function for future integration with Tracy, Superluminal, or Instruments.
+
+**Testing:**
+- [ ] ASAN/LSAN enabled in CI for every editor build.
+- [ ] Memory targets (Section 18.5) are tested via an automated benchmark that loads a reference scene and checks RSS.
+- [ ] Startup time target (Section 18.2) is tested via an automated benchmark that measures time from process launch to first frame.
+
+This section is a binding contract. Deviations require explicit justification documented in the pull request description and approved before merge.
