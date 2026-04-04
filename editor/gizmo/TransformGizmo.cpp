@@ -27,6 +27,7 @@ TransformGizmo::TransformGizmo(Registry& registry, EditorState& state, const IEd
 void TransformGizmo::screenToRay(const glm::mat4& invVP, glm::vec3& origin,
                                  glm::vec3& direction) const
 {
+    // bgfx resolution matches logical (points) coords in the editor.
     float mx = static_cast<float>(window_.mouseX());
     float my = static_cast<float>(window_.mouseY());
     float w = static_cast<float>(window_.width());

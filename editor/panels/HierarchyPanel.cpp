@@ -40,9 +40,8 @@ void HierarchyPanel::update(float /*dt*/)
         double mx = window_.mouseX();
         double my = window_.mouseY();
 
-        // bgfx debug text is 8x16 pixels per character cell.
-        // Only handle clicks in the hierarchy column (x < 30 chars = 240 px).
-        float scale = window_.contentScale();
+        // bgfx resolution is set to logical (points) in the editor,
+        // so debug text chars are 8x16 in the same coordinate space as mouse.
         double charW = 8.0;
         double charH = 16.0;
 

@@ -122,8 +122,11 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     bgfx::Init init;
     init.type = bgfx::RendererType::Metal;
     init.platformData.nwh = impl_->window->nativeLayer();
-    init.resolution.width = impl_->window->framebufferWidth();
-    init.resolution.height = impl_->window->framebufferHeight();
+    // Use logical (points) resolution so debug text is readable on HiDPI.
+    // Native AppKit panels will replace debug text, then we can switch to
+    // framebuffer resolution for full Retina rendering.
+    init.resolution.width = impl_->window->width();
+    init.resolution.height = impl_->window->height();
     init.resolution.reset = BGFX_RESET_VSYNC;
 
     if (!bgfx::init(init))
@@ -134,8 +137,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 
-    impl_->fbW = static_cast<uint16_t>(impl_->window->framebufferWidth());
-    impl_->fbH = static_cast<uint16_t>(impl_->window->framebufferHeight());
+    impl_->fbW = static_cast<uint16_t>(impl_->window->width());
+    impl_->fbH = static_cast<uint16_t>(impl_->window->height());
 
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
     bgfx::setViewRect(0, 0, 0, impl_->fbW, impl_->fbH);
@@ -282,8 +285,8 @@ void EditorApp::run()
         impl_->window->pollEvents();
 
         // -- Resize -----------------------------------------------------------
-        uint32_t fbW = impl_->window->framebufferWidth();
-        uint32_t fbH = impl_->window->framebufferHeight();
+        uint32_t fbW = impl_->window->width();
+        uint32_t fbH = impl_->window->height();
         if ((fbW != impl_->fbW || fbH != impl_->fbH) && fbW > 0 && fbH > 0)
         {
             bgfx::reset(fbW, fbH, BGFX_RESET_VSYNC);
