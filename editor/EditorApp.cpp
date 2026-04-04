@@ -742,6 +742,12 @@ void EditorApp::run()
             impl_->gizmo->update(dt, gView, gProj);
         }
 
+        // -- Update properties in real-time during gizmo drag -----------------
+        if (impl_->gizmo->isDragging())
+        {
+            impl_->propertiesDirty = true;
+        }
+
         // -- Gizmo undo command on drag-end ----------------------------------
         if (impl_->gizmo->dragJustEnded())
         {
