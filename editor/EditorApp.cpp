@@ -14,6 +14,9 @@
 #include "editor/EditorState.h"
 #include "editor/gizmo/GizmoRenderer.h"
 #include "editor/gizmo/TransformGizmo.h"
+#include "editor/inspectors/LightInspector.h"
+#include "editor/inspectors/MaterialInspector.h"
+#include "editor/inspectors/NameInspector.h"
 #include "editor/inspectors/TransformInspector.h"
 #include "editor/panels/AssetBrowserPanel.h"
 #include "editor/panels/HierarchyPanel.h"
@@ -104,6 +107,9 @@ struct EditorApp::Impl
     // Status message (shown briefly in HUD)
     char statusMsg[128] = {};
     float statusTimer = 0.0f;
+
+    // Add component menu
+    bool addComponentMenuOpen = false;
 
     // Selection highlight material
     uint32_t selectionMatId = 0;
@@ -263,7 +269,11 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     impl_->propertiesPanel =
         std::make_unique<PropertiesPanel>(impl_->registry, impl_->editorState, *impl_->window);
+    impl_->propertiesPanel->addInspector(std::make_unique<NameInspector>(*impl_->window));
     impl_->propertiesPanel->addInspector(std::make_unique<TransformInspector>(*impl_->window));
+    impl_->propertiesPanel->addInspector(
+        std::make_unique<MaterialInspector>(*impl_->window, impl_->resources));
+    impl_->propertiesPanel->addInspector(std::make_unique<LightInspector>(*impl_->window));
     impl_->propertiesPanel->init();
 
     impl_->assetBrowserPanel =
@@ -422,6 +432,75 @@ void EditorApp::run()
                 impl_->commandStack.execute(std::move(cmd));
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Deleted entity");
                 impl_->statusTimer = 2.0f;
+            }
+        }
+
+        // A = toggle add component menu
+        if (impl_->window->isKeyPressed('A') && !impl_->window->isCommandDown())
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                impl_->addComponentMenuOpen = !impl_->addComponentMenuOpen;
+            }
+        }
+
+        // Add component menu: number keys select component type.
+        if (impl_->addComponentMenuOpen)
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                if (impl_->window->isKeyPressed('1'))
+                {
+                    if (!impl_->registry.has<DirectionalLightComponent>(selE))
+                    {
+                        DirectionalLightComponent dl{};
+                        dl.direction = {0.0f, -1.0f, 0.0f};
+                        dl.color = {1.0f, 1.0f, 1.0f};
+                        dl.intensity = 1.0f;
+                        dl.flags = 0;
+                        impl_->registry.emplace<DirectionalLightComponent>(selE, dl);
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                 "Added DirectionalLight");
+                        impl_->statusTimer = 2.0f;
+                    }
+                    impl_->addComponentMenuOpen = false;
+                }
+                if (impl_->window->isKeyPressed('2'))
+                {
+                    if (!impl_->registry.has<PointLightComponent>(selE))
+                    {
+                        PointLightComponent pl{};
+                        pl.color = {1.0f, 1.0f, 1.0f};
+                        pl.intensity = 1.0f;
+                        pl.radius = 10.0f;
+                        impl_->registry.emplace<PointLightComponent>(selE, pl);
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added PointLight");
+                        impl_->statusTimer = 2.0f;
+                    }
+                    impl_->addComponentMenuOpen = false;
+                }
+                if (impl_->window->isKeyPressed('3'))
+                {
+                    if (!impl_->registry.has<MeshComponent>(selE))
+                    {
+                        impl_->registry.emplace<MeshComponent>(selE,
+                                                               MeshComponent{impl_->cubeMeshId});
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                 "Added MeshComponent (cube)");
+                        impl_->statusTimer = 2.0f;
+                    }
+                    impl_->addComponentMenuOpen = false;
+                }
+                if (impl_->window->isKeyPressed(0x1B))  // Escape
+                {
+                    impl_->addComponentMenuOpen = false;
+                }
+            }
+            else
+            {
+                impl_->addComponentMenuOpen = false;
             }
         }
 
@@ -596,12 +675,22 @@ void EditorApp::run()
         // Keyboard shortcuts help.
         bgfx::dbgTextPrintf(1, 3, 0x08,
                             "Cmd+S=save  Cmd+N=new  Del=delete  "
-                            "Cmd+Z=undo  Cmd+Shift+Z=redo  Tab=assets");
+                            "Cmd+Z=undo  Cmd+Shift+Z=redo  Tab=assets  A=add comp");
 
         // Status message.
         if (impl_->statusTimer > 0.0f)
         {
             bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
+        }
+
+        // Add component menu.
+        if (impl_->addComponentMenuOpen)
+        {
+            bgfx::dbgTextPrintf(55, 40, 0x0f, "--- Add Component ---");
+            bgfx::dbgTextPrintf(55, 41, 0x07, "1) DirectionalLight");
+            bgfx::dbgTextPrintf(55, 42, 0x07, "2) PointLight");
+            bgfx::dbgTextPrintf(55, 43, 0x07, "3) Mesh (cube)");
+            bgfx::dbgTextPrintf(55, 44, 0x08, "Esc to cancel");
         }
 
         // Render panels (hierarchy, properties, asset browser) as debug text.
