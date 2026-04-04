@@ -112,10 +112,16 @@ public:
     // Returns the process exit code (0 on clean exit).
     int run(const core::EngineDesc& desc);
 
+    // Configure the fixed timestep (physics/gameplay tick rate).
+    // This is the simulation rate, NOT the rendering frame rate.
+    // Default 60Hz. Set lower for less demanding games or weak devices.
+    void setFixedTimestep(float seconds) { fixedTimestep_ = seconds; }
+    void setFixedRate(uint32_t hz) { fixedTimestep_ = 1.0f / static_cast<float>(hz); }
+
 private:
     IGame& game_;
-    float fixedTimestep_ = 1.0f / 60.0f;
-    float maxAccumulator_ = 0.25f;  // cap spiral-of-death
+    float fixedTimestep_ = 1.0f / 60.0f;  // default 60Hz
+    float maxAccumulator_ = 0.25f;         // cap spiral-of-death
 };
 
 }  // namespace engine::game
@@ -204,6 +210,30 @@ The accumulator pattern in `GameRunner::run()` fixes this:
 - Multiple physics steps per frame when rendering is slow; zero steps when rendering is fast.
 - `maxAccumulator_` caps the spiral-of-death: if a frame takes 500ms, we do not run 30 physics steps to catch up. We cap at `0.25 / fixedTimestep_ = 15` steps and accept the simulation falling behind.
 - The interpolation alpha (`accumulator / fixedTimestep_`) is available if visual interpolation between physics states is needed later, but is not required initially.
+
+**Fixed timestep vs render frame rate:** These are independent. The fixed timestep controls how often `onFixedUpdate` (physics, gameplay logic) ticks. Rendering happens once per frame at whatever rate the display allows. On a 30fps device with a 60Hz fixed timestep, the accumulator runs 2 physics steps per render frame. On a 120Hz display, most frames run 0 or 1 physics steps.
+
+**Configuring per platform:**
+
+| Platform | Recommended fixed rate | Rationale |
+|----------|----------------------|-----------|
+| Desktop (60Hz+ display) | 60Hz (default) | Standard for action games, matches typical display |
+| Desktop (high refresh) | 60Hz or 120Hz | 120Hz for competitive FPS; 60Hz is fine for most games |
+| Mobile (high-end) | 60Hz | Modern phones handle it; matches 60Hz display |
+| Mobile (low-end) | 30Hz | Saves battery/thermal; acceptable for casual games |
+| Turn-based / puzzle | 15-30Hz | Physics isn't the bottleneck; lower rate saves CPU |
+
+Set via `runner.setFixedRate(30)` before `runner.run()`, or from `project.json`:
+
+```json
+{
+    "physics": {
+        "fixedRateHz": 30
+    }
+}
+```
+
+The game can also change the rate at runtime (e.g., drop to 30Hz when thermal throttling is detected on mobile), though this may cause a brief simulation hiccup as the accumulator adjusts.
 
 ### 2.5 Extending Engine (Not Replacing It)
 
