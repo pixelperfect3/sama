@@ -560,7 +560,7 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 - In-editor asset import pipeline (currently assets are pre-processed externally)
 
 ### Status
-- [ ] Editor not started
+- [x] Editor Phases 1-4 complete (native window, hierarchy, properties, gizmos)
 
 ---
 
@@ -898,6 +898,42 @@ Architecture is documented in `docs/EDITOR_ARCHITECTURE.md`. The editor uses nat
 
 **Test scene:** A red PBR cube on a gray ground plane, lit by a fixed directional light. Right-drag orbits, scroll zooms. Debug text shows FPS.
 
-**What's next (Phase 2):** NSSplitView layout with panel system, ViewportPanel with its own bgfx framebuffer, hierarchy panel with NSOutlineView.
+### Phase 2 — Scene Hierarchy Panel with Entity Selection (Complete)
+
+**What was built:**
+- `editor/EditorState.h` — shared editor state with entity selection tracking (`InlinedVector<EntityID, 16>` for multi-select), selection-changed callback
+- `editor/panels/IEditorPanel.h` — panel interface with init/shutdown/update/render and visibility toggle
+- `editor/panels/HierarchyPanel.h/.cpp` — flat entity list rendered via bgfx debug text; shows entity names (from `NameComponent`) and component tags ([T], [M], [Mat], [DL], etc.); click detection maps mouse Y to entity row for selection; selected entity highlighted with green background
+- Selection highlight in 3D viewport: selected entity rendered with a slightly scaled yellow PBR overdraw
+- Keyboard event tracking added to `CocoaEditorWindow` (macOS virtual key code mapping to ASCII)
+
+**Key decisions:**
+- **bgfx debug text for panels (temporary):** Using `bgfx::dbgTextPrintf` for hierarchy/properties rendering instead of native `NSOutlineView`. This avoids the complexity of native view management while proving out the data flow. Will be replaced with native UI in a later phase.
+- **Click detection via character grid:** Mouse position divided by 8x16 debug text cell size to determine which entity row was clicked. Simple but effective for the debug text approach.
+
+### Phase 3 — Properties Inspector with Transform Editing (Complete)
+
+**What was built:**
+- `editor/panels/IComponentInspector.h` — interface for per-component inspectors (`canInspect`, `inspect`)
+- `editor/inspectors/TransformInspector.h/.cpp` — displays and edits TransformComponent (position/rotation as euler/scale); Tab to navigate fields, +/- or arrow keys to increment/decrement values
+- `editor/panels/PropertiesPanel.h/.cpp` — aggregates registered `IComponentInspector` instances, renders all applicable inspectors for the selected entity via bgfx debug text
+
+**Key decisions:**
+- **Keyboard-based editing:** Rather than mouse-based text field input (which requires complex text editing state), values are adjusted with arrow keys and +/-. Position/scale increments by 0.1, rotation by 5 degrees. This is fast to implement and surprisingly usable for quick tweaks.
+- **Pluggable inspector architecture:** `PropertiesPanel::addInspector()` accepts any `IComponentInspector`, making it trivial to add inspectors for Material, Light, Physics, etc. in future phases.
+
+### Phase 4 — Transform Gizmos (Complete)
+
+**What was built:**
+- `editor/gizmo/TransformGizmo.h/.cpp` — gizmo state machine with three modes (Translate/Rotate/Scale, W/E/R keys); mouse raycasting against axis cylinders for hover detection; drag interaction projects mouse movement onto selected axis
+- `editor/gizmo/GizmoRenderer.h/.cpp` — renders colored line geometry (arrows for translate, crosses for scale, circles for rotate) using transient vertex buffers on a dedicated overlay bgfx view (view 50, no depth test against scene)
+- `engine/shaders/vs_gizmo.sc` / `fs_gizmo.sc` — minimal position+color passthrough shader for vertex-colored gizmo lines
+- `engine/rendering::loadGizmoProgram()` — embedded shader loader for gizmo program
+
+**Key decisions:**
+- **Dedicated gizmo shader:** The existing unlit shader hardcodes orange output. Rather than modifying it (which could break tests), a new vs_gizmo/fs_gizmo pair does position+vertex-color passthrough. Two tiny shaders (10 lines total) compiled for all four backends.
+- **Constant screen-size gizmo:** Gizmo geometry is scaled by `distance_to_camera * 0.15f` so it appears the same size regardless of zoom level.
+- **Overlay rendering:** Gizmo uses bgfx view 50 with no depth test, so it always renders on top of scene geometry. Line anti-aliasing enabled (`BGFX_STATE_LINEAA`).
+- **Rotate mode deferred:** Circles are drawn but rotation drag interaction is not yet wired (requires angle delta computation around the rotation circle's center).
 
 ---
