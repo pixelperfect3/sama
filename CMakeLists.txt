@@ -865,9 +865,12 @@ target_link_libraries(engine_core PUBLIC
 
 # --- engine_game static library ---
 # Game layer: IGame interface, GameRunner (frame loop with fixed timestep).
-add_library(engine_game STATIC engine/game/GameRunner.cpp)
+add_library(engine_game STATIC
+    engine/game/GameRunner.cpp
+    engine/game/ProjectConfig.cpp
+)
 target_include_directories(engine_game PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_game PUBLIC engine_core engine_scene engine_ecs)
+target_link_libraries(engine_game PUBLIC engine_core engine_scene engine_ecs engine_io)
 
 # --- helmet_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")

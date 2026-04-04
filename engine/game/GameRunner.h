@@ -29,6 +29,10 @@ public:
     // Returns the process exit code (0 on clean exit).
     int run(const core::EngineDesc& desc);
 
+    // Run using a ProjectConfig JSON file for configuration.
+    // If configPath is null or the file is missing, uses defaults.
+    int run(const char* configPath = nullptr);
+
     // Configure the fixed timestep (physics/gameplay tick rate).
     // Default 60Hz.
     void setFixedTimestep(float seconds)

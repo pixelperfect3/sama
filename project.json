@@ -1,0 +1,14 @@
+{
+    "name": "Sama Game",
+    "window": {
+        "title": "Sama Game",
+        "width": 1280,
+        "height": 720
+    },
+    "physics": {
+        "fixedRateHz": 60
+    },
+    "render": {
+        "shadowResolution": 2048
+    }
+}

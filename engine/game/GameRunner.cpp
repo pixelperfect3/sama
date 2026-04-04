@@ -5,6 +5,7 @@
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
 #include "engine/game/IGame.h"
+#include "engine/game/ProjectConfig.h"
 #include "engine/scene/TransformSystem.h"
 
 namespace engine::game
@@ -62,6 +63,20 @@ int GameRunner::run(const core::EngineDesc& desc)
     game_.onShutdown(engine, registry);
     engine.shutdown();
     return 0;
+}
+
+int GameRunner::run(const char* configPath)
+{
+    ProjectConfig config;
+    if (configPath)
+    {
+        config.loadFromFile(configPath);
+    }
+
+    // Apply physics config to runner.
+    fixedTimestep_ = config.physics.fixedTimestep;
+
+    return run(config.toEngineDesc());
 }
 
 }  // namespace engine::game
