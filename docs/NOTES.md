@@ -562,6 +562,9 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 ### Status
 - [x] Editor Phases 1-4 complete (native window, hierarchy, properties, gizmos)
 - [x] Editor Phases 5-9 complete (undo/redo, shortcuts, asset browser, inspectors, console)
+- [x] Viewport click-to-select (ray-AABB picking, slab method, gizmo priority)
+- [x] Phase 10: Resource usage inspector — live stats panel (FPS, frame time, draw calls, triangles, texture memory, entity count, arena usage) in a tabbed bottom panel alongside Console. Rolling ring buffer history (120 samples). Native NSTabView with CocoaResourceView labels.
+- [x] Phase 11: Play/pause/stop — EditorPlayState enum, Space=play/pause, Escape=stop. Transform snapshot on play, full restore on stop to prevent scene corruption. HUD indicator shows current state.
 
 ---
 
