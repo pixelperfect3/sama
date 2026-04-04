@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "editor/EditorLog.h"
 #include "editor/EditorState.h"
 #include "editor/gizmo/GizmoRenderer.h"
 #include "editor/gizmo/TransformGizmo.h"
@@ -19,6 +20,7 @@
 #include "editor/inspectors/NameInspector.h"
 #include "editor/inspectors/TransformInspector.h"
 #include "editor/panels/AssetBrowserPanel.h"
+#include "editor/panels/ConsolePanel.h"
 #include "editor/panels/HierarchyPanel.h"
 #include "editor/panels/PropertiesPanel.h"
 #include "editor/platform/IEditorWindow.h"
@@ -93,6 +95,9 @@ struct EditorApp::Impl
 
     // Asset browser
     std::unique_ptr<AssetBrowserPanel> assetBrowserPanel;
+
+    // Console
+    std::unique_ptr<ConsolePanel> consolePanel;
 
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
@@ -282,6 +287,10 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->assetBrowserPanel->setVisible(false);  // hidden by default, toggle with Tab
     impl_->assetBrowserPanel->init();
 
+    impl_->consolePanel = std::make_unique<ConsolePanel>();
+    impl_->consolePanel->setVisible(false);  // hidden by default, toggle with ~
+    impl_->consolePanel->init();
+
     impl_->gizmo =
         std::make_unique<TransformGizmo>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->gizmoRenderer.init();
@@ -304,6 +313,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     // Flush initial resource uploads.
     bgfx::frame();
+
+    EditorLog::instance().info("Sama Editor initialized");
 
     impl_->initialized = true;
     return true;
@@ -387,11 +398,19 @@ void EditorApp::run()
         {
             if (impl_->window->isShiftDown())
             {
+                const char* desc = impl_->commandStack.redoDescription();
                 impl_->commandStack.redo();
+                char buf[128];
+                snprintf(buf, sizeof(buf), "Redo: %s", desc);
+                EditorLog::instance().info(buf);
             }
             else
             {
+                const char* desc = impl_->commandStack.undoDescription();
                 impl_->commandStack.undo();
+                char buf[128];
+                snprintf(buf, sizeof(buf), "Undo: %s", desc);
+                EditorLog::instance().info(buf);
             }
         }
 
@@ -404,10 +423,12 @@ void EditorApp::run()
             {
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
                          "Scene saved to editor_scene.json");
+                EditorLog::instance().info("Scene saved to editor_scene.json");
             }
             else
             {
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Failed to save scene!");
+                EditorLog::instance().error("Failed to save scene!");
             }
             impl_->statusTimer = 3.0f;
         }
@@ -419,6 +440,7 @@ void EditorApp::run()
             impl_->commandStack.execute(std::move(cmd));
             snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Created new entity");
             impl_->statusTimer = 2.0f;
+            EditorLog::instance().info("Created new entity");
         }
 
         // Delete/Backspace = delete selected entity
@@ -432,6 +454,7 @@ void EditorApp::run()
                 impl_->commandStack.execute(std::move(cmd));
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Deleted entity");
                 impl_->statusTimer = 2.0f;
+                EditorLog::instance().info("Deleted entity");
             }
         }
 
@@ -502,6 +525,13 @@ void EditorApp::run()
             {
                 impl_->addComponentMenuOpen = false;
             }
+        }
+
+        // ~ (backtick) = toggle console
+        if (impl_->window->isKeyPressed('`'))
+        {
+            bool vis = impl_->consolePanel->isVisible();
+            impl_->consolePanel->setVisible(!vis);
         }
 
         // Tab = toggle asset browser
@@ -647,6 +677,7 @@ void EditorApp::run()
         impl_->hierarchyPanel->update(dt);
         impl_->propertiesPanel->update(dt);
         impl_->assetBrowserPanel->update(dt);
+        impl_->consolePanel->update(dt);
 
         // -- HUD --------------------------------------------------------------
         bgfx::dbgTextClear();
@@ -675,7 +706,7 @@ void EditorApp::run()
         // Keyboard shortcuts help.
         bgfx::dbgTextPrintf(1, 3, 0x08,
                             "Cmd+S=save  Cmd+N=new  Del=delete  "
-                            "Cmd+Z=undo  Cmd+Shift+Z=redo  Tab=assets  A=add comp");
+                            "Cmd+Z/Shift+Z=undo/redo  Tab=assets  A=add  ~=console");
 
         // Status message.
         if (impl_->statusTimer > 0.0f)
@@ -697,6 +728,7 @@ void EditorApp::run()
         impl_->hierarchyPanel->render();
         impl_->propertiesPanel->render();
         impl_->assetBrowserPanel->render();
+        impl_->consolePanel->render();
 
         // -- End frame --------------------------------------------------------
         impl_->frameArena->reset();
@@ -721,6 +753,10 @@ void EditorApp::shutdown()
     if (impl_->assetBrowserPanel)
     {
         impl_->assetBrowserPanel->shutdown();
+    }
+    if (impl_->consolePanel)
+    {
+        impl_->consolePanel->shutdown();
     }
 
     impl_->gizmoRenderer.shutdown();

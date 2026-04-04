@@ -509,9 +509,10 @@ add_library(engine_scene STATIC
     engine/scene/SceneGraph.cpp
     engine/scene/TransformSystem.cpp
     engine/scene/SceneSerializer.cpp
+    engine/scene/SceneManager.cpp
 )
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_scene PUBLIC engine_ecs engine_io engine_rendering glm::glm)
+target_link_libraries(engine_scene PUBLIC engine_ecs engine_io engine_rendering engine_assets glm::glm)
 
 # --- engine_audio static library ---
 # Compiles SoLoud core + miniaudio backend + engine audio code into a single
@@ -1138,6 +1139,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/panels/HierarchyPanel.cpp
         editor/panels/PropertiesPanel.cpp
         editor/panels/AssetBrowserPanel.cpp
+        editor/panels/ConsolePanel.cpp
+        editor/EditorLog.cpp
         editor/inspectors/TransformInspector.cpp
         editor/inspectors/MaterialInspector.cpp
         editor/inspectors/LightInspector.cpp
