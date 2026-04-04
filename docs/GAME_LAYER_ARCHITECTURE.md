@@ -104,8 +104,8 @@ namespace engine::game
 class GameRunner
 {
 public:
-    // Takes ownership of the game instance.
-    explicit GameRunner(std::unique_ptr<IGame> game);
+    // Game must outlive the runner. Caller owns the IGame on the stack.
+    explicit GameRunner(IGame& game);
     ~GameRunner();
 
     // Run the full lifecycle: init -> loop -> shutdown.
@@ -113,7 +113,7 @@ public:
     int run(const core::EngineDesc& desc);
 
 private:
-    std::unique_ptr<IGame> game_;
+    IGame& game_;
     float fixedTimestep_ = 1.0f / 60.0f;
     float maxAccumulator_ = 0.25f;  // cap spiral-of-death
 };
@@ -238,7 +238,8 @@ int main()
     EngineDesc desc;
     desc.windowTitle = "Physics Demo";
 
-    GameRunner runner(std::make_unique<PhysicsGame>());
+    PhysicsGame game;
+    GameRunner runner(game);
     return runner.run(desc);
 }
 ```
