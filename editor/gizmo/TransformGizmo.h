@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 
 #include "engine/ecs/Entity.h"
+#include "engine/rendering/EcsComponents.h"
 
 // Forward declarations.
 namespace engine::ecs
@@ -73,6 +74,18 @@ public:
         return dragging_;
     }
 
+    // Returns true the frame a drag just completed (for undo command creation).
+    [[nodiscard]] bool dragJustEnded() const
+    {
+        return dragJustEnded_;
+    }
+
+    // The transform captured at the start of the most recent drag.
+    [[nodiscard]] const rendering::TransformComponent& dragStartTransform() const
+    {
+        return dragStartTransform_;
+    }
+
     // Returns the world position of the gizmo (selected entity's position).
     [[nodiscard]] glm::vec3 gizmoPosition() const
     {
@@ -104,6 +117,8 @@ private:
 
     glm::vec3 gizmoPos_{0.0f};
     glm::vec3 dragStartPos_{0.0f};
+    bool dragJustEnded_ = false;
+    rendering::TransformComponent dragStartTransform_{};
 
     // Cached for drag computations.
     glm::mat4 cachedView_{1.0f};

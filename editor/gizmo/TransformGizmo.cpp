@@ -126,6 +126,7 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
 {
     cachedView_ = view;
     cachedProj_ = proj;
+    dragJustEnded_ = false;
 
     // Handle mode switching via keyboard.
     if (window_.isKeyPressed('W'))
@@ -200,6 +201,13 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
             dragging_ = true;
             activeAxis_ = hoveredAxis_;
             dragStartPos_ = gizmoPos_;
+
+            // Capture the transform at drag start for undo.
+            auto* tc = registry_.get<TransformComponent>(selE);
+            if (tc)
+            {
+                dragStartTransform_ = *tc;
+            }
         }
     }
     else
@@ -209,6 +217,7 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
         {
             dragging_ = false;
             activeAxis_ = GizmoAxis::None;
+            dragJustEnded_ = true;
         }
         else
         {

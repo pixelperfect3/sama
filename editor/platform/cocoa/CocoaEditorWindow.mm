@@ -11,9 +11,17 @@
 @interface EditorMetalView : NSView
 {
     BOOL keyPressed_[256];
+    BOOL modCommand_;
+    BOOL modShift_;
+    BOOL modControl_;
+    BOOL modOption_;
 }
 @property(nonatomic, assign) double scrollDeltaY;
 - (BOOL)wasKeyPressed:(uint8_t)keyCode;
+- (BOOL)isCommandDown;
+- (BOOL)isShiftDown;
+- (BOOL)isControlDown;
+- (BOOL)isOptionDown;
 - (void)clearKeyState;
 @end
 
@@ -103,6 +111,8 @@ static uint8_t mapKeyCode(unsigned short vk)
         case 0x30: return 0x09;  // Tab
         case 0x18: return '=';
         case 0x1B: return '-';
+        case 0x32: return '`';  // Tilde/backtick
+        case 0x75: return 0x7F; // Forward delete
         default:   return 0;
     }
 }
@@ -116,9 +126,38 @@ static uint8_t mapKeyCode(unsigned short vk)
     }
 }
 
+- (void)flagsChanged:(NSEvent*)event
+{
+    NSEventModifierFlags flags = [event modifierFlags];
+    modCommand_ = (flags & NSEventModifierFlagCommand) != 0;
+    modShift_ = (flags & NSEventModifierFlagShift) != 0;
+    modControl_ = (flags & NSEventModifierFlagControl) != 0;
+    modOption_ = (flags & NSEventModifierFlagOption) != 0;
+}
+
 - (BOOL)wasKeyPressed:(uint8_t)keyCode
 {
     return keyPressed_[keyCode];
+}
+
+- (BOOL)isCommandDown
+{
+    return modCommand_;
+}
+
+- (BOOL)isShiftDown
+{
+    return modShift_;
+}
+
+- (BOOL)isControlDown
+{
+    return modControl_;
+}
+
+- (BOOL)isOptionDown
+{
+    return modOption_;
 }
 
 - (void)clearKeyState
@@ -410,6 +449,34 @@ bool CocoaEditorWindow::isKeyPressed(uint8_t keyCode) const
     if (!impl_->metalView)
         return false;
     return [impl_->metalView wasKeyPressed:keyCode];
+}
+
+bool CocoaEditorWindow::isCommandDown() const
+{
+    if (!impl_->metalView)
+        return false;
+    return [impl_->metalView isCommandDown];
+}
+
+bool CocoaEditorWindow::isShiftDown() const
+{
+    if (!impl_->metalView)
+        return false;
+    return [impl_->metalView isShiftDown];
+}
+
+bool CocoaEditorWindow::isControlDown() const
+{
+    if (!impl_->metalView)
+        return false;
+    return [impl_->metalView isControlDown];
+}
+
+bool CocoaEditorWindow::isOptionDown() const
+{
+    if (!impl_->metalView)
+        return false;
+    return [impl_->metalView isOptionDown];
 }
 
 }  // namespace engine::editor

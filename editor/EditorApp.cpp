@@ -19,6 +19,8 @@
 #include "editor/panels/PropertiesPanel.h"
 #include "editor/platform/IEditorWindow.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
+#include "editor/undo/CommandStack.h"
+#include "editor/undo/SetTransformCommand.h"
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/memory/FrameArena.h"
@@ -85,6 +87,9 @@ struct EditorApp::Impl
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
     GizmoRenderer gizmoRenderer;
+
+    // Undo/redo
+    CommandStack commandStack;
 
     // Selection highlight material
     uint32_t selectionMatId = 0;
@@ -327,6 +332,36 @@ void EditorApp::run()
             impl_->gizmo->update(dt, gView, gProj);
         }
 
+        // -- Gizmo undo command on drag-end ----------------------------------
+        if (impl_->gizmo->dragJustEnded())
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                auto* tc = impl_->registry.get<TransformComponent>(selE);
+                if (tc)
+                {
+                    auto cmd = std::make_unique<SetTransformCommand>(
+                        impl_->registry, selE, impl_->gizmo->dragStartTransform(), *tc);
+                    // Command is already applied by gizmo; push without re-executing.
+                    impl_->commandStack.execute(std::move(cmd));
+                }
+            }
+        }
+
+        // -- Undo/Redo keyboard shortcuts -----------------------------------
+        if (impl_->window->isKeyPressed('Z') && impl_->window->isCommandDown())
+        {
+            if (impl_->window->isShiftDown())
+            {
+                impl_->commandStack.redo();
+            }
+            else
+            {
+                impl_->commandStack.undo();
+            }
+        }
+
         // -- Transform system -------------------------------------------------
         impl_->transformSys.update(impl_->registry);
 
@@ -462,7 +497,20 @@ void EditorApp::run()
             modeStr = "Rotate";
         else if (impl_->gizmo->mode() == GizmoMode::Scale)
             modeStr = "Scale";
-        bgfx::dbgTextPrintf(1, 2, 0x07, "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]", modeStr);
+        bgfx::dbgTextPrintf(
+            1, 2, 0x07,
+            "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  Cmd+Shift+Z=redo",
+            modeStr);
+
+        // Undo/redo status.
+        if (impl_->commandStack.canUndo())
+        {
+            bgfx::dbgTextPrintf(60, 1, 0x07, "Undo: %s", impl_->commandStack.undoDescription());
+        }
+        if (impl_->commandStack.canRedo())
+        {
+            bgfx::dbgTextPrintf(60, 2, 0x07, "Redo: %s", impl_->commandStack.redoDescription());
+        }
 
         // Render panels (hierarchy, properties) as debug text.
         impl_->hierarchyPanel->render();

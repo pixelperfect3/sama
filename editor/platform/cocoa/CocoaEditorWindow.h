@@ -51,6 +51,11 @@ public:
     bool isRightMouseDown() const override;
     bool isKeyPressed(uint8_t keyCode) const override;
 
+    bool isCommandDown() const override;
+    bool isShiftDown() const override;
+    bool isControlDown() const override;
+    bool isOptionDown() const override;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

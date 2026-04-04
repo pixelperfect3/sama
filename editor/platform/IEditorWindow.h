@@ -44,6 +44,12 @@ public:
     // Keyboard state — returns true if the key was pressed this frame.
     // keyCode uses platform-independent virtual key codes (ASCII for letters).
     virtual bool isKeyPressed(uint8_t keyCode) const = 0;
+
+    // Modifier key state — returns true if the modifier is currently held.
+    virtual bool isCommandDown() const = 0;
+    virtual bool isShiftDown() const = 0;
+    virtual bool isControlDown() const = 0;
+    virtual bool isOptionDown() const = 0;
 };
 
 }  // namespace engine::editor
