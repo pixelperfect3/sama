@@ -15,6 +15,7 @@
 #include "editor/gizmo/GizmoRenderer.h"
 #include "editor/gizmo/TransformGizmo.h"
 #include "editor/inspectors/TransformInspector.h"
+#include "editor/panels/AssetBrowserPanel.h"
 #include "editor/panels/HierarchyPanel.h"
 #include "editor/panels/PropertiesPanel.h"
 #include "editor/platform/IEditorWindow.h"
@@ -86,6 +87,9 @@ struct EditorApp::Impl
     EditorState editorState;
     std::unique_ptr<HierarchyPanel> hierarchyPanel;
     std::unique_ptr<PropertiesPanel> propertiesPanel;
+
+    // Asset browser
+    std::unique_ptr<AssetBrowserPanel> assetBrowserPanel;
 
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
@@ -262,6 +266,12 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->propertiesPanel->addInspector(std::make_unique<TransformInspector>(*impl_->window));
     impl_->propertiesPanel->init();
 
+    impl_->assetBrowserPanel =
+        std::make_unique<AssetBrowserPanel>(impl_->registry, impl_->editorState, *impl_->window);
+    impl_->assetBrowserPanel->setAssetDirectory("assets");
+    impl_->assetBrowserPanel->setVisible(false);  // hidden by default, toggle with Tab
+    impl_->assetBrowserPanel->init();
+
     impl_->gizmo =
         std::make_unique<TransformGizmo>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->gizmoRenderer.init();
@@ -415,6 +425,17 @@ void EditorApp::run()
             }
         }
 
+        // Tab = toggle asset browser
+        if (impl_->window->isKeyPressed(0x09) && !impl_->window->isCommandDown())
+        {
+            bool vis = impl_->assetBrowserPanel->isVisible();
+            impl_->assetBrowserPanel->setVisible(!vis);
+            if (!vis)
+            {
+                impl_->assetBrowserPanel->refresh();
+            }
+        }
+
         // Decrement status timer.
         if (impl_->statusTimer > 0.0f)
         {
@@ -546,6 +567,7 @@ void EditorApp::run()
         // -- Panels -----------------------------------------------------------
         impl_->hierarchyPanel->update(dt);
         impl_->propertiesPanel->update(dt);
+        impl_->assetBrowserPanel->update(dt);
 
         // -- HUD --------------------------------------------------------------
         bgfx::dbgTextClear();
@@ -573,8 +595,8 @@ void EditorApp::run()
 
         // Keyboard shortcuts help.
         bgfx::dbgTextPrintf(1, 3, 0x08,
-                            "Cmd+S=save  Cmd+N=new entity  Del=delete  "
-                            "Cmd+Z=undo  Cmd+Shift+Z=redo");
+                            "Cmd+S=save  Cmd+N=new  Del=delete  "
+                            "Cmd+Z=undo  Cmd+Shift+Z=redo  Tab=assets");
 
         // Status message.
         if (impl_->statusTimer > 0.0f)
@@ -582,9 +604,10 @@ void EditorApp::run()
             bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
         }
 
-        // Render panels (hierarchy, properties) as debug text.
+        // Render panels (hierarchy, properties, asset browser) as debug text.
         impl_->hierarchyPanel->render();
         impl_->propertiesPanel->render();
+        impl_->assetBrowserPanel->render();
 
         // -- End frame --------------------------------------------------------
         impl_->frameArena->reset();
@@ -605,6 +628,10 @@ void EditorApp::shutdown()
     if (impl_->propertiesPanel)
     {
         impl_->propertiesPanel->shutdown();
+    }
+    if (impl_->assetBrowserPanel)
+    {
+        impl_->assetBrowserPanel->shutdown();
     }
 
     impl_->gizmoRenderer.shutdown();
