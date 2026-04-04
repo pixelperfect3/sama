@@ -302,12 +302,8 @@ namespace engine::assets { class AssetManager; }
 namespace engine::scene
 {
 
-// Handle to a loaded scene. Opaque to game code.
-struct SceneHandle
-{
-    uint32_t id = 0;
-    bool valid() const { return id != 0; }
-};
+using SceneHandle = uint32_t;
+inline constexpr SceneHandle INVALID_SCENE_HANDLE = 0;
 
 class SceneManager
 {
@@ -346,7 +342,7 @@ private:
     assets::AssetManager& assets_;
     SceneSerializer serializer_;
 
-    SceneHandle activeScene_;
+    SceneHandle activeScene_ = INVALID_SCENE_HANDLE;
     uint32_t nextSceneId_ = 1;
 
     std::string activeScenePath_;
