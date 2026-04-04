@@ -131,6 +131,9 @@ struct EditorApp::Impl
     uint16_t fbH = 0;
     bool initialized = false;
 
+    // Viewport click-to-select tracking.
+    bool prevLeftDown = false;
+
     // Dirty flags for native panel updates.
     bool hierarchyDirty = true;
     bool propertiesDirty = true;
@@ -735,11 +738,116 @@ void EditorApp::run()
         }
 
         // -- Gizmo update (before transform system) ---------------------------
+        float aspect = static_cast<float>(fbW) / static_cast<float>(fbH);
+        glm::mat4 viewMtx = impl_->camera.view();
+        glm::mat4 projMtx = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
+        impl_->gizmo->update(dt, viewMtx, projMtx);
+
+        // -- Viewport click-to-select (ray-AABB picking) ----------------------
+        // Only fire on left-click when mouse is over the viewport, gizmo is
+        // not interacting, and right-button is not held (orbit).
         {
-            float aspect = static_cast<float>(fbW) / static_cast<float>(fbH);
-            glm::mat4 gView = impl_->camera.view();
-            glm::mat4 gProj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
-            impl_->gizmo->update(dt, gView, gProj);
+            bool leftPressed = impl_->window->isLeftMouseDown() && !impl_->prevLeftDown;
+            if (leftPressed && impl_->window->isMouseOverViewport() &&
+                !impl_->gizmo->isDragging() && impl_->gizmo->hoveredAxis() == GizmoAxis::None &&
+                !impl_->window->isRightMouseDown())
+            {
+                // Build ray from mouse position.
+                float scale = impl_->window->contentScale();
+                float mx = static_cast<float>(impl_->window->mouseX()) * scale;
+                float my = static_cast<float>(impl_->window->mouseY()) * scale;
+                float fw = static_cast<float>(fbW);
+                float fh = static_cast<float>(fbH);
+
+                float ndcX = (2.0f * mx / fw) - 1.0f;
+                float ndcY = 1.0f - (2.0f * my / fh);
+
+                glm::mat4 invVP = glm::inverse(projMtx * viewMtx);
+                glm::vec4 nearPt = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+                glm::vec4 farPt = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+                nearPt /= nearPt.w;
+                farPt /= farPt.w;
+
+                glm::vec3 rayO = glm::vec3(nearPt);
+                glm::vec3 rayD = glm::normalize(glm::vec3(farPt - nearPt));
+
+                // Test ray against every entity with Mesh + WorldTransform.
+                float bestT = 1e30f;
+                EntityID bestEntity = INVALID_ENTITY;
+
+                auto meshView = impl_->registry.view<MeshComponent, WorldTransformComponent>();
+                meshView.each(
+                    [&](EntityID e, const MeshComponent& mc, const WorldTransformComponent& wt)
+                    {
+                        const Mesh* mesh = impl_->resources.getMesh(mc.mesh);
+                        if (!mesh)
+                            return;
+
+                        // Local-space AABB from mesh bounds.
+                        glm::vec3 lMin = {mesh->boundsMin.x, mesh->boundsMin.y, mesh->boundsMin.z};
+                        glm::vec3 lMax = {mesh->boundsMax.x, mesh->boundsMax.y, mesh->boundsMax.z};
+
+                        // Transform AABB corners to world space.
+                        glm::vec3 wMin(1e30f);
+                        glm::vec3 wMax(-1e30f);
+                        for (int i = 0; i < 8; i++)
+                        {
+                            glm::vec3 corner((i & 1) ? lMax.x : lMin.x, (i & 2) ? lMax.y : lMin.y,
+                                             (i & 4) ? lMax.z : lMin.z);
+                            glm::vec3 w = glm::vec3(wt.matrix * glm::vec4(corner, 1.0f));
+                            wMin = glm::min(wMin, w);
+                            wMax = glm::max(wMax, w);
+                        }
+
+                        // Ray-AABB slab test.
+                        float tmin = 0.0f;
+                        float tmax = 1e30f;
+                        bool hit = true;
+                        for (int i = 0; i < 3; i++)
+                        {
+                            if (std::abs(rayD[i]) < 1e-8f)
+                            {
+                                if (rayO[i] < wMin[i] || rayO[i] > wMax[i])
+                                {
+                                    hit = false;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                float t1 = (wMin[i] - rayO[i]) / rayD[i];
+                                float t2 = (wMax[i] - rayO[i]) / rayD[i];
+                                if (t1 > t2)
+                                    std::swap(t1, t2);
+                                tmin = std::max(tmin, t1);
+                                tmax = std::min(tmax, t2);
+                                if (tmin > tmax)
+                                {
+                                    hit = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (hit && tmin < bestT)
+                        {
+                            bestT = tmin;
+                            bestEntity = e;
+                        }
+                    });
+
+                if (bestEntity != INVALID_ENTITY)
+                {
+                    impl_->editorState.select(bestEntity);
+                }
+                else
+                {
+                    impl_->editorState.clearSelection();
+                }
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+            impl_->prevLeftDown = impl_->window->isLeftMouseDown();
         }
 
         // -- Update properties in real-time during gizmo drag -----------------
@@ -926,10 +1034,6 @@ void EditorApp::run()
         // -- Render -----------------------------------------------------------
         const auto W = impl_->fbW;
         const auto H = impl_->fbH;
-        float aspect = static_cast<float>(W) / static_cast<float>(H);
-
-        glm::mat4 view = impl_->camera.view();
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
 
         // Touch views 1..8 with minimal 1x1 clear to prevent pink artifacts.
         bgfx::setViewRect(0, 0, 0, W, H);
@@ -945,7 +1049,7 @@ void EditorApp::run()
         // Main scene on kViewOpaque (view 9).
         bgfx::setViewRect(kViewOpaque, 0, 0, W, H);
         bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
-        bgfx::setViewTransform(kViewOpaque, glm::value_ptr(view), glm::value_ptr(proj));
+        bgfx::setViewTransform(kViewOpaque, glm::value_ptr(viewMtx), glm::value_ptr(projMtx));
 
         // Directional light (fixed sun direction).
         const glm::vec3 lightDir = glm::normalize(glm::vec3(0.4f, 0.7f, 0.5f));
@@ -1025,10 +1129,7 @@ void EditorApp::run()
             EntityID selE = impl_->editorState.primarySelection();
             if (selE != INVALID_ENTITY)
             {
-                float gAspect = static_cast<float>(W) / static_cast<float>(H);
-                glm::mat4 gView = impl_->camera.view();
-                glm::mat4 gProj = glm::perspective(glm::radians(45.0f), gAspect, 0.05f, 200.0f);
-                impl_->gizmoRenderer.render(*impl_->gizmo, gView, gProj, W, H);
+                impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
             }
         }
 
