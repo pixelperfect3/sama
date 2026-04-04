@@ -1075,6 +1075,210 @@ The editor creates its own `Engine` instance internally but replaces the GLFW wi
 - Hot-reload support: watch plugin .dylib for changes, unload/reload
 - **Deliverable:** Custom panels and inspectors loadable from plugins
 
+### Phase 14: Build & Publish Pipeline (4-6 weeks)
+
+#### 14.1 Asset Baker (`engine/build/AssetBaker`)
+
+A standalone library (usable from both the editor and a CLI tool) that transforms development-time assets into optimized, platform-specific binary formats:
+
+| Asset type | Dev format | Baked format | Tool |
+|-----------|-----------|-------------|------|
+| Scenes | `.json` | `.scene.bin` (flat binary, memory-mappable) | Custom serializer (already have `SceneSerializer`) |
+| Textures | `.png`, `.jpg`, `.hdr` | `.ktx2` with BC7 (desktop), ASTC 4x4 (mobile), ETC2 (fallback) | basisu / KTX-Software (`toktx`) |
+| Meshes | `.glb`, `.obj` | `.mesh.bin` (pre-indexed, quantized, meshoptimizer-optimized) | meshoptimizer for vertex cache + overdraw + fetch optimization |
+| Shaders | `.sc` (bgfx) | `.bin` per profile (Metal, SPIR-V, HLSL, GLSL) | bgfx `shaderc` (already integrated) |
+| Audio | `.wav`, `.ogg`, `.mp3` | `.ogg` (normalized loudness, resampled to target rate) | SoLoud handles decoding at runtime; baking just normalizes |
+| Animation | embedded in `.glb` | `.anim.bin` (flat keyframe arrays, no JSON overhead) | Custom exporter from `AnimationResources` |
+
+**Key design decisions:**
+- **Dependency graph:** The baker tracks which source files produce which baked assets. Only re-bakes when sources change (content hash, not timestamp, to avoid false rebuilds).
+- **Parallel baking:** Texture compression is the bottleneck (~2-10s per texture for ASTC). Baker dispatches to a thread pool. Each asset is independently bakeable.
+- **Platform profiles:** A profile defines the target platform's capabilities:
+  ```cpp
+  struct PlatformProfile
+  {
+      std::string name;               // "macOS", "iOS", "Windows", "Android"
+      TextureFormat textureFormat;     // BC7, ASTC_4x4, ETC2
+      bgfx::RendererType::Enum renderer; // Metal, Vulkan, D3D12
+      uint32_t maxTextureSize;         // 4096 for mobile, 8192 for desktop
+      bool compressAudio;              // true for mobile (smaller OGG quality)
+  };
+  ```
+- **Asset manifest:** The baked output includes a `manifest.json` listing every asset with its path, size, content hash, and dependencies. The runtime `AssetManager` uses this for fast lookup instead of scanning the filesystem.
+
+#### 14.2 Build Settings Panel
+
+A new editor panel (`CocoaBuildSettingsPanel` / Win32 equivalent) accessible from **File > Build Settings**:
+
+```
++----------------------------------------------------------+
+|  Build Settings                                           |
++----------------------------------------------------------+
+|  Target Platform:  [macOS ▼]                             |
+|  Build Config:     [Release ▼]  (Debug / Release / Profile)|
+|  Renderer Backend: [Metal ▼]   (auto-selected per platform)|
+|                                                           |
+|  --- Application ---                                      |
+|  Bundle ID:        [com.studio.mygame        ]           |
+|  Version:          [1.0.0                    ]           |
+|  App Icon:         [icon_512.png        ] [Browse]       |
+|  Window Title:     [My Game              ]               |
+|                                                           |
+|  --- Quality ---                                          |
+|  Shadow Resolution:  [2048 ▼]                            |
+|  SSAO:               [✓ On ]                             |
+|  Bloom:              [✓ On ]                             |
+|  Max Texture Size:   [4096 ▼]                            |
+|                                                           |
+|  --- Assets ---                                           |
+|  Texture Compression: [BC7 (Desktop) ▼]                  |
+|  Strip Debug Data:    [✓ Yes]                            |
+|  Scenes to Include:   [All ▼] / [Selected...]           |
+|                                                           |
+|  [Build]  [Build & Run]  [Clean]                         |
++----------------------------------------------------------+
+```
+
+Settings are stored per-project in `.sama-project/build_settings.json`. Each platform target can override any setting.
+
+#### 14.3 Platform Builders
+
+Each platform has a builder module that takes baked assets + compiled executable and produces the final distributable:
+
+**macOS (.app bundle):**
+```
+MyGame.app/
+  Contents/
+    MacOS/
+      MyGame              (universal binary: arm64 + x86_64)
+    Resources/
+      assets/             (baked assets)
+      AppIcon.icns
+    Info.plist            (generated from build settings)
+    _CodeSignature/       (codesign -s "Developer ID")
+```
+- Notarization: `xcrun notarytool submit MyGame.zip` → staple ticket
+- DMG creation: `hdiutil create` with background image
+
+**Windows (.exe + installer):**
+```
+MyGame/
+  MyGame.exe
+  assets/               (baked assets)
+  d3d12.dll / vulkan-1.dll  (if not statically linked)
+```
+- Optional NSIS/WiX installer generation
+- Code signing via `signtool.exe`
+
+**iOS (.ipa):**
+```
+MyGame.app/
+  MyGame                (arm64 only)
+  assets/               (baked assets, ASTC textures)
+  Info.plist
+  embedded.mobileprovision
+```
+- Requires Xcode project generation (or `xcodebuild` with a template `.xcodeproj`)
+- Build via `xcodebuild -scheme MyGame -configuration Release -archivePath ...`
+- Export: `xcodebuild -exportArchive` with export options plist
+- Upload: `xcrun altool --upload-app` or Transporter
+
+**Android (.apk / .aab):**
+```
+app/
+  src/main/
+    jniLibs/arm64-v8a/
+      libMyGame.so      (native activity)
+    assets/             (baked assets, ASTC/ETC2 textures)
+    AndroidManifest.xml
+  build.gradle
+```
+- Gradle wrapper generated from a template
+- NDK builds the native library
+- `./gradlew assembleRelease` produces the APK/AAB
+- Keystore signing configured in build settings
+
+#### 14.4 Build Menu Integration
+
+Added to the editor menu bar (Phase 6):
+
+```
+File
+  ├── New Scene
+  ├── Open Scene...
+  ├── Save Scene         ⌘S
+  ├── Save Scene As...   ⇧⌘S
+  ├── ─────────────────
+  ├── Build Settings...  ⌘B
+  ├── Build              ⇧⌘B
+  ├── Build & Run        ⌘R
+  ├── Clean Build        ⇧⌘K
+  └── ─────────────────
+```
+
+Build output streams to the Console panel (Phase 9) with progress bar in the status bar.
+
+#### 14.5 CLI Build Mode (Headless)
+
+The editor binary supports headless builds for CI/CD pipelines:
+
+```bash
+# Build for macOS release
+sama_editor --build --platform=macOS --config=Release --project=./MyGame.sama-project
+
+# Build for iOS, skip notarization
+sama_editor --build --platform=iOS --config=Release --no-sign
+
+# Bake assets only (no compile)
+sama_editor --bake --platform=Android --output=./baked/
+
+# List available platforms
+sama_editor --list-platforms
+```
+
+CI integration example (GitHub Actions):
+```yaml
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --build build --target sama_editor -j$(sysctl -n hw.ncpu)
+      - run: ./build/sama_editor --build --platform=macOS --config=Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MyGame-macOS
+          path: build/output/MyGame.app
+```
+
+#### 14.6 File Layout
+
+```
+engine/build/
+    AssetBaker.h             -- IAssetBaker interface
+    AssetBaker.cpp           -- dependency graph, parallel dispatch
+    TextureBaker.h/.cpp      -- PNG/JPG → KTX2 (BC7/ASTC/ETC2)
+    MeshBaker.h/.cpp         -- glTF/OBJ → optimized binary mesh
+    SceneBaker.h/.cpp        -- JSON scene → binary scene
+    ShaderBaker.h/.cpp       -- bgfx shaderc wrapper
+    AudioBaker.h/.cpp        -- normalization + resampling
+    AnimationBaker.h/.cpp    -- clip data → flat binary
+    PlatformProfile.h        -- per-platform settings struct
+    PlatformBuilder.h        -- IPlatformBuilder interface
+
+engine/build/platforms/
+    MacOSBuilder.h/.cpp      -- .app bundle, codesign, notarize, DMG
+    WindowsBuilder.h/.cpp    -- .exe packaging, signtool, NSIS
+    IOSBuilder.h/.cpp        -- Xcode project gen, archive, export
+    AndroidBuilder.h/.cpp    -- Gradle wrapper, NDK, APK/AAB
+
+editor/panels/
+    BuildSettingsPanel.h     -- platform-independent build settings UI logic
+    CocoaBuildSettingsPanel.mm  -- macOS AppKit implementation
+```
+
+- **Deliverable:** Full build pipeline from editor or CLI. Bake assets, compile, package, sign, and optionally upload for macOS, Windows, iOS, and Android.
+
 ---
 
 ## 13. Technology Choices
