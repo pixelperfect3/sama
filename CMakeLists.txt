@@ -1156,6 +1156,9 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/undo/CreateEntityCommand.cpp
         editor/undo/DeleteEntityCommand.cpp
         editor/platform/cocoa/CocoaEditorWindow.mm
+        editor/platform/cocoa/CocoaHierarchyView.mm
+        editor/platform/cocoa/CocoaPropertiesView.mm
+        editor/platform/cocoa/CocoaConsoleView.mm
     )
 
     add_dependencies(sama_editor engine_shaders)

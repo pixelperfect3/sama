@@ -7,12 +7,15 @@
 namespace engine::editor
 {
 
+class CocoaHierarchyView;
+class CocoaPropertiesView;
+class CocoaConsoleView;
+
 // ---------------------------------------------------------------------------
-// CocoaEditorWindow -- native macOS window backed by NSWindow + CAMetalLayer.
+// CocoaEditorWindow -- native macOS window backed by NSWindow + NSSplitView
+// layout with native panels and a central CAMetalLayer viewport.
 //
 // Pimpl pattern: no Cocoa/AppKit headers leak into this header.
-// The .mm implementation creates NSApplication, NSWindow, a custom NSView
-// with a CAMetalLayer, and polls events each frame.
 // ---------------------------------------------------------------------------
 
 class CocoaEditorWindow final : public IEditorWindow
@@ -55,6 +58,23 @@ public:
     bool isShiftDown() const override;
     bool isControlDown() const override;
     bool isOptionDown() const override;
+
+    // --- Viewport-specific dimensions ----------------------------------------
+    // These return the size of just the center 3D viewport panel,
+    // not the entire window.
+
+    uint32_t viewportWidth() const;
+    uint32_t viewportHeight() const;
+    uint32_t viewportFramebufferWidth() const;
+    uint32_t viewportFramebufferHeight() const;
+
+    // Returns true if the mouse is currently over the 3D viewport panel.
+    bool isMouseOverViewport() const;
+
+    // --- Native panel views --------------------------------------------------
+    CocoaHierarchyView* hierarchyView() const;
+    CocoaPropertiesView* propertiesView() const;
+    CocoaConsoleView* consoleView() const;
 
 private:
     struct Impl;

@@ -24,7 +24,10 @@
 #include "editor/panels/HierarchyPanel.h"
 #include "editor/panels/PropertiesPanel.h"
 #include "editor/platform/IEditorWindow.h"
+#include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
+#include "editor/platform/cocoa/CocoaHierarchyView.h"
+#include "editor/platform/cocoa/CocoaPropertiesView.h"
 #include "editor/undo/CommandStack.h"
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
@@ -127,7 +130,343 @@ struct EditorApp::Impl
     uint16_t fbW = 0;
     uint16_t fbH = 0;
     bool initialized = false;
+
+    // Dirty flags for native panel updates.
+    bool hierarchyDirty = true;
+    bool propertiesDirty = true;
+    size_t lastLogCount = 0;
+    EntityID lastSelectedEntity = INVALID_ENTITY;
+
+    // Build entity info list for the hierarchy panel.
+    void refreshHierarchyView();
+
+    // Build property fields for the properties panel.
+    void refreshPropertiesView();
+
+    // Sync console log to the native console view.
+    void syncConsoleView();
 };
+
+void EditorApp::Impl::refreshHierarchyView()
+{
+    auto* hView = window->hierarchyView();
+    if (!hView)
+        return;
+
+    std::vector<CocoaHierarchyView::EntityInfo> entities;
+    registry.forEachEntity(
+        [&](EntityID e)
+        {
+            CocoaHierarchyView::EntityInfo info;
+            info.entityId = e;
+
+            const auto* name = registry.get<engine::scene::NameComponent>(e);
+            if (name && !name->name.empty())
+            {
+                info.name = name->name;
+            }
+            else
+            {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "Entity #%u", entityIndex(e));
+                info.name = buf;
+            }
+
+            // Build tags string.
+            std::string tags;
+            if (registry.has<TransformComponent>(e))
+                tags += "[T]";
+            if (registry.has<MeshComponent>(e))
+                tags += "[M]";
+            if (registry.has<MaterialComponent>(e))
+                tags += "[Mat]";
+            if (registry.has<DirectionalLightComponent>(e))
+                tags += "[DL]";
+            if (registry.has<PointLightComponent>(e))
+                tags += "[PL]";
+            if (registry.has<CameraComponent>(e))
+                tags += "[Cam]";
+            info.tags = tags;
+
+            entities.push_back(std::move(info));
+        });
+
+    hView->setEntities(entities);
+    hView->setSelectedEntity(editorState.primarySelection());
+    hierarchyDirty = false;
+}
+
+void EditorApp::Impl::refreshPropertiesView()
+{
+    auto* pView = window->propertiesView();
+    if (!pView)
+        return;
+
+    EntityID entity = editorState.primarySelection();
+    if (entity == INVALID_ENTITY)
+    {
+        pView->clear("No entity selected");
+        propertiesDirty = false;
+        lastSelectedEntity = entity;
+        return;
+    }
+
+    std::vector<CocoaPropertiesView::PropertyField> fields;
+
+    // Entity name / ID header.
+    {
+        CocoaPropertiesView::PropertyField hdr;
+        hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+        const auto* name = registry.get<engine::scene::NameComponent>(entity);
+        if (name && !name->name.empty())
+        {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%s (id:%u)", name->name.c_str(), entityIndex(entity));
+            hdr.label = buf;
+        }
+        else
+        {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Entity #%u", entityIndex(entity));
+            hdr.label = buf;
+        }
+        fields.push_back(hdr);
+    }
+
+    // Transform inspector.
+    auto* tc = registry.get<TransformComponent>(entity);
+    if (tc)
+    {
+        {
+            CocoaPropertiesView::PropertyField hdr;
+            hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+            hdr.label = "Transform";
+            fields.push_back(hdr);
+        }
+
+        glm::vec3 euler = glm::degrees(glm::eulerAngles(tc->rotation));
+
+        const char* posLabels[] = {"Pos X", "Pos Y", "Pos Z"};
+        float posVals[] = {tc->position.x, tc->position.y, tc->position.z};
+        for (int i = 0; i < 3; ++i)
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = posLabels[i];
+            f.value = posVals[i];
+            f.fieldId = 100 + i;
+            fields.push_back(f);
+        }
+
+        const char* rotLabels[] = {"Rot X", "Rot Y", "Rot Z"};
+        float rotVals[] = {euler.x, euler.y, euler.z};
+        for (int i = 0; i < 3; ++i)
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = rotLabels[i];
+            f.value = rotVals[i];
+            f.fieldId = 103 + i;
+            fields.push_back(f);
+        }
+
+        const char* sclLabels[] = {"Scale X", "Scale Y", "Scale Z"};
+        float sclVals[] = {tc->scale.x, tc->scale.y, tc->scale.z};
+        for (int i = 0; i < 3; ++i)
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = sclLabels[i];
+            f.value = sclVals[i];
+            f.fieldId = 106 + i;
+            fields.push_back(f);
+        }
+    }
+
+    // Material inspector.
+    auto* mc = registry.get<MaterialComponent>(entity);
+    if (mc)
+    {
+        Material* mat = resources.getMaterialMut(mc->material);
+        if (mat)
+        {
+            {
+                CocoaPropertiesView::PropertyField hdr;
+                hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+                hdr.label = "Material";
+                fields.push_back(hdr);
+            }
+
+            // Albedo color.
+            {
+                CocoaPropertiesView::PropertyField f;
+                f.type = CocoaPropertiesView::PropertyField::Type::ColorField;
+                f.label = "Albedo";
+                f.color[0] = mat->albedo.x;
+                f.color[1] = mat->albedo.y;
+                f.color[2] = mat->albedo.z;
+                f.fieldId = 200;
+                fields.push_back(f);
+            }
+
+            // Roughness slider.
+            {
+                CocoaPropertiesView::PropertyField f;
+                f.type = CocoaPropertiesView::PropertyField::Type::SliderField;
+                f.label = "Rough";
+                f.value = mat->roughness;
+                f.minVal = 0.0f;
+                f.maxVal = 1.0f;
+                f.fieldId = 201;
+                fields.push_back(f);
+            }
+
+            // Metallic slider.
+            {
+                CocoaPropertiesView::PropertyField f;
+                f.type = CocoaPropertiesView::PropertyField::Type::SliderField;
+                f.label = "Metal";
+                f.value = mat->metallic;
+                f.minVal = 0.0f;
+                f.maxVal = 1.0f;
+                f.fieldId = 202;
+                fields.push_back(f);
+            }
+
+            // Emissive.
+            {
+                CocoaPropertiesView::PropertyField f;
+                f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+                f.label = "Emiss";
+                f.value = mat->emissiveScale;
+                f.fieldId = 203;
+                fields.push_back(f);
+            }
+        }
+    }
+
+    // Directional light.
+    auto* dl = registry.get<DirectionalLightComponent>(entity);
+    if (dl)
+    {
+        {
+            CocoaPropertiesView::PropertyField hdr;
+            hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+            hdr.label = "Directional Light";
+            fields.push_back(hdr);
+        }
+
+        const char* dirLabels[] = {"Dir X", "Dir Y", "Dir Z"};
+        float dirVals[] = {dl->direction.x, dl->direction.y, dl->direction.z};
+        for (int i = 0; i < 3; ++i)
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = dirLabels[i];
+            f.value = dirVals[i];
+            f.fieldId = 300 + i;
+            fields.push_back(f);
+        }
+
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Intens";
+            f.value = dl->intensity;
+            f.fieldId = 303;
+            fields.push_back(f);
+        }
+    }
+
+    // Point light.
+    auto* pl = registry.get<PointLightComponent>(entity);
+    if (pl)
+    {
+        {
+            CocoaPropertiesView::PropertyField hdr;
+            hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+            hdr.label = "Point Light";
+            fields.push_back(hdr);
+        }
+
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Intens";
+            f.value = pl->intensity;
+            f.fieldId = 400;
+            fields.push_back(f);
+        }
+
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Radius";
+            f.value = pl->radius;
+            f.fieldId = 401;
+            fields.push_back(f);
+        }
+    }
+
+    pView->setProperties(fields);
+    propertiesDirty = false;
+    lastSelectedEntity = entity;
+}
+
+void EditorApp::Impl::syncConsoleView()
+{
+    auto* cView = window->consoleView();
+    if (!cView)
+        return;
+
+    size_t currentCount = EditorLog::instance().entryCount();
+    if (currentCount <= lastLogCount)
+        return;
+
+    // We need to send only new entries. Since EditorLog is a ring buffer,
+    // collect all and send those beyond what we've already synced.
+    struct LogEntry
+    {
+        LogLevel level;
+        char message[256];
+    };
+    std::vector<LogEntry> allEntries;
+    EditorLog::instance().forEach(
+        [&](const EditorLog::Entry& entry)
+        {
+            LogEntry le;
+            le.level = entry.level;
+            memcpy(le.message, entry.message, sizeof(le.message));
+            allEntries.push_back(le);
+        });
+
+    // If total count is small enough, we know exactly which are new.
+    size_t startIdx = 0;
+    if (lastLogCount < allEntries.size())
+    {
+        startIdx = lastLogCount;
+    }
+
+    for (size_t i = startIdx; i < allEntries.size(); ++i)
+    {
+        CocoaConsoleView::MessageLevel mlevel;
+        switch (allEntries[i].level)
+        {
+            case LogLevel::Warning:
+                mlevel = CocoaConsoleView::MessageLevel::Warning;
+                break;
+            case LogLevel::Error:
+                mlevel = CocoaConsoleView::MessageLevel::Error;
+                break;
+            default:
+                mlevel = CocoaConsoleView::MessageLevel::Info;
+                break;
+        }
+        cView->appendMessage(mlevel, allEntries[i].message);
+    }
+
+    lastLogCount = currentCount;
+}
 
 EditorApp::EditorApp() : impl_(std::make_unique<Impl>()) {}
 
@@ -153,8 +492,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     bgfx::Init init;
     init.type = bgfx::RendererType::Metal;
     init.platformData.nwh = impl_->window->nativeLayer();
-    init.resolution.width = impl_->window->framebufferWidth();
-    init.resolution.height = impl_->window->framebufferHeight();
+    init.resolution.width = impl_->window->viewportFramebufferWidth();
+    init.resolution.height = impl_->window->viewportFramebufferHeight();
     init.resolution.reset = BGFX_RESET_VSYNC;
 
     if (!bgfx::init(init))
@@ -165,8 +504,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 
-    impl_->fbW = static_cast<uint16_t>(impl_->window->framebufferWidth());
-    impl_->fbH = static_cast<uint16_t>(impl_->window->framebufferHeight());
+    impl_->fbW = static_cast<uint16_t>(impl_->window->viewportFramebufferWidth());
+    impl_->fbH = static_cast<uint16_t>(impl_->window->viewportFramebufferHeight());
 
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
     bgfx::setViewRect(0, 0, 0, impl_->fbW, impl_->fbH);
@@ -268,6 +607,27 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     }
 
     // -- Editor state and panels ----------------------------------------------
+    // Wire native hierarchy view selection callback.
+    impl_->window->hierarchyView()->setSelectionCallback(
+        [this](uint64_t entityId)
+        {
+            impl_->editorState.select(static_cast<EntityID>(entityId));
+            impl_->propertiesDirty = true;
+        });
+
+    // Wire selection change to mark properties dirty.
+    impl_->editorState.setSelectionChangedCallback(
+        [this]()
+        {
+            impl_->propertiesDirty = true;
+            // Also update hierarchy selection highlight.
+            auto* hView = impl_->window->hierarchyView();
+            if (hView)
+            {
+                hView->setSelectedEntity(impl_->editorState.primarySelection());
+            }
+        });
+
     impl_->hierarchyPanel =
         std::make_unique<HierarchyPanel>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->hierarchyPanel->init();
@@ -316,6 +676,10 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     EditorLog::instance().info("Sama Editor initialized");
 
+    // Initial native panel refresh.
+    impl_->hierarchyDirty = true;
+    impl_->propertiesDirty = true;
+
     impl_->initialized = true;
     return true;
 }
@@ -338,8 +702,8 @@ void EditorApp::run()
         impl_->window->pollEvents();
 
         // -- Resize -----------------------------------------------------------
-        uint32_t fbW = impl_->window->framebufferWidth();
-        uint32_t fbH = impl_->window->framebufferHeight();
+        uint32_t fbW = impl_->window->viewportFramebufferWidth();
+        uint32_t fbH = impl_->window->viewportFramebufferHeight();
         if ((fbW != impl_->fbW || fbH != impl_->fbH) && fbW > 0 && fbH > 0)
         {
             bgfx::reset(fbW, fbH, BGFX_RESET_VSYNC);
@@ -354,18 +718,20 @@ void EditorApp::run()
             continue;
         }
 
-        // -- Camera -----------------------------------------------------------
-        if (impl_->window->isRightMouseDown())
+        // -- Camera (only when mouse is over viewport) ------------------------
+        if (impl_->window->isMouseOverViewport() && impl_->window->isRightMouseDown())
         {
             impl_->camera.orbit(static_cast<float>(impl_->window->mouseDeltaX()),
                                 -static_cast<float>(impl_->window->mouseDeltaY()), 0.25f);
         }
 
-        double scrollY = impl_->window->scrollDeltaY();
-        if (std::abs(scrollY) > 0.01)
+        if (impl_->window->isMouseOverViewport())
         {
-            // macOS scroll is in content units, scale down for smooth zoom.
-            impl_->camera.zoom(static_cast<float>(scrollY * 0.1), 1.0f, 1.0f, 100.0f);
+            double scrollY = impl_->window->scrollDeltaY();
+            if (std::abs(scrollY) > 0.01)
+            {
+                impl_->camera.zoom(static_cast<float>(scrollY * 0.1), 1.0f, 1.0f, 100.0f);
+            }
         }
 
         // -- Gizmo update (before transform system) ---------------------------
@@ -387,8 +753,8 @@ void EditorApp::run()
                 {
                     auto cmd = std::make_unique<SetTransformCommand>(
                         impl_->registry, selE, impl_->gizmo->dragStartTransform(), *tc);
-                    // Command is already applied by gizmo; push without re-executing.
                     impl_->commandStack.execute(std::move(cmd));
+                    impl_->propertiesDirty = true;
                 }
             }
         }
@@ -412,6 +778,8 @@ void EditorApp::run()
                 snprintf(buf, sizeof(buf), "Undo: %s", desc);
                 EditorLog::instance().info(buf);
             }
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
         }
 
         // -- Keyboard shortcuts -----------------------------------------------
@@ -441,6 +809,8 @@ void EditorApp::run()
             snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Created new entity");
             impl_->statusTimer = 2.0f;
             EditorLog::instance().info("Created new entity");
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
         }
 
         // Delete/Backspace = delete selected entity
@@ -455,6 +825,8 @@ void EditorApp::run()
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Deleted entity");
                 impl_->statusTimer = 2.0f;
                 EditorLog::instance().info("Deleted entity");
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
             }
         }
 
@@ -487,6 +859,8 @@ void EditorApp::run()
                         snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
                                  "Added DirectionalLight");
                         impl_->statusTimer = 2.0f;
+                        impl_->propertiesDirty = true;
+                        impl_->hierarchyDirty = true;
                     }
                     impl_->addComponentMenuOpen = false;
                 }
@@ -501,6 +875,8 @@ void EditorApp::run()
                         impl_->registry.emplace<PointLightComponent>(selE, pl);
                         snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added PointLight");
                         impl_->statusTimer = 2.0f;
+                        impl_->propertiesDirty = true;
+                        impl_->hierarchyDirty = true;
                     }
                     impl_->addComponentMenuOpen = false;
                 }
@@ -513,6 +889,8 @@ void EditorApp::run()
                         snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
                                  "Added MeshComponent (cube)");
                         impl_->statusTimer = 2.0f;
+                        impl_->propertiesDirty = true;
+                        impl_->hierarchyDirty = true;
                     }
                     impl_->addComponentMenuOpen = false;
                 }
@@ -527,23 +905,8 @@ void EditorApp::run()
             }
         }
 
-        // ~ (backtick) = toggle console
-        if (impl_->window->isKeyPressed('`'))
-        {
-            bool vis = impl_->consolePanel->isVisible();
-            impl_->consolePanel->setVisible(!vis);
-        }
-
-        // Tab = toggle asset browser
-        if (impl_->window->isKeyPressed(0x09) && !impl_->window->isCommandDown())
-        {
-            bool vis = impl_->assetBrowserPanel->isVisible();
-            impl_->assetBrowserPanel->setVisible(!vis);
-            if (!vis)
-            {
-                impl_->assetBrowserPanel->refresh();
-            }
-        }
+        // ~ (backtick) = toggle console (no-op for now, console always visible in panel)
+        // Tab = toggle asset browser (kept as debug text for now since it's rarely used)
 
         // Decrement status timer.
         if (impl_->statusTimer > 0.0f)
@@ -555,9 +918,6 @@ void EditorApp::run()
         impl_->transformSys.update(impl_->registry);
 
         // -- Render -----------------------------------------------------------
-        // DrawCallBuildSystem submits to kViewOpaque (view 9). Set that up
-        // as the only active view. Touch view 0 with a 1x1 clear to satisfy
-        // bgfx's sequential view requirement. No shadow or post-process views.
         const auto W = impl_->fbW;
         const auto H = impl_->fbH;
         float aspect = static_cast<float>(W) / static_cast<float>(H);
@@ -566,7 +926,6 @@ void EditorApp::run()
         glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
 
         // Touch views 1..8 with minimal 1x1 clear to prevent pink artifacts.
-        // View 0 is kept full-size for bgfx debug text overlay.
         bgfx::setViewRect(0, 0, 0, W, H);
         bgfx::setViewClear(0, BGFX_CLEAR_NONE);
         bgfx::touch(0);
@@ -577,7 +936,7 @@ void EditorApp::run()
             bgfx::touch(v);
         }
 
-        // Main scene on kViewOpaque (view 9) — where DrawCallBuildSystem submits.
+        // Main scene on kViewOpaque (view 9).
         bgfx::setViewRect(kViewOpaque, 0, 0, W, H);
         bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
         bgfx::setViewTransform(kViewOpaque, glm::value_ptr(view), glm::value_ptr(proj));
@@ -625,21 +984,15 @@ void EditorApp::run()
                     const Mesh* mesh = impl_->resources.getMesh(mc->mesh);
                     if (mesh && mesh->isValid())
                     {
-                        // Scale slightly larger to create outline effect.
                         glm::mat4 outlineMtx = glm::scale(wt->matrix, glm::vec3(1.02f));
                         bgfx::setTransform(glm::value_ptr(outlineMtx));
 
-                        // Yellow selection material.
                         const float matData[8] = {
-                            1.0f, 0.8f, 0.0f, 1.0f,  // albedo
-                            0.0f, 0.0f, 0.0f, 0.0f,  // metallic etc
+                            1.0f, 0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                         };
                         bgfx::setUniform(impl_->uniforms.u_material, matData, 2);
-
-                        // Directional light (same as scene).
                         bgfx::setUniform(impl_->uniforms.u_dirLight, lightData, 2);
 
-                        // Bind default textures.
                         bgfx::setTexture(0, impl_->uniforms.s_albedo,
                                          impl_->resources.whiteTexture());
                         bgfx::setTexture(1, impl_->uniforms.s_normal,
@@ -666,20 +1019,26 @@ void EditorApp::run()
             EntityID selE = impl_->editorState.primarySelection();
             if (selE != INVALID_ENTITY)
             {
-                float aspect = static_cast<float>(W) / static_cast<float>(H);
+                float gAspect = static_cast<float>(W) / static_cast<float>(H);
                 glm::mat4 gView = impl_->camera.view();
-                glm::mat4 gProj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
+                glm::mat4 gProj = glm::perspective(glm::radians(45.0f), gAspect, 0.05f, 200.0f);
                 impl_->gizmoRenderer.render(*impl_->gizmo, gView, gProj, W, H);
             }
         }
 
-        // -- Panels -----------------------------------------------------------
-        impl_->hierarchyPanel->update(dt);
-        impl_->propertiesPanel->update(dt);
-        impl_->assetBrowserPanel->update(dt);
-        impl_->consolePanel->update(dt);
+        // -- Native panel updates (dirty-flag guarded) ------------------------
+        if (impl_->hierarchyDirty)
+        {
+            impl_->refreshHierarchyView();
+        }
+        if (impl_->propertiesDirty ||
+            impl_->editorState.primarySelection() != impl_->lastSelectedEntity)
+        {
+            impl_->refreshPropertiesView();
+        }
+        impl_->syncConsoleView();
 
-        // -- HUD --------------------------------------------------------------
+        // -- HUD (viewport overlay only: FPS, gizmo mode, shortcuts) ----------
         bgfx::dbgTextClear();
         bgfx::dbgTextPrintf(1, 1, 0x0f, "Sama Editor  |  %.1f fps  |  %.3f ms",
                             dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f);
@@ -693,42 +1052,21 @@ void EditorApp::run()
             "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  Cmd+Shift+Z=redo",
             modeStr);
 
-        // Undo/redo status.
-        if (impl_->commandStack.canUndo())
-        {
-            bgfx::dbgTextPrintf(60, 1, 0x07, "Undo: %s", impl_->commandStack.undoDescription());
-        }
-        if (impl_->commandStack.canRedo())
-        {
-            bgfx::dbgTextPrintf(60, 2, 0x07, "Redo: %s", impl_->commandStack.redoDescription());
-        }
-
-        // Keyboard shortcuts help.
-        bgfx::dbgTextPrintf(1, 3, 0x08,
-                            "Cmd+S=save  Cmd+N=new  Del=delete  "
-                            "Cmd+Z/Shift+Z=undo/redo  Tab=assets  A=add  ~=console");
-
         // Status message.
         if (impl_->statusTimer > 0.0f)
         {
             bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
         }
 
-        // Add component menu.
+        // Add component menu (still as HUD overlay on viewport).
         if (impl_->addComponentMenuOpen)
         {
-            bgfx::dbgTextPrintf(55, 40, 0x0f, "--- Add Component ---");
-            bgfx::dbgTextPrintf(55, 41, 0x07, "1) DirectionalLight");
-            bgfx::dbgTextPrintf(55, 42, 0x07, "2) PointLight");
-            bgfx::dbgTextPrintf(55, 43, 0x07, "3) Mesh (cube)");
-            bgfx::dbgTextPrintf(55, 44, 0x08, "Esc to cancel");
+            bgfx::dbgTextPrintf(2, 4, 0x0f, "--- Add Component ---");
+            bgfx::dbgTextPrintf(2, 5, 0x07, "1) DirectionalLight");
+            bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
+            bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
+            bgfx::dbgTextPrintf(2, 8, 0x08, "Esc to cancel");
         }
-
-        // Render panels (hierarchy, properties, asset browser) as debug text.
-        impl_->hierarchyPanel->render();
-        impl_->propertiesPanel->render();
-        impl_->assetBrowserPanel->render();
-        impl_->consolePanel->render();
 
         // -- End frame --------------------------------------------------------
         impl_->frameArena->reset();
