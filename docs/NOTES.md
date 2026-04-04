@@ -688,6 +688,19 @@ No blanket rejection criteria — libraries are evaluated when a concrete need a
 - Vendor (copy source into repo) when: upstream is unstable, we need local patches, or the library is small enough that vendoring is trivial
 - Decision made per library at integration time
 
+### stb_image vs bimg Overlap (Investigated, No Action)
+
+Both stb_image and bimg can load PNG/JPG images. Investigated replacing stb_image with bimg to reduce duplication.
+
+**Finding:** bimg uses stb_image internally as its fallback decoder. Replacing our direct stb_image calls with bimg's `imageParse()` would call stb_image indirectly through a more complex API (requires `bx::AllocatorI*`, `ImageContainer` lifecycle, `bx::WriterI*` for PNG writing). No actual dependency reduction — stb_image remains compiled into the bimg library regardless.
+
+**Additional factors:**
+- stb FetchContent cannot be removed — SoLoud depends on `stb_vorbis.c`
+- Current stb_image usage is isolated to 3 files (~15 lines of calls)
+- bimg has no file-path loading (would add boilerplate to screenshot golden comparison)
+
+**Decision:** Keep both. The overlap is superficial — no binary size savings, more boilerplate, and the dependency stays either way.
+
 ### Status
 - Policy defined; applied as each library is integrated
 
