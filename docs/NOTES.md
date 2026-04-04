@@ -561,6 +561,7 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 
 ### Status
 - [x] Editor Phases 1-4 complete (native window, hierarchy, properties, gizmos)
+- [x] Editor Phases 5-9 complete (undo/redo, shortcuts, asset browser, inspectors, console)
 
 ---
 
@@ -935,5 +936,66 @@ Architecture is documented in `docs/EDITOR_ARCHITECTURE.md`. The editor uses nat
 - **Constant screen-size gizmo:** Gizmo geometry is scaled by `distance_to_camera * 0.15f` so it appears the same size regardless of zoom level.
 - **Overlay rendering:** Gizmo uses bgfx view 50 with no depth test, so it always renders on top of scene geometry. Line anti-aliasing enabled (`BGFX_STATE_LINEAA`).
 - **Rotate mode deferred:** Circles are drawn but rotation drag interaction is not yet wired (requires angle delta computation around the rotation circle's center).
+
+### Phase 5: Undo/Redo System
+
+**What was built:**
+- `editor/undo/ICommand.h` — interface with `execute()`, `undo()`, `description()`
+- `editor/undo/CommandStack.h/.cpp` — undo/redo stacks with configurable max depth (100); `execute()` pushes to undo and clears redo; `undo()` moves to redo stack; `redo()` moves back
+- `editor/undo/SetTransformCommand.h/.cpp` — stores entity ID + old/new TransformComponent; sets dirty flag on execute/undo
+- Modifier key support added to `IEditorWindow` and `CocoaEditorWindow` (Cmd, Shift, Ctrl, Option via `-flagsChanged:` NSEvent handler)
+- TransformGizmo captures transform at drag-start; `dragJustEnded()` signals EditorApp to create a SetTransformCommand
+
+**Key decisions:**
+- **Stack-based, not command-graph:** Simple linear undo with redo branch invalidation (executing a new command clears the redo stack). Sufficient for a solo-developer editor; command graphs add complexity without proportional benefit.
+- **Idempotent execute:** SetTransformCommand.execute() is safe to call even when the transform is already set (e.g., after gizmo drag), since it writes the same values. This simplifies the CommandStack API.
+- **Modifier keys via flagsChanged:** macOS delivers modifier state changes through `-flagsChanged:` rather than `-keyDown:`. The EditorMetalView tracks four modifier booleans, exposed through the IEditorWindow interface.
+
+### Phase 6: Keyboard Shortcuts (Save/Load, Create/Delete)
+
+**What was built:**
+- `editor/undo/CreateEntityCommand.h/.cpp` — creates entity with TransformComponent + WorldTransformComponent + NameComponent; selects the new entity; undo destroys it
+- `editor/undo/DeleteEntityCommand.h/.cpp` — captures all component data at construction (Transform, WorldTransform, Mesh, Material, VisibleTag, Name, lights); execute destroys the entity; undo re-creates with all saved components
+- Cmd+S saves scene via SceneSerializer to `editor_scene.json`
+- Cmd+N creates a new empty entity (undoable)
+- Delete/Backspace deletes the selected entity (undoable)
+- Status messages shown in HUD with a timed fade
+
+**Key decisions:**
+- **Component snapshot on delete:** DeleteEntityCommand eagerly captures all known component types at construction time. This is explicit rather than generic (no runtime type iteration), which means new component types require manual additions. The tradeoff is simplicity and compile-time safety over full generality.
+- **No file dialog yet:** Cmd+O (open) is deferred; Cmd+S hardcodes the save path. Native file dialogs require additional platform API calls that are best done when the full native menu bar is implemented.
+
+### Phase 7: Asset Browser
+
+**What was built:**
+- `editor/panels/AssetBrowserPanel.h/.cpp` — scans a directory for asset files (.glb, .obj, .png, .jpg, .wav, etc.) using `std::filesystem`; lists files with type icons ([3D], [Tx], [Au]) in bgfx debug text; Shift+Up/Down scrolls the list
+- Toggle with Tab key; refreshes on open; default directory is `assets`
+
+**Key decisions:**
+- **std::filesystem for directory scanning:** C++17 filesystem is sufficient and avoids platform-specific directory enumeration code. The scan is done on toggle (not every frame) to avoid I/O stalls.
+- **Read-only for now:** The asset browser lists files but does not yet support drag-to-scene or click-to-load. Loading assets requires wiring up AssetManager with a ThreadPool and IFileSystem, which is deferred to a future phase when native panels replace debug text.
+
+### Phase 8: Additional Component Inspectors
+
+**What was built:**
+- `editor/inspectors/MaterialInspector.h/.cpp` — displays albedo RGB, roughness/metallic as ASCII bar graphs, emissive scale; reads material data through RenderResources::getMaterialMut()
+- `editor/inspectors/LightInspector.h/.cpp` — displays DirectionalLightComponent (direction, color, intensity, shadows) and PointLightComponent (color, intensity, radius)
+- `editor/inspectors/NameInspector.h/.cpp` — displays entity name from NameComponent
+- Add-component menu: press 'A' to open a numbered menu (1=DirectionalLight, 2=PointLight, 3=Mesh), Esc to cancel
+
+**Key decisions:**
+- **Read-only material inspector:** Material editing via debug text would require a field-navigation system similar to TransformInspector. Since the material inspector will be rebuilt with native UI sliders, the current version is display-only. This avoids throwaway complexity.
+- **Inspector registration order:** NameInspector renders first (top of properties panel), then Transform, then Material, then Light. This mirrors conventional editor inspector layouts.
+
+### Phase 9: Console Panel
+
+**What was built:**
+- `editor/EditorLog.h/.cpp` — thread-safe singleton with mutex-protected ring buffer (100 entries); three log levels (Info, Warning, Error); `log()`, `info()`, `warning()`, `error()` methods; `forEach()` provides read access under lock
+- `editor/panels/ConsolePanel.h/.cpp` — renders the last 12 log entries at the bottom of the screen; color-coded (grey=Info, yellow=Warning, red=Error); toggle with ~ key
+- All major editor actions (save/load, undo/redo, create/delete) emit log messages
+
+**Key decisions:**
+- **Singleton pattern:** EditorLog is a process-wide singleton because log messages can originate from any subsystem (panels, commands, serializers). A passed-reference pattern would require threading the logger through every component, which is excessive for diagnostic output.
+- **Mutex over lock-free:** The ring buffer uses `std::mutex` rather than a lock-free queue. Log writes are infrequent (a few per frame at most), so the mutex cost is negligible. Lock-free would add complexity without measurable benefit at this scale.
 
 ---
