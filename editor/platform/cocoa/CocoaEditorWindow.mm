@@ -7,6 +7,7 @@
 #include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaHierarchyView.h"
 #include "editor/platform/cocoa/CocoaPropertiesView.h"
+#include "editor/platform/cocoa/CocoaResourceView.h"
 
 // ---------------------------------------------------------------------------
 // EditorMetalView -- NSView subclass backed by a CAMetalLayer (viewport only).
@@ -340,6 +341,10 @@ struct CocoaEditorWindow::Impl
     std::unique_ptr<CocoaHierarchyView> hierarchyView;
     std::unique_ptr<CocoaPropertiesView> propertiesView;
     std::unique_ptr<CocoaConsoleView> consoleView;
+    std::unique_ptr<CocoaResourceView> resourceView;
+
+    // Bottom tab view for Console + Resources.
+    NSTabView* bottomTabView = nil;
 
     uint32_t windowWidth = 0;
     uint32_t windowHeight = 0;
@@ -399,6 +404,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         impl_->hierarchyView = std::make_unique<CocoaHierarchyView>();
         impl_->propertiesView = std::make_unique<CocoaPropertiesView>();
         impl_->consoleView = std::make_unique<CocoaConsoleView>();
+        impl_->resourceView = std::make_unique<CocoaResourceView>();
 
         // -- Create the Metal viewport view -----------------------------------
         impl_->metalView = [[EditorMetalView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
@@ -466,12 +472,32 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         };
 
         // Get the native NSView* for each panel, wrapped with titles.
-        NSView* leftView = wrapWithTitle(
-            (__bridge NSView*)impl_->hierarchyView->nativeView(), @"Scene Hierarchy");
-        NSView* rightView = wrapWithTitle(
-            (__bridge NSView*)impl_->propertiesView->nativeView(), @"Properties");
-        NSView* bottomView = wrapWithTitle(
-            (__bridge NSView*)impl_->consoleView->nativeView(), @"Console");
+        NSView* leftView =
+            wrapWithTitle((__bridge NSView*)impl_->hierarchyView->nativeView(), @"Scene Hierarchy");
+        NSView* rightView =
+            wrapWithTitle((__bridge NSView*)impl_->propertiesView->nativeView(), @"Properties");
+
+        // Build a tabbed bottom panel (Console + Resources).
+        impl_->bottomTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(0, 0, w, 150)];
+        impl_->bottomTabView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        impl_->bottomTabView.tabViewType = NSTopTabsBezelBorder;
+        impl_->bottomTabView.controlSize = NSControlSizeSmall;
+        impl_->bottomTabView.font = [NSFont systemFontOfSize:10.0];
+
+        {
+            NSTabViewItem* consoleTab = [[NSTabViewItem alloc] initWithIdentifier:@"console"];
+            consoleTab.label = @"Console";
+            consoleTab.view = (__bridge NSView*)impl_->consoleView->nativeView();
+            [impl_->bottomTabView addTabViewItem:consoleTab];
+        }
+        {
+            NSTabViewItem* resourceTab = [[NSTabViewItem alloc] initWithIdentifier:@"resources"];
+            resourceTab.label = @"Resources";
+            resourceTab.view = (__bridge NSView*)impl_->resourceView->nativeView();
+            [impl_->bottomTabView addTabViewItem:resourceTab];
+        }
+
+        NSView* bottomView = impl_->bottomTabView;
 
         // Add panels to horizontal split: left, center (viewport), right.
         [impl_->horizontalSplit addSubview:leftView];
@@ -522,6 +548,8 @@ void CocoaEditorWindow::shutdown()
         impl_->hierarchyView.reset();
         impl_->propertiesView.reset();
         impl_->consoleView.reset();
+        impl_->resourceView.reset();
+        impl_->bottomTabView = nil;
 
         if (impl_->window)
         {
@@ -793,6 +821,11 @@ CocoaPropertiesView* CocoaEditorWindow::propertiesView() const
 CocoaConsoleView* CocoaEditorWindow::consoleView() const
 {
     return impl_->consoleView.get();
+}
+
+CocoaResourceView* CocoaEditorWindow::resourceView() const
+{
+    return impl_->resourceView.get();
 }
 
 }  // namespace engine::editor

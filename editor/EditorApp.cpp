@@ -23,11 +23,13 @@
 #include "editor/panels/ConsolePanel.h"
 #include "editor/panels/HierarchyPanel.h"
 #include "editor/panels/PropertiesPanel.h"
+#include "editor/panels/ResourcePanel.h"
 #include "editor/platform/IEditorWindow.h"
 #include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
 #include "editor/platform/cocoa/CocoaHierarchyView.h"
 #include "editor/platform/cocoa/CocoaPropertiesView.h"
+#include "editor/platform/cocoa/CocoaResourceView.h"
 #include "editor/undo/CommandStack.h"
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
@@ -101,6 +103,9 @@ struct EditorApp::Impl
 
     // Console
     std::unique_ptr<ConsolePanel> consolePanel;
+
+    // Resource inspector
+    ResourcePanel resourcePanel;
 
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
@@ -1173,6 +1178,16 @@ void EditorApp::run()
             bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
             bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
             bgfx::dbgTextPrintf(2, 8, 0x08, "Esc to cancel");
+        }
+
+        // -- Resource panel update --------------------------------------------
+        impl_->resourcePanel.update(dt, impl_->registry, impl_->frameArena.get());
+        {
+            auto* rView = impl_->window->resourceView();
+            if (rView)
+            {
+                rView->updateStats(impl_->resourcePanel.currentStats());
+            }
         }
 
         // -- End frame --------------------------------------------------------

@@ -10,6 +10,7 @@ namespace engine::editor
 class CocoaHierarchyView;
 class CocoaPropertiesView;
 class CocoaConsoleView;
+class CocoaResourceView;
 
 // ---------------------------------------------------------------------------
 // CocoaEditorWindow -- native macOS window backed by NSWindow + NSSplitView
@@ -75,6 +76,7 @@ public:
     CocoaHierarchyView* hierarchyView() const;
     CocoaPropertiesView* propertiesView() const;
     CocoaConsoleView* consoleView() const;
+    CocoaResourceView* resourceView() const;
 
 private:
     struct Impl;

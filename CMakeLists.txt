@@ -1144,6 +1144,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/panels/PropertiesPanel.cpp
         editor/panels/AssetBrowserPanel.cpp
         editor/panels/ConsolePanel.cpp
+        editor/panels/ResourcePanel.cpp
         editor/EditorLog.cpp
         editor/inspectors/TransformInspector.cpp
         editor/inspectors/MaterialInspector.cpp
@@ -1159,6 +1160,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/platform/cocoa/CocoaHierarchyView.mm
         editor/platform/cocoa/CocoaPropertiesView.mm
         editor/platform/cocoa/CocoaConsoleView.mm
+        editor/platform/cocoa/CocoaResourceView.mm
     )
 
     add_dependencies(sama_editor engine_shaders)
