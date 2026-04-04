@@ -216,7 +216,7 @@ engine/editor/platform/win32/
     Win32EditorPanel.h / .cpp     -- Child HWND wrapper
     Win32MenuBar.h / .cpp         -- HMENU
     Win32Toolbar.h / .cpp         -- Toolbar control
-    D3DViewportView.h / .cpp      -- Child HWND for bgfx D3D rendering
+    VulkanViewportView.h / .cpp    -- Child HWND for bgfx Vulkan rendering
 ```
 
 Uses standard Win32 controls: `TreeView` (hierarchy), `ListView` (asset browser), custom child HWNDs with `WM_PAINT` for the inspector. Splitter bars are implemented as thin HWNDs that handle `WM_LBUTTONDOWN` / `WM_MOUSEMOVE` for resize.
@@ -910,7 +910,7 @@ elseif(WIN32)
         editor/platform/win32/Win32EditorWindow.cpp
         editor/platform/win32/Win32MenuBar.cpp
         editor/platform/win32/Win32Toolbar.cpp
-        editor/platform/win32/D3DViewportView.cpp
+        editor/platform/win32/VulkanViewportView.cpp
         editor/platform/win32/Win32HierarchyPanel.cpp
         editor/platform/win32/Win32PropertiesPanel.cpp
         editor/platform/win32/Win32AssetBrowserPanel.cpp
@@ -1066,7 +1066,7 @@ The editor creates its own `Engine` instance internally but replaces the GLFW wi
 ### Phase 12: Windows Platform (3-4 weeks)
 - Implement all `IEditorWindow` / `IEditorPanel` interfaces for Win32
 - Port all Cocoa panels to Win32 equivalents
-- Test bgfx rendering into child HWND (D3D11/D3D12 backend)
+- Test bgfx rendering into child HWND (Vulkan backend)
 - **Deliverable:** Editor running natively on Windows
 
 ### Phase 13: Plugin System (2 weeks)
@@ -1099,7 +1099,7 @@ A standalone library (usable from both the editor and a CLI tool) that transform
   {
       std::string name;               // "macOS", "iOS", "Windows", "Android"
       TextureFormat textureFormat;     // BC7, ASTC_4x4, ETC2
-      bgfx::RendererType::Enum renderer; // Metal, Vulkan, D3D12
+      bgfx::RendererType::Enum renderer; // Metal (macOS/iOS), Vulkan (Windows/Android)
       uint32_t maxTextureSize;         // 4096 for mobile, 8192 for desktop
       bool compressAudio;              // true for mobile (smaller OGG quality)
   };
@@ -1316,7 +1316,7 @@ Linux is deferred. When needed, GTK4 is recommended over Qt for licensing simpli
 
 ### 13.3 Rendering Backend
 
-bgfx selects Metal on macOS and D3D11/D3D12 on Windows automatically. The editor does not constrain this; `bgfx::createFrameBuffer(nwh, w, h)` works with any backend. On macOS, the native view must provide a `CAMetalLayer` (already done in `GlfwWindow.cpp`). On Windows, the native view is a plain HWND (bgfx creates its own swap chain).
+Rendering backends are Metal on macOS/iOS and Vulkan on Windows/Android. D3D11/D3D12 are not supported — Vulkan is the sole Windows backend, keeping the shader pipeline uniform across non-Apple platforms. bgfx is initialized with the explicit renderer type per platform; `bgfx::createFrameBuffer(nwh, w, h)` works with both. On macOS, the native view must provide a `CAMetalLayer` (already done in `GlfwWindow.cpp`). On Windows, the native view is a plain HWND (bgfx creates its own Vulkan swap chain).
 
 ---
 
