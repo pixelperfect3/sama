@@ -2,8 +2,6 @@
 
 Tracks all decisions and progress made during development.
 
-**Engine name:** Sama (سما — sky, heaven in Urdu). Renamed from "Nimbus" on 2026-04-03.
-
 ---
 
 ## Project Setup
