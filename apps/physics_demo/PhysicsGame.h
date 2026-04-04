@@ -3,16 +3,12 @@
 #include <random>
 
 #include "engine/core/OrbitCamera.h"
+#include "engine/ecs/Entity.h"
 #include "engine/game/IGame.h"
 #include "engine/physics/JoltPhysicsEngine.h"
 #include "engine/physics/PhysicsSystem.h"
 #include "engine/rendering/IblResources.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
-
-namespace engine::ecs
-{
-using EntityID = uint64_t;
-}
 
 class PhysicsGame : public engine::game::IGame
 {
