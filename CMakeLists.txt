@@ -862,6 +862,12 @@ target_link_libraries(engine_core PUBLIC
     glm::glm
 )
 
+# --- engine_game static library ---
+# Game layer: IGame interface, GameRunner (frame loop with fixed timestep).
+add_library(engine_game STATIC engine/game/GameRunner.cpp)
+target_include_directories(engine_game PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(engine_game PUBLIC engine_core engine_scene engine_ecs)
+
 # --- helmet_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(helmet_demo apps/helmet_demo/main.mm)
@@ -936,6 +942,36 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         "-framework MetalKit"
     )
     target_compile_definitions(physics_demo PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+endif()
+
+# --- physics_demo_v2 app (macOS only) ---
+# Same physics demo migrated to IGame/GameRunner pattern.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(physics_demo_v2
+        apps/physics_demo/main_v2.mm
+        apps/physics_demo/PhysicsGame.cpp
+    )
+
+    target_include_directories(physics_demo_v2 PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(physics_demo_v2 PRIVATE
+        engine_game
+        engine_core
+        engine_scene
+        engine_physics
+        glm::glm
+        Jolt
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(physics_demo_v2 PRIVATE
         GLM_FORCE_INTRINSICS
         GLM_FORCE_DEPTH_ZERO_TO_ONE
         GLM_FORCE_RADIANS
