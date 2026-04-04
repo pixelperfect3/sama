@@ -9,7 +9,12 @@
 // ---------------------------------------------------------------------------
 
 @interface EditorMetalView : NSView
+{
+    BOOL keyPressed_[256];
+}
 @property(nonatomic, assign) double scrollDeltaY;
+- (BOOL)wasKeyPressed:(uint8_t)keyCode;
+- (void)clearKeyState;
 @end
 
 @implementation EditorMetalView
@@ -40,6 +45,85 @@
 - (void)scrollWheel:(NSEvent*)event
 {
     _scrollDeltaY += [event scrollingDeltaY];
+}
+
+// Map macOS virtual key codes to ASCII-ish codes.
+static uint8_t mapKeyCode(unsigned short vk)
+{
+    // Letters A-Z: macOS keyCodes 0x00-0x1F are non-sequential.
+    // Map them to uppercase ASCII.
+    switch (vk)
+    {
+        case 0x00: return 'A';
+        case 0x01: return 'S';
+        case 0x02: return 'D';
+        case 0x03: return 'F';
+        case 0x05: return 'G';
+        case 0x04: return 'H';
+        case 0x06: return 'Z';
+        case 0x07: return 'X';
+        case 0x08: return 'C';
+        case 0x09: return 'V';
+        case 0x0B: return 'B';
+        case 0x0D: return 'W';
+        case 0x0E: return 'E';
+        case 0x0F: return 'R';
+        case 0x10: return 'Y';
+        case 0x11: return 'T';
+        case 0x12: return '1';
+        case 0x13: return '2';
+        case 0x14: return '3';
+        case 0x15: return '4';
+        case 0x17: return '5';
+        case 0x16: return '6';
+        case 0x1A: return '7';
+        case 0x1C: return '8';
+        case 0x19: return '9';
+        case 0x1D: return '0';
+        case 0x1E: return ']';
+        case 0x1F: return 'O';
+        case 0x20: return 'U';
+        case 0x22: return 'I';
+        case 0x23: return 'P';
+        case 0x25: return 'L';
+        case 0x26: return 'J';
+        case 0x28: return 'K';
+        case 0x2C: return '/';
+        case 0x2D: return 'N';
+        case 0x2E: return 'M';
+        case 0x2F: return '.';
+        case 0x31: return ' ';   // Space
+        case 0x7B: return 0x80;  // Left arrow
+        case 0x7C: return 0x81;  // Right arrow
+        case 0x7D: return 0x82;  // Down arrow
+        case 0x7E: return 0x83;  // Up arrow
+        case 0x24: return 0x0D;  // Return/Enter
+        case 0x33: return 0x08;  // Delete/Backspace
+        case 0x35: return 0x1B;  // Escape
+        case 0x30: return 0x09;  // Tab
+        case 0x18: return '=';
+        case 0x1B: return '-';
+        default:   return 0;
+    }
+}
+
+- (void)keyDown:(NSEvent*)event
+{
+    uint8_t code = mapKeyCode([event keyCode]);
+    if (code > 0)
+    {
+        keyPressed_[code] = YES;
+    }
+}
+
+- (BOOL)wasKeyPressed:(uint8_t)keyCode
+{
+    return keyPressed_[keyCode];
+}
+
+- (void)clearKeyState
+{
+    memset(keyPressed_, 0, sizeof(keyPressed_));
 }
 
 @end
@@ -186,6 +270,9 @@ void CocoaEditorWindow::pollEvents()
 {
     @autoreleasepool
     {
+        // Clear per-frame key state before processing new events.
+        [impl_->metalView clearKeyState];
+
         // Drain all pending events (poll-based, not blocking).
         while (true)
         {
@@ -316,6 +403,13 @@ bool CocoaEditorWindow::isLeftMouseDown() const
 bool CocoaEditorWindow::isRightMouseDown() const
 {
     return impl_->rightDown;
+}
+
+bool CocoaEditorWindow::isKeyPressed(uint8_t keyCode) const
+{
+    if (!impl_->metalView)
+        return false;
+    return [impl_->metalView wasKeyPressed:keyCode];
 }
 
 }  // namespace engine::editor

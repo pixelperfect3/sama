@@ -1075,6 +1075,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(sama_editor
         editor/main.mm
         editor/EditorApp.cpp
+        editor/panels/HierarchyPanel.cpp
         editor/platform/cocoa/CocoaEditorWindow.mm
     )
 

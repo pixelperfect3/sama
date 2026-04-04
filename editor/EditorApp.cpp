@@ -11,6 +11,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "editor/EditorState.h"
+#include "editor/panels/HierarchyPanel.h"
 #include "editor/platform/IEditorWindow.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
 #include "engine/core/OrbitCamera.h"
@@ -25,8 +27,11 @@
 #include "engine/rendering/ShaderUniforms.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/scene/NameComponent.h"
 #include "engine/scene/TransformSystem.h"
 
+using engine::ecs::EntityID;
+using engine::ecs::INVALID_ENTITY;
 using namespace engine::core;
 using namespace engine::ecs;
 using namespace engine::rendering;
@@ -66,6 +71,13 @@ struct EditorApp::Impl
 
     // Camera
     OrbitCamera camera;
+
+    // Editor state and panels
+    EditorState editorState;
+    std::unique_ptr<HierarchyPanel> hierarchyPanel;
+
+    // Selection highlight material
+    uint32_t selectionMatId = 0;
 
     // Frame arena
     std::unique_ptr<engine::memory::FrameArena> frameArena;
@@ -170,6 +182,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         impl_->registry.emplace<MeshComponent>(impl_->cubeEntity, MeshComponent{impl_->cubeMeshId});
         impl_->registry.emplace<MaterialComponent>(impl_->cubeEntity, MaterialComponent{cubMatId});
         impl_->registry.emplace<VisibleTag>(impl_->cubeEntity);
+        impl_->registry.emplace<engine::scene::NameComponent>(
+            impl_->cubeEntity, engine::scene::NameComponent{"Red Cube"});
     }
 
     // Ground plane (large flat cube).
@@ -192,7 +206,23 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         impl_->registry.emplace<MaterialComponent>(impl_->groundEntity,
                                                    MaterialComponent{gndMatId});
         impl_->registry.emplace<VisibleTag>(impl_->groundEntity);
+        impl_->registry.emplace<engine::scene::NameComponent>(
+            impl_->groundEntity, engine::scene::NameComponent{"Ground"});
     }
+
+    // -- Selection highlight material -----------------------------------------
+    {
+        Material selMat{};
+        selMat.albedo = {1.0f, 0.8f, 0.0f, 1.0f};  // bright yellow
+        selMat.roughness = 1.0f;
+        selMat.metallic = 0.0f;
+        impl_->selectionMatId = impl_->resources.addMaterial(selMat);
+    }
+
+    // -- Editor state and panels ----------------------------------------------
+    impl_->hierarchyPanel =
+        std::make_unique<HierarchyPanel>(impl_->registry, impl_->editorState, *impl_->window);
+    impl_->hierarchyPanel->init();
 
     // -- Camera ---------------------------------------------------------------
     impl_->camera.distance = 5.0f;
@@ -315,11 +345,65 @@ void EditorApp::run()
         impl_->drawCallSys.update(impl_->registry, impl_->resources, impl_->pbrProgram,
                                   impl_->uniforms, frame);
 
+        // -- Selection highlight -------------------------------------------------
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                auto* wt = impl_->registry.get<WorldTransformComponent>(selE);
+                auto* mc = impl_->registry.get<MeshComponent>(selE);
+                if (wt && mc)
+                {
+                    const Mesh* mesh = impl_->resources.getMesh(mc->mesh);
+                    if (mesh && mesh->isValid())
+                    {
+                        // Scale slightly larger to create outline effect.
+                        glm::mat4 outlineMtx = glm::scale(wt->matrix, glm::vec3(1.02f));
+                        bgfx::setTransform(glm::value_ptr(outlineMtx));
+
+                        // Yellow selection material.
+                        const float matData[8] = {
+                            1.0f, 0.8f, 0.0f, 1.0f,  // albedo
+                            0.0f, 0.0f, 0.0f, 0.0f,  // metallic etc
+                        };
+                        bgfx::setUniform(impl_->uniforms.u_material, matData, 2);
+
+                        // Directional light (same as scene).
+                        bgfx::setUniform(impl_->uniforms.u_dirLight, lightData, 2);
+
+                        // Bind default textures.
+                        bgfx::setTexture(0, impl_->uniforms.s_albedo,
+                                         impl_->resources.whiteTexture());
+                        bgfx::setTexture(1, impl_->uniforms.s_normal,
+                                         impl_->resources.neutralNormalTexture());
+                        bgfx::setTexture(2, impl_->uniforms.s_orm, impl_->resources.whiteTexture());
+
+                        bgfx::setVertexBuffer(0, mesh->positionVbh);
+                        if (bgfx::isValid(mesh->surfaceVbh))
+                        {
+                            bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+                        }
+                        bgfx::setIndexBuffer(mesh->ibh);
+
+                        bgfx::setState(BGFX_STATE_DEFAULT | BGFX_STATE_PT_LINES);
+
+                        bgfx::submit(kViewOpaque, impl_->pbrProgram);
+                    }
+                }
+            }
+        }
+
+        // -- Panels -----------------------------------------------------------
+        impl_->hierarchyPanel->update(dt);
+
         // -- HUD --------------------------------------------------------------
         bgfx::dbgTextClear();
         bgfx::dbgTextPrintf(1, 1, 0x0f, "Sama Editor  |  %.1f fps  |  %.3f ms",
                             dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f);
         bgfx::dbgTextPrintf(1, 2, 0x07, "Right-drag = orbit  |  Scroll = zoom");
+
+        // Render panels (hierarchy, properties) as debug text.
+        impl_->hierarchyPanel->render();
 
         // -- End frame --------------------------------------------------------
         impl_->frameArena->reset();
@@ -331,6 +415,12 @@ void EditorApp::shutdown()
 {
     if (!impl_->initialized)
         return;
+
+    // Shutdown panels.
+    if (impl_->hierarchyPanel)
+    {
+        impl_->hierarchyPanel->shutdown();
+    }
 
     // Destroy shader programs.
     if (bgfx::isValid(impl_->pbrProgram))

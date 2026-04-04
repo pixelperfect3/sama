@@ -49,6 +49,7 @@ public:
     double scrollDeltaY() const override;
     bool isLeftMouseDown() const override;
     bool isRightMouseDown() const override;
+    bool isKeyPressed(uint8_t keyCode) const override;
 
 private:
     struct Impl;

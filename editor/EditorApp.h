@@ -9,11 +9,11 @@ namespace engine::editor
 class IEditorWindow;
 
 // ---------------------------------------------------------------------------
-// EditorApp -- Phase 1 editor application.
+// EditorApp -- editor application.
 //
-// Owns the native Cocoa window, bgfx renderer, and a simple test scene
-// (PBR-lit cube on a ground plane).  OrbitCamera for viewport navigation.
-// No GLFW, no ImGui.
+// Owns the native Cocoa window, bgfx renderer, a test scene (PBR-lit cube
+// on a ground plane), scene hierarchy panel, and properties inspector.
+// OrbitCamera for viewport navigation.  No GLFW, no ImGui.
 // ---------------------------------------------------------------------------
 
 class EditorApp
