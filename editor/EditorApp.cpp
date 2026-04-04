@@ -188,6 +188,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         tc.scale = {1.0f, 1.0f, 1.0f};
         tc.flags = 0x01;  // dirty
         impl_->registry.emplace<TransformComponent>(impl_->cubeEntity, tc);
+        impl_->registry.emplace<WorldTransformComponent>(impl_->cubeEntity);
         impl_->registry.emplace<MeshComponent>(impl_->cubeEntity, MeshComponent{impl_->cubeMeshId});
         impl_->registry.emplace<MaterialComponent>(impl_->cubeEntity, MaterialComponent{cubMatId});
         impl_->registry.emplace<VisibleTag>(impl_->cubeEntity);
@@ -210,6 +211,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         tc.scale = {20.0f, 0.01f, 20.0f};
         tc.flags = 0x01;
         impl_->registry.emplace<TransformComponent>(impl_->groundEntity, tc);
+        impl_->registry.emplace<WorldTransformComponent>(impl_->groundEntity);
         impl_->registry.emplace<MeshComponent>(impl_->groundEntity,
                                                MeshComponent{impl_->cubeMeshId});
         impl_->registry.emplace<MaterialComponent>(impl_->groundEntity,
