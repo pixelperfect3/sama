@@ -1047,20 +1047,29 @@ The editor creates its own `Engine` instance internally but replaces the GLFW wi
 - Scrubber bar, play/pause/stop controls
 - **Deliverable:** Log output visible, basic animation scrubbing
 
-### Phase 10: Multi-Viewport + Game View (1-2 weeks)
+### Phase 10: Resource Usage Inspector (2 weeks)
+- **CPU panel:** Per-system frame time breakdown (animation, physics, transform, cull, draw call submission) with rolling history graph. Data sourced from `std::chrono::high_resolution_clock` timing wrappers around each system's `update()`.
+- **GPU panel:** bgfx stats integration (`bgfx::getStats()`) — draw calls, triangles, texture memory, buffer memory, GPU time per view, encoder stats. Displayed as a live dashboard with sparkline graphs.
+- **Memory panel:** FrameArena usage (bytes used / capacity), total heap allocations (tracked via custom allocator or platform API), per-system arena breakdown, texture/mesh/material counts from RenderResources.
+- **Entity panel:** Total entity count, component type distribution (how many entities have each component type), sparse set fill ratios.
+- **Network/Asset panel (optional):** Pending asset loads, asset cache hit/miss rates, total loaded asset memory.
+- **Implementation:** `IResourceInspector` interface with `CocoaResourcePanel` (NSTableView + custom NSView for graphs). Lightweight ring-buffer (`InlinedVector<float, 120>`) stores 2 seconds of history at 60fps per metric. All data collection behind `#if SAMA_EDITOR` to avoid overhead in game builds.
+- **Deliverable:** Tabbed resource panel showing CPU, GPU, memory, and entity stats with live graphs
+
+### Phase 11: Multi-Viewport + Game View (1-2 weeks)
 - Tab bar in bottom area with "Game View" tab
 - Second viewport rendering through the in-scene camera
 - Play/Pause/Stop toolbar buttons
 - In play mode: game systems run, editor camera frozen; game view is "live"
 - **Deliverable:** Side-by-side scene editor and game preview
 
-### Phase 11: Windows Platform (3-4 weeks)
+### Phase 12: Windows Platform (3-4 weeks)
 - Implement all `IEditorWindow` / `IEditorPanel` interfaces for Win32
 - Port all Cocoa panels to Win32 equivalents
 - Test bgfx rendering into child HWND (D3D11/D3D12 backend)
 - **Deliverable:** Editor running natively on Windows
 
-### Phase 12: Plugin System (2 weeks)
+### Phase 13: Plugin System (2 weeks)
 - Plugin API: shared library (.dylib / .dll) that exports a registration function
 - Plugins can register `IComponentInspector`, `IEditorPanel`, menu items
 - Hot-reload support: watch plugin .dylib for changes, unload/reload
