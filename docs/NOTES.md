@@ -999,3 +999,38 @@ Architecture is documented in `docs/EDITOR_ARCHITECTURE.md`. The editor uses nat
 - **Mutex over lock-free:** The ring buffer uses `std::mutex` rather than a lock-free queue. Log writes are infrequent (a few per frame at most), so the mutex cost is negligible. Lock-free would add complexity without measurable benefit at this scale.
 
 ---
+
+## Game Layer
+
+### Overview
+
+The game layer bridges the engine infrastructure (ECS, renderer, physics, audio) and game-specific logic. It replaces the hand-rolled `while (eng.beginFrame(dt))` pattern that was copy-pasted across every demo.
+
+### Components
+
+1. **`IGame` interface** (`engine/game/IGame.h`): Five virtual methods with default empty implementations — `onInit`, `onFixedUpdate`, `onUpdate`, `onRender`, `onShutdown`. Games only override what they need. Registry is passed as a parameter (not through Engine) to keep data flow explicit.
+
+2. **`GameRunner`** (`engine/game/GameRunner.h/.cpp`): Owns the frame loop with a fixed-timestep accumulator pattern (default 60Hz). System execution order: Input -> FixedUpdate (0-N) -> Update -> TransformSystem -> Render -> EndFrame. Spiral-of-death capped at 0.25s accumulator max.
+
+3. **`SceneManager`** (`engine/scene/SceneManager.h/.cpp`): Wraps SceneSerializer with scene lifecycle (load/unload/reload). Tracks scene-owned entities vs persistent entities that survive scene transitions. Persistent entities stored in a small vector with linear scan (typically < 10 entries).
+
+4. **`ProjectConfig`** (`engine/game/ProjectConfig.h/.cpp`): Plain struct parsed from JSON at startup. Sections for window, render, physics, audio. All fields have sensible defaults; missing fields keep defaults. `toEngineDesc()` converts to `EngineDesc` for Engine::init(). The file is optional — omitting it uses all defaults.
+
+### Key Decisions
+
+- **IGame methods are not pure virtual.** Default empty implementations mean trivial games only override onInit + onUpdate. This avoids forcing four empty method stubs on simple demos.
+- **GameRunner composes Engine, does not replace it.** Engine remains a pure infrastructure layer. Existing demos with raw beginFrame/endFrame loops continue to work unchanged. Migration is opt-in.
+- **Fixed timestep is independent of render frame rate.** Physics always steps at fixedTimestep_ regardless of display refresh rate. On a 30fps device with 60Hz fixed rate, the accumulator runs 2 physics steps per frame. On 120Hz display, most frames run 0 or 1 steps.
+- **onRender does not receive Registry.** Games that need the registry during render (e.g., for draw calls) store a pointer during onInit. This keeps the interface minimal — most games render through engine systems, not directly.
+- **JSON for ProjectConfig, not TOML/YAML.** The engine already has io::JsonDocument. Adding another parser for a 20-line config is not justified.
+- **SceneManager in engine_scene, not engine_game.** Avoids circular dependencies — engine_assets already depends on engine_scene.
+
+### Migration Example
+
+The `physics_demo_v2` target demonstrates migration. The original 500-line `main.mm` becomes a ~10-line entry point plus a focused `PhysicsGame` class implementing `IGame`. The original `physics_demo` remains unchanged for reference.
+
+### Test Coverage
+
+ProjectConfig has 8 unit tests covering: defaults, full config parsing, partial config (missing fields keep defaults), fixedRateHz conversion, empty object, invalid JSON, toEngineDesc conversion, and missing file handling. All existing 437 tests continue to pass.
+
+---

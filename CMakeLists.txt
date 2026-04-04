@@ -690,9 +690,10 @@ add_executable(engine_tests
     tests/animation/TestAnimationSampler.cpp
     tests/animation/TestPoseBlend.cpp
     tests/animation/TestIkSolvers.cpp
+    tests/game/TestProjectConfig.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio engine_animation glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio engine_animation engine_game glm::glm Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
