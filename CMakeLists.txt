@@ -220,6 +220,30 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_unlit.sc FRAGMENT ANDROID ""   fs_unlit_essl COMPILED_SHADERS)
 
+# Gizmo — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_gizmo.sc VERTEX   OSX   metal  vs_gizmo_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_gizmo.sc FRAGMENT OSX   metal  fs_gizmo_mtl  COMPILED_SHADERS)
+
+# Gizmo — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_gizmo.sc VERTEX   LINUX spirv  vs_gizmo_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_gizmo.sc FRAGMENT LINUX spirv  fs_gizmo_spv  COMPILED_SHADERS)
+
+# Gizmo — GLSL (OpenGL)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_gizmo.sc VERTEX   LINUX 120    vs_gizmo_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_gizmo.sc FRAGMENT LINUX 120    fs_gizmo_glsl COMPILED_SHADERS)
+
+# Gizmo — ESSL (OpenGLES / Android)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_gizmo.sc VERTEX   ANDROID ""   vs_gizmo_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_gizmo.sc FRAGMENT ANDROID ""   fs_gizmo_essl COMPILED_SHADERS)
+
 # PBR — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_pbr.sc VERTEX   OSX   metal  vs_pbr_mtl  COMPILED_SHADERS)
@@ -1078,6 +1102,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/panels/HierarchyPanel.cpp
         editor/panels/PropertiesPanel.cpp
         editor/inspectors/TransformInspector.cpp
+        editor/gizmo/TransformGizmo.cpp
+        editor/gizmo/GizmoRenderer.cpp
         editor/platform/cocoa/CocoaEditorWindow.mm
     )
 

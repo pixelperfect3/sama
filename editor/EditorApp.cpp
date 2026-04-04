@@ -12,6 +12,8 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "editor/EditorState.h"
+#include "editor/gizmo/GizmoRenderer.h"
+#include "editor/gizmo/TransformGizmo.h"
 #include "editor/inspectors/TransformInspector.h"
 #include "editor/panels/HierarchyPanel.h"
 #include "editor/panels/PropertiesPanel.h"
@@ -78,6 +80,10 @@ struct EditorApp::Impl
     EditorState editorState;
     std::unique_ptr<HierarchyPanel> hierarchyPanel;
     std::unique_ptr<PropertiesPanel> propertiesPanel;
+
+    // Gizmo
+    std::unique_ptr<TransformGizmo> gizmo;
+    GizmoRenderer gizmoRenderer;
 
     // Selection highlight material
     uint32_t selectionMatId = 0;
@@ -232,6 +238,10 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->propertiesPanel->addInspector(std::make_unique<TransformInspector>(*impl_->window));
     impl_->propertiesPanel->init();
 
+    impl_->gizmo =
+        std::make_unique<TransformGizmo>(impl_->registry, impl_->editorState, *impl_->window);
+    impl_->gizmoRenderer.init();
+
     // -- Camera ---------------------------------------------------------------
     impl_->camera.distance = 5.0f;
     impl_->camera.yaw = 45.0f;
@@ -298,6 +308,14 @@ void EditorApp::run()
         {
             // macOS scroll is in content units, scale down for smooth zoom.
             impl_->camera.zoom(static_cast<float>(scrollY * 0.1), 1.0f, 1.0f, 100.0f);
+        }
+
+        // -- Gizmo update (before transform system) ---------------------------
+        {
+            float aspect = static_cast<float>(fbW) / static_cast<float>(fbH);
+            glm::mat4 gView = impl_->camera.view();
+            glm::mat4 gProj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
+            impl_->gizmo->update(dt, gView, gProj);
         }
 
         // -- Transform system -------------------------------------------------
@@ -401,6 +419,18 @@ void EditorApp::run()
             }
         }
 
+        // -- Gizmo rendering --------------------------------------------------
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                float aspect = static_cast<float>(W) / static_cast<float>(H);
+                glm::mat4 gView = impl_->camera.view();
+                glm::mat4 gProj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
+                impl_->gizmoRenderer.render(*impl_->gizmo, gView, gProj, W, H);
+            }
+        }
+
         // -- Panels -----------------------------------------------------------
         impl_->hierarchyPanel->update(dt);
         impl_->propertiesPanel->update(dt);
@@ -409,7 +439,12 @@ void EditorApp::run()
         bgfx::dbgTextClear();
         bgfx::dbgTextPrintf(1, 1, 0x0f, "Sama Editor  |  %.1f fps  |  %.3f ms",
                             dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f);
-        bgfx::dbgTextPrintf(1, 2, 0x07, "Right-drag = orbit  |  Scroll = zoom");
+        const char* modeStr = "Translate";
+        if (impl_->gizmo->mode() == GizmoMode::Rotate)
+            modeStr = "Rotate";
+        else if (impl_->gizmo->mode() == GizmoMode::Scale)
+            modeStr = "Scale";
+        bgfx::dbgTextPrintf(1, 2, 0x07, "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]", modeStr);
 
         // Render panels (hierarchy, properties) as debug text.
         impl_->hierarchyPanel->render();
@@ -435,6 +470,8 @@ void EditorApp::shutdown()
     {
         impl_->propertiesPanel->shutdown();
     }
+
+    impl_->gizmoRenderer.shutdown();
 
     // Destroy shader programs.
     if (bgfx::isValid(impl_->pbrProgram))

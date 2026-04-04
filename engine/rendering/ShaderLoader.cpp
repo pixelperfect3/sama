@@ -9,6 +9,10 @@
 // (_mtl, _spv, _glsl, _essl, etc.) to populate the EmbeddedShader table automatically.
 // All platform-supported variants must be present — the macro is conditioned on
 // BGFX_PLATFORM_SUPPORTS_* flags which are true for multiple backends on macOS.
+#include "generated/shaders/fs_gizmo_essl.bin.h"
+#include "generated/shaders/fs_gizmo_glsl.bin.h"
+#include "generated/shaders/fs_gizmo_mtl.bin.h"
+#include "generated/shaders/fs_gizmo_spv.bin.h"
 #include "generated/shaders/fs_pbr_essl.bin.h"
 #include "generated/shaders/fs_pbr_glsl.bin.h"
 #include "generated/shaders/fs_pbr_mtl.bin.h"
@@ -25,6 +29,10 @@
 #include "generated/shaders/fs_unlit_glsl.bin.h"
 #include "generated/shaders/fs_unlit_mtl.bin.h"
 #include "generated/shaders/fs_unlit_spv.bin.h"
+#include "generated/shaders/vs_gizmo_essl.bin.h"
+#include "generated/shaders/vs_gizmo_glsl.bin.h"
+#include "generated/shaders/vs_gizmo_mtl.bin.h"
+#include "generated/shaders/vs_gizmo_spv.bin.h"
 #include "generated/shaders/vs_pbr_essl.bin.h"
 #include "generated/shaders/vs_pbr_glsl.bin.h"
 #include "generated/shaders/vs_pbr_mtl.bin.h"
@@ -91,6 +99,12 @@ static const bgfx::EmbeddedShader kSkinnedPbrShaders[] = {
 static const bgfx::EmbeddedShader kSkinnedShadowShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_shadow_skinned),
     BGFX_EMBEDDED_SHADER(fs_shadow),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+static const bgfx::EmbeddedShader kGizmoShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_gizmo),
+    BGFX_EMBEDDED_SHADER(fs_gizmo),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -222,6 +236,27 @@ bgfx::ProgramHandle loadSkinnedShadowProgram()
 
     bgfx::ShaderHandle fsh =
         bgfx::createEmbeddedShader(kSkinnedShadowShaders, renderer, "fs_shadow");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadGizmoProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kGizmoShaders, renderer, "vs_gizmo");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kGizmoShaders, renderer, "fs_gizmo");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);

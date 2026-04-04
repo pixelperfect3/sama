@@ -44,4 +44,9 @@ namespace engine::rendering
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadSkinnedShadowProgram();
 
+// Gizmo program — position + color0 passthrough.  Used for colored
+// transform gizmo lines/arrows in the editor overlay.
+// Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadGizmoProgram();
+
 }  // namespace engine::rendering
