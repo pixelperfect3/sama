@@ -96,6 +96,7 @@ void PhysicsSystem::registerNewBodies(ecs::Registry& reg, IPhysicsEngine& physic
         desc.angularDamping = rb->angularDamping;
         desc.type = rb->type;
         desc.layer = rb->layer;
+        desc.isSensor = (col->isSensor != 0);
         desc.entity = entity;
 
         uint32_t bodyID = physics.addBody(desc);

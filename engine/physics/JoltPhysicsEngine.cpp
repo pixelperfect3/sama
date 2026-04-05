@@ -176,6 +176,7 @@ uint32_t JoltPhysicsEngine::addBody(const BodyDesc& desc)
     settings.mRestitution = desc.restitution;
     settings.mLinearDamping = desc.linearDamping;
     settings.mAngularDamping = desc.angularDamping;
+    settings.mIsSensor = desc.isSensor;
 
     // Store entity ID in user data for contact listener lookups
     settings.mUserData = static_cast<uint64_t>(desc.entity);

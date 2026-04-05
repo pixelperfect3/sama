@@ -31,6 +31,7 @@ struct BodyDesc
     float angularDamping = 0.05f;
     BodyType type = BodyType::Dynamic;
     uint8_t layer = 0;
+    bool isSensor = false;  // sensor: overlap-only, no physical response
     ecs::EntityID entity = ecs::INVALID_ENTITY;  // back-reference for callbacks
 };
 
