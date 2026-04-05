@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(Engine C CXX)
 
+# Compatibility for third-party deps that still declare cmake_minimum_required
+# with very old versions. CMake 4.x rejects these without this override.
+if(NOT CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
