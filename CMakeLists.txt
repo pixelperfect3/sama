@@ -1239,3 +1239,43 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         GLM_ENABLE_EXPERIMENTAL
     )
 endif()
+
+# ===========================================================================
+# Size test binaries (macOS only).
+# Minimal executables used only to measure the binary footprint of each
+# Sama umbrella target. Build with: cmake --build <dir> --target size_test_*
+# ===========================================================================
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(SAMA_SIZE_TEST_FRAMEWORKS
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework IOKit"
+        "-framework CoreFoundation"
+        "-framework AudioToolbox"
+        "-framework CoreAudio"
+    )
+    set(SAMA_SIZE_TEST_DEFS
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+
+    add_executable(size_test_minimal apps/size_test/size_test_minimal.mm)
+    target_include_directories(size_test_minimal PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(size_test_minimal PRIVATE sama_minimal ${SAMA_SIZE_TEST_FRAMEWORKS})
+    target_compile_definitions(size_test_minimal PRIVATE ${SAMA_SIZE_TEST_DEFS})
+
+    add_executable(size_test_3d apps/size_test/size_test_3d.mm)
+    target_include_directories(size_test_3d PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(size_test_3d PRIVATE sama_3d ${SAMA_SIZE_TEST_FRAMEWORKS})
+    target_compile_definitions(size_test_3d PRIVATE ${SAMA_SIZE_TEST_DEFS})
+
+    add_executable(size_test_full apps/size_test/size_test_full.mm)
+    target_include_directories(size_test_full PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(size_test_full PRIVATE sama ${SAMA_SIZE_TEST_FRAMEWORKS})
+    target_compile_definitions(size_test_full PRIVATE ${SAMA_SIZE_TEST_DEFS})
+endif()
