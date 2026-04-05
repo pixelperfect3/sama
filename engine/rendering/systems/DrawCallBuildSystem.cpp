@@ -104,7 +104,7 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             //   [1] = {metallic, emissiveScale, 0, 0}
             float materialData[8] = {
                 mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
-                mat->metallic, mat->emissiveScale, 0.0f,          0.0f,
+                mat->metallic, mat->emissiveScale, mat->albedo.w, 0.0f,
             };
             bgfx::setUniform(uniforms->u_material, materialData, 2);
 
@@ -173,7 +173,7 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             // Per-draw: material
             float materialData[8] = {
                 mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
-                mat->metallic, mat->emissiveScale, 0.0f,          0.0f,
+                mat->metallic, mat->emissiveScale, mat->albedo.w, 0.0f,
             };
             bgfx::setUniform(uniforms.u_material, materialData, 2);
 
@@ -231,8 +231,21 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             if (bgfx::isValid(mesh->surfaceVbh))
                 bgfx::setVertexBuffer(1, mesh->surfaceVbh);
             bgfx::setIndexBuffer(mesh->ibh);
-            bgfx::setState(BGFX_STATE_DEFAULT);
-            bgfx::submit(kViewOpaque, program);
+
+            // Transparent materials: alpha-blend, no depth write, submit to
+            // transparent view (rendered after opaque, depth-tested against opaque).
+            if (mat->transparent)
+            {
+                bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW |
+                               BGFX_STATE_MSAA | BGFX_STATE_BLEND_ALPHA);
+                bgfx::submit(kViewTransparent, program);
+            }
+            else
+            {
+                bgfx::setState(BGFX_STATE_DEFAULT);
+                bgfx::submit(kViewOpaque, program);
+            }
         });
 }
 
@@ -377,7 +390,7 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             // Per-draw: material
             float materialData[8] = {
                 mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
-                mat->metallic, mat->emissiveScale, 0.0f,          0.0f,
+                mat->metallic, mat->emissiveScale, mat->albedo.w, 0.0f,
             };
             bgfx::setUniform(uniforms.u_material, materialData, 2);
 
@@ -437,8 +450,19 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             if (bgfx::isValid(mesh->skinningVbh))
                 bgfx::setVertexBuffer(2, mesh->skinningVbh);
             bgfx::setIndexBuffer(mesh->ibh);
-            bgfx::setState(BGFX_STATE_DEFAULT);
-            bgfx::submit(kViewOpaque, skinnedProgram);
+
+            if (mat->transparent)
+            {
+                bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW |
+                               BGFX_STATE_MSAA | BGFX_STATE_BLEND_ALPHA);
+                bgfx::submit(kViewTransparent, skinnedProgram);
+            }
+            else
+            {
+                bgfx::setState(BGFX_STATE_DEFAULT);
+                bgfx::submit(kViewOpaque, skinnedProgram);
+            }
         });
 }
 

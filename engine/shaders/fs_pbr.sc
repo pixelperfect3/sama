@@ -348,5 +348,9 @@ void main()
     // Gamma correction (sRGB, gamma = 2.2)
     color = pow(color, vec3_splat(1.0 / 2.2));
 
-    gl_FragColor = vec4(color, 1.0);
+    // Opacity = material opacity * albedo texture alpha.
+    // u_material[1].z carries the material opacity (albedo.w).
+    float opacity = u_material[1].z * albedoSample.w;
+
+    gl_FragColor = vec4(color, opacity);
 }

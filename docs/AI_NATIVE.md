@@ -171,6 +171,38 @@ mat.occlusionMapId = 0;
 uint32_t matId = resources.addMaterial(mat);
 ```
 
+#### Create a transparent material
+
+```cpp
+Material mat;
+mat.albedo = {0.2f, 0.8f, 1.0f, 0.5f};  // .w = 0.5 → 50% opacity
+mat.roughness = 0.1f;                     // smooth glass-like
+mat.metallic = 0.0f;
+mat.transparent = 1;  // render in transparent pass (kViewTransparent, view 10)
+
+uint32_t matId = resources.addMaterial(mat);
+```
+
+**Important:** transparent entities render to `kViewTransparent` (view 10) which
+you must configure with the same view/proj matrices and viewport rect as the
+opaque pass. Pattern:
+
+```cpp
+RenderPass(kViewOpaque)
+    .rect(0, 0, W, H)
+    .clearColorAndDepth(0x1A1A2EFF)
+    .transform(view, proj);
+
+// Mirror the same transform for transparent pass
+RenderPass(kViewTransparent)
+    .rect(0, 0, W, H)
+    .transform(view, proj);  // no clear — depth-tests against opaque pass
+```
+
+Transparent materials use alpha blending (`BGFX_STATE_BLEND_ALPHA`) and do NOT
+sort back-to-front. For large transparent objects that self-intersect, use
+depth-sorted submission (TODO: automatic sorting not yet implemented).
+
 #### Build a mesh
 
 ```cpp
