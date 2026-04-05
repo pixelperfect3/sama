@@ -220,7 +220,7 @@ TEST_CASE("View: range-based for over two-component view", "[view]")
 TEST_CASE("View: range-based for with no matching entities produces empty range", "[view]")
 {
     Registry reg;
-    reg.createEntity();  // entity has no components
+    (void)reg.createEntity();  // entity has no components
 
     int count = 0;
     for (auto [eid, pos] : reg.view<Position>())

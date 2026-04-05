@@ -79,6 +79,25 @@ set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
 
+# Suppress warnings from third-party dependencies — we don't own this code.
+# All compiled third-party targets go through FetchContent and land here.
+function(suppress_third_party_warnings target)
+    if(TARGET ${target})
+        target_compile_options(${target} PRIVATE
+            $<$<COMPILE_LANGUAGE:C,CXX>:-w>
+        )
+    endif()
+endfunction()
+
+foreach(_tp_target
+    bgfx bimg bx shaderc shaderc_shared spirv-cross spirv-tools spirv-tools-opt
+    glslang SPIRV MachineIndependent GenericCodeGen OSDependent OGLCompiler glslang-default-resource-limits
+    glsl-optimizer glcpp mesa fcpp astc astc-codec etc2 iqa nvtt squish pvrtc edtaa3
+    Jolt glfw
+)
+    suppress_third_party_warnings(${_tp_target})
+endforeach()
+
 # stb — header-only, used by engine_assets (TextureLoader) and screenshot tests.
 # FetchContent_Populate avoids creating unused CMake targets for a header-only lib.
 FetchContent_Declare(
