@@ -177,9 +177,24 @@ FetchContent_MakeAvailable(sama)
 
 add_executable(my_game main.mm MyGame.cpp)
 target_link_libraries(my_game PRIVATE sama_3d)
+
+if(APPLE)
+    target_link_libraries(my_game PRIVATE
+        "-framework Cocoa" "-framework Metal" "-framework QuartzCore"
+        "-framework IOKit" "-framework CoreFoundation"
+    )
+endif()
 ```
 
-**Note:** Pulling Sama as a FetchContent dependency will build all demos and tests by default. To skip them, you'd need Sama to expose `SAMA_BUILD_DEMOS=OFF` / `SAMA_BUILD_TESTS=OFF` options (not yet implemented).
+Sama auto-detects when it's consumed as a subdirectory and disables demos/tests/editor by default, so only the engine libraries get built. First configure downloads bgfx/Jolt/SoLoud/etc. (~5-10 min); subsequent builds are fast.
+
+**Force-enable options if you want them:**
+```cmake
+set(SAMA_BUILD_DEMOS ON CACHE BOOL "" FORCE)
+set(SAMA_BUILD_TESTS ON CACHE BOOL "" FORCE)
+set(SAMA_BUILD_EDITOR ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(sama)
+```
 
 ### Manually picking libraries (advanced)
 

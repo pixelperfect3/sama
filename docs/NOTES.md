@@ -652,6 +652,7 @@ These only make sense at a larger codebase or team than currently planned.
 | Render graph (replace hardcoded linear pipeline) | Pass count grows beyond ~6 or resource dependency management becomes error-prone | RENDERING_ARCHITECTURE.md → Design Principles |
 | Runtime-registered ECS systems (scripting layer) | Scripting or hot-reload game systems need a dynamic system registration path | NOTES.md → Threading Model |
 | bgfx fork: Vulkan subpasses for TBDR post-effects | Mobile post-effects (SSAO on TBDR) become a shipping priority | RENDERING_ARCHITECTURE.md → bgfx Limitations; SSAO on TBDR currently requires full depth resolve |
+| Prebuilt release tarballs (macOS-arm64, windows-x64, etc.) | Sama stabilizes and external users want binary distribution | Publish via GitHub Releases with lib/, include/, and SamaConfig.cmake. Games would use `find_package(Sama)` instead of FetchContent. Avoids ~5-10 min first-configure download for each consumer |
 
 ---
 

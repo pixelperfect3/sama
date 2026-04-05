@@ -11,9 +11,27 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# --- Build options -----------------------------------------------------------
+# When Sama is consumed as a FetchContent/subdirectory dependency, games only
+# need the engine libraries — not demos, tests, or the editor. Default ON when
+# Sama is the top-level project; OFF when consumed as a subdirectory.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(_SAMA_IS_TOP_LEVEL ON)
+else()
+    set(_SAMA_IS_TOP_LEVEL OFF)
+endif()
+
+option(SAMA_BUILD_DEMOS  "Build demo applications"        ${_SAMA_IS_TOP_LEVEL})
+option(SAMA_BUILD_TESTS  "Build unit + screenshot tests"  ${_SAMA_IS_TOP_LEVEL})
+option(SAMA_BUILD_EDITOR "Build the Sama editor"          ${_SAMA_IS_TOP_LEVEL})
+
+# Root of the Sama source tree — resolves correctly whether Sama is the
+# top-level project or included as a subdirectory (FetchContent).
+set(SAMA_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Engine interface library (header-only core)
 add_library(engine INTERFACE)
-target_include_directories(engine INTERFACE ${CMAKE_SOURCE_DIR})
+target_include_directories(engine INTERFACE ${SAMA_ROOT_DIR})
 
 # Dependencies
 include(FetchContent)
@@ -144,7 +162,7 @@ endif()
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
 # ---------------------------------------------------------------------------
 
-set(SHADER_SRC_DIR     ${CMAKE_SOURCE_DIR}/engine/shaders)
+set(SHADER_SRC_DIR     ${SAMA_ROOT_DIR}/engine/shaders)
 set(SHADER_INCLUDE_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/src)
 set(SHADER_OUT_DIR     ${CMAKE_CURRENT_BINARY_DIR}/include/generated/shaders)
 set(VARYING_DEF        ${SHADER_SRC_DIR}/varying.def.sc)
@@ -451,14 +469,14 @@ add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
 # --- engine_io static library ---
 add_library(engine_io STATIC engine/io/Json.cpp)
-target_include_directories(engine_io PUBLIC ${CMAKE_SOURCE_DIR} ${rapidjson_SOURCE_DIR}/include)
+target_include_directories(engine_io PUBLIC ${SAMA_ROOT_DIR} ${rapidjson_SOURCE_DIR}/include)
 target_link_libraries(engine_io PUBLIC engine glm::glm)
 # rapidjson v1.1.0 emits warnings under modern C++20 compilers — suppress them.
 target_compile_options(engine_io PRIVATE -Wno-deprecated-declarations)
 
 # --- engine_memory static library ---
 add_library(engine_memory STATIC engine/memory/FrameArena.cpp)
-target_include_directories(engine_memory PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_memory PUBLIC ${SAMA_ROOT_DIR})
 
 # --- IK compile-time solver toggles ---
 option(ENGINE_IK_ENABLE_CCD "Enable CCD IK solver" ON)
@@ -473,7 +491,7 @@ add_library(engine_animation STATIC
     engine/animation/IkSystem.cpp
     engine/animation/FootIkHelper.cpp
 )
-target_include_directories(engine_animation PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_animation PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_animation PUBLIC engine_ecs glm::glm)
 target_compile_definitions(engine_animation PUBLIC
     ENGINE_IK_ENABLE_CCD=$<BOOL:${ENGINE_IK_ENABLE_CCD}>
@@ -482,7 +500,7 @@ target_compile_definitions(engine_animation PUBLIC
 
 # --- engine_threading static library ---
 add_library(engine_threading STATIC engine/threading/ThreadPool.cpp)
-target_include_directories(engine_threading PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_threading PUBLIC ${SAMA_ROOT_DIR})
 
 # --- engine_debug static library ---
 # Bundles dear-imgui + bgfx imgui rendering backend + DebugTexturePanel.
@@ -501,7 +519,7 @@ add_library(engine_debug STATIC
 )
 
 target_include_directories(engine_debug PUBLIC
-    ${CMAKE_SOURCE_DIR}
+    ${SAMA_ROOT_DIR}
     # <dear-imgui/imgui.h> and <iconfontheaders/...> used by bgfx's imgui.h wrapper.
     ${bgfx_cmake_SOURCE_DIR}/bgfx/3rdparty
     # imgui.h (bgfx wrapper) declares imguiCreate/BeginFrame/EndFrame — expose to callers.
@@ -521,17 +539,17 @@ add_library(engine_assets STATIC
     engine/assets/CompressedTextureLoader.cpp
 )
 
-target_include_directories(engine_assets PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_assets PUBLIC ${SAMA_ROOT_DIR})
 target_include_directories(engine_assets PRIVATE
     ${stb_SOURCE_DIR}
     ${cgltf_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/third_party/tinyobjloader
+    ${SAMA_ROOT_DIR}/third_party/tinyobjloader
 )
 target_link_libraries(engine_assets PUBLIC engine_threading engine_scene engine_animation)
 
 # --- engine_ecs static library ---
 add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
-target_include_directories(engine_ecs PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party)
+target_include_directories(engine_ecs PUBLIC ${SAMA_ROOT_DIR} ${SAMA_ROOT_DIR}/third_party)
 
 # --- engine_scene static library ---
 add_library(engine_scene STATIC
@@ -540,7 +558,7 @@ add_library(engine_scene STATIC
     engine/scene/SceneSerializer.cpp
     engine/scene/SceneManager.cpp
 )
-target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_scene PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_scene PUBLIC engine_rendering)
 
 # --- engine_audio static library ---
@@ -575,14 +593,14 @@ add_library(engine_audio STATIC
     # SoLoud miniaudio backend — patched for miniaudio v0.11 API compatibility.
     # The vendored SoLoud (2020) ships miniaudio v0.9.10 which fails on macOS 14+.
     # We replace it with miniaudio v0.11 and patch the two renamed fields.
-    ${CMAKE_SOURCE_DIR}/third_party/soloud_patches/soloud_miniaudio.cpp
+    ${SAMA_ROOT_DIR}/third_party/soloud_patches/soloud_miniaudio.cpp
 )
 
 target_compile_definitions(engine_audio PRIVATE WITH_MINIAUDIO)
-target_include_directories(engine_audio PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_audio PUBLIC ${SAMA_ROOT_DIR})
 target_include_directories(engine_audio PUBLIC ${SOLOUD_INC_DIR})
 # Use our patched miniaudio.h (v0.11) instead of SoLoud's bundled v0.9.
-target_include_directories(engine_audio BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/third_party/soloud_patches)
+target_include_directories(engine_audio BEFORE PRIVATE ${SAMA_ROOT_DIR}/third_party/soloud_patches)
 target_link_libraries(engine_audio PUBLIC engine_scene)
 
 if(APPLE)
@@ -599,7 +617,7 @@ add_library(engine_physics STATIC
     engine/physics/JoltContactListener.cpp
     engine/physics/PhysicsSystem.cpp
 )
-target_include_directories(engine_physics PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_physics PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_physics PUBLIC engine_scene Jolt)
 
 # engine_physics needs the same GLM flags as the rest of the engine.
@@ -642,7 +660,7 @@ add_library(engine_rendering STATIC
 add_dependencies(engine_rendering engine_shaders)
 
 target_include_directories(engine_rendering PUBLIC
-    ${CMAKE_SOURCE_DIR}
+    ${SAMA_ROOT_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
@@ -670,6 +688,8 @@ if(APPLE)
         "-framework MetalKit"
     )
 endif()
+
+if(SAMA_BUILD_TESTS)
 
 # --- engine_tests executable ---
 add_executable(engine_tests
@@ -727,7 +747,7 @@ target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_a
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
 target_compile_definitions(engine_tests PRIVATE
-    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    ENGINE_SOURCE_DIR="${SAMA_ROOT_DIR}"
 )
 
 # GLM compile flags — set here so they take effect before any GLM header is included,
@@ -751,7 +771,7 @@ if(ENABLE_CLANG_TIDY)
 endif()
 
 # --- DamagedHelmet.glb — download once at configure time ---
-set(HELMET_GLB "${CMAKE_SOURCE_DIR}/assets/DamagedHelmet.glb")
+set(HELMET_GLB "${SAMA_ROOT_DIR}/assets/DamagedHelmet.glb")
 if(NOT EXISTS "${HELMET_GLB}")
     message(STATUS "Downloading DamagedHelmet.glb...")
     file(DOWNLOAD
@@ -793,7 +813,7 @@ target_link_libraries(engine_screenshot_tests PRIVATE
 
 target_include_directories(engine_screenshot_tests PRIVATE
     ${stb_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/tests/screenshot
+    ${SAMA_ROOT_DIR}/tests/screenshot
 )
 
 target_compile_definitions(engine_screenshot_tests PRIVATE
@@ -802,7 +822,7 @@ target_compile_definitions(engine_screenshot_tests PRIVATE
     GLM_FORCE_RADIANS
     GLM_FORCE_XYZW_ONLY
     GLM_ENABLE_EXPERIMENTAL
-    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    ENGINE_SOURCE_DIR="${SAMA_ROOT_DIR}"
 )
 
 if(APPLE)
@@ -814,6 +834,8 @@ if(APPLE)
     )
 endif()
 
+endif()  # SAMA_BUILD_TESTS (engine_tests + engine_screenshot_tests)
+
 # --- engine_input static library ---
 add_library(engine_input STATIC
     engine/input/ActionMap.cpp
@@ -822,14 +844,14 @@ add_library(engine_input STATIC
     engine/input/InputSystem.cpp
 )
 
-target_include_directories(engine_input PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_input PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_input PUBLIC engine_io)
 
 # Desktop GLFW backend
 add_library(engine_input_glfw STATIC
     engine/input/desktop/GlfwInputBackend.cpp
 )
-target_include_directories(engine_input_glfw PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_input_glfw PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_input_glfw PUBLIC engine_input glfw)
 
 # iOS backend — .mm requires Objective-C++ compilation; only built on iOS.
@@ -837,7 +859,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_library(engine_input_ios STATIC
         engine/input/ios/IosInputBackend.mm
     )
-    target_include_directories(engine_input_ios PUBLIC ${CMAKE_SOURCE_DIR})
+    target_include_directories(engine_input_ios PUBLIC ${SAMA_ROOT_DIR})
     target_link_libraries(engine_input_ios PUBLIC engine_input)
     target_link_libraries(engine_input_ios PUBLIC "-framework UIKit")
 endif()
@@ -847,9 +869,11 @@ if(ANDROID)
     add_library(engine_input_android STATIC
         engine/input/android/AndroidInputBackend.cpp
     )
-    target_include_directories(engine_input_android PUBLIC ${CMAKE_SOURCE_DIR})
+    target_include_directories(engine_input_android PUBLIC ${SAMA_ROOT_DIR})
     target_link_libraries(engine_input_android PUBLIC engine_input android)
 endif()
+
+if(SAMA_BUILD_TESTS)
 
 # --- engine_input_tests executable ---
 add_executable(engine_input_tests
@@ -863,22 +887,24 @@ add_executable(engine_input_tests
     tests/input/integration/TestGlfwBackend.cpp
 )
 
-target_include_directories(engine_input_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_input_tests PRIVATE ${SAMA_ROOT_DIR})
 target_link_libraries(engine_input_tests PRIVATE
     engine_input_glfw
     Catch2::Catch2WithMain
 )
 
 target_compile_definitions(engine_input_tests PRIVATE
-    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    ENGINE_SOURCE_DIR="${SAMA_ROOT_DIR}"
 )
+
+endif()  # SAMA_BUILD_TESTS
 
 # --- engine_core static library ---
 # Centralised Engine class that owns window, renderer, default textures, shaders,
 # ImGui, input, shadow renderer, and frame arena.  Apps link engine_core instead
 # of manually wiring all subsystems.
 add_library(engine_core STATIC engine/core/Engine.cpp)
-target_include_directories(engine_core PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_core PUBLIC
     engine_input_glfw
     engine_memory
@@ -892,7 +918,7 @@ add_library(engine_game STATIC
     engine/game/GameRunner.cpp
     engine/game/ProjectConfig.cpp
 )
-target_include_directories(engine_game PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_game PUBLIC engine_core)
 
 # ===========================================================================
@@ -948,11 +974,13 @@ target_link_libraries(sama_2d INTERFACE
     engine_io
 )
 
+if(SAMA_BUILD_DEMOS)
+
 # --- helmet_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(helmet_demo apps/helmet_demo/main.mm)
 
-    target_include_directories(helmet_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(helmet_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(helmet_demo PRIVATE
         engine_core
         engine_assets
@@ -984,7 +1012,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(hierarchy_demo apps/hierarchy_demo/main.mm)
 
-    target_include_directories(hierarchy_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(hierarchy_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(hierarchy_demo PRIVATE
         engine_core
         "-framework Cocoa"
@@ -1005,7 +1033,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(physics_demo apps/physics_demo/main.mm)
 
-    target_include_directories(physics_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(physics_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(physics_demo PRIVATE
         engine_core
         engine_physics
@@ -1031,7 +1059,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         apps/physics_demo/PhysicsGame.cpp
     )
 
-    target_include_directories(physics_demo_v2 PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(physics_demo_v2 PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(physics_demo_v2 PRIVATE
         engine_game
         engine_physics
@@ -1053,7 +1081,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(audio_demo apps/audio_demo/main.mm)
 
-    target_include_directories(audio_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(audio_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(audio_demo PRIVATE
         engine_core
         engine_audio
@@ -1077,7 +1105,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(scene_demo apps/scene_demo/main.mm)
 
-    target_include_directories(scene_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(scene_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(scene_demo PRIVATE
         engine_assets
         engine_input_glfw
@@ -1099,7 +1127,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(animation_demo apps/animation_demo/main.mm)
 
-    target_include_directories(animation_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(animation_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(animation_demo PRIVATE
         engine_core
         engine_assets
@@ -1120,7 +1148,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
     add_custom_command(TARGET animation_demo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
+            "${SAMA_ROOT_DIR}/assets/BrainStem.glb"
             "$<TARGET_FILE_DIR:animation_demo>/BrainStem.glb"
         COMMENT "Copying BrainStem.glb to build directory"
     )
@@ -1130,7 +1158,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(ik_demo apps/ik_demo/main.mm)
 
-    target_include_directories(ik_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(ik_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(ik_demo PRIVATE
         engine_core
         engine_assets
@@ -1151,7 +1179,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
     add_custom_command(TARGET ik_demo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
+            "${SAMA_ROOT_DIR}/assets/BrainStem.glb"
             "$<TARGET_FILE_DIR:ik_demo>/BrainStem.glb"
         COMMENT "Copying BrainStem.glb to ik_demo build directory"
     )
@@ -1161,7 +1189,7 @@ endif()
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(ik_hand_demo apps/ik_hand_demo/main.mm)
 
-    target_include_directories(ik_hand_demo PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(ik_hand_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(ik_hand_demo PRIVATE
         engine_core
         engine_assets
@@ -1182,11 +1210,15 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
     add_custom_command(TARGET ik_hand_demo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/assets/BrainStem.glb"
+            "${SAMA_ROOT_DIR}/assets/BrainStem.glb"
             "$<TARGET_FILE_DIR:ik_hand_demo>/BrainStem.glb"
         COMMENT "Copying BrainStem.glb to ik_hand_demo build directory"
     )
 endif()
+
+endif()  # SAMA_BUILD_DEMOS
+
+if(SAMA_BUILD_EDITOR)
 
 # --- sama_editor app (macOS only) ---
 # Native Cocoa window with bgfx Metal viewport.  No GLFW, no ImGui.
@@ -1220,7 +1252,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_dependencies(sama_editor engine_shaders)
 
     target_include_directories(sama_editor PRIVATE
-        ${CMAKE_SOURCE_DIR}
+        ${SAMA_ROOT_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/include
     )
     target_link_libraries(sama_editor PRIVATE
@@ -1240,12 +1272,14 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif()
 
+endif()  # SAMA_BUILD_EDITOR
+
 # ===========================================================================
 # Size test binaries (macOS only).
 # Minimal executables used only to measure the binary footprint of each
 # Sama umbrella target. Build with: cmake --build <dir> --target size_test_*
 # ===========================================================================
-if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if(SAMA_BUILD_DEMOS AND APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(SAMA_SIZE_TEST_FRAMEWORKS
         "-framework Cocoa"
         "-framework QuartzCore"
@@ -1265,17 +1299,17 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 
     add_executable(size_test_minimal apps/size_test/size_test_minimal.mm)
-    target_include_directories(size_test_minimal PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(size_test_minimal PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(size_test_minimal PRIVATE sama_minimal ${SAMA_SIZE_TEST_FRAMEWORKS})
     target_compile_definitions(size_test_minimal PRIVATE ${SAMA_SIZE_TEST_DEFS})
 
     add_executable(size_test_3d apps/size_test/size_test_3d.mm)
-    target_include_directories(size_test_3d PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(size_test_3d PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(size_test_3d PRIVATE sama_3d ${SAMA_SIZE_TEST_FRAMEWORKS})
     target_compile_definitions(size_test_3d PRIVATE ${SAMA_SIZE_TEST_DEFS})
 
     add_executable(size_test_full apps/size_test/size_test_full.mm)
-    target_include_directories(size_test_full PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(size_test_full PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(size_test_full PRIVATE sama ${SAMA_SIZE_TEST_FRAMEWORKS})
     target_compile_definitions(size_test_full PRIVATE ${SAMA_SIZE_TEST_DEFS})
 endif()
