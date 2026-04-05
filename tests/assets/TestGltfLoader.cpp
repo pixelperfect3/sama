@@ -10,13 +10,15 @@
 // can be inspected visually.
 
 #include <catch2/catch_test_macros.hpp>
-
 #include <cstdio>
 #include <filesystem>
 #include <variant>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
+#pragma clang diagnostic pop
 
 #include "engine/assets/CpuAssetData.h"
 #include "engine/assets/GltfLoader.h"
@@ -73,8 +75,8 @@ TEST_CASE("GltfLoader: decode DamagedHelmet textures", "[assets][gltf]")
 
     // Print material scalar values so they can be visually confirmed.
     printf("\nMaterial PBR factors:\n");
-    printf("  albedo factor:   (%.3f, %.3f, %.3f, %.3f)\n",
-           mat.albedo.x, mat.albedo.y, mat.albedo.z, mat.albedo.w);
+    printf("  albedo factor:   (%.3f, %.3f, %.3f, %.3f)\n", mat.albedo.x, mat.albedo.y,
+           mat.albedo.z, mat.albedo.w);
     printf("  roughness:       %.3f\n", mat.roughness);
     printf("  metallic:        %.3f\n", mat.metallic);
     printf("  emissiveScale:   %.3f\n", mat.emissiveScale);
@@ -100,19 +102,13 @@ TEST_CASE("GltfLoader: decode DamagedHelmet textures", "[assets][gltf]")
         const char* role = (i < 5) ? roles[i] : "unknown";
 
         char filename[256];
-        std::snprintf(filename, sizeof(filename), "%s/%zu_%s.png",
-                      outDir.c_str(), i, role);
+        std::snprintf(filename, sizeof(filename), "%s/%zu_%s.png", outDir.c_str(), i, role);
 
-        int ok = stbi_write_png(filename,
-                                static_cast<int>(tex.width),
-                                static_cast<int>(tex.height),
-                                4,
-                                tex.pixels.data(),
-                                static_cast<int>(tex.width * 4));
+        int ok = stbi_write_png(filename, static_cast<int>(tex.width), static_cast<int>(tex.height),
+                                4, tex.pixels.data(), static_cast<int>(tex.width * 4));
 
         CHECK(ok != 0);
-        printf("  [%zu] %s  %ux%u  %s\n",
-               i, role, tex.width, tex.height,
+        printf("  [%zu] %s  %ux%u  %s\n", i, role, tex.width, tex.height,
                ok ? "OK" : "WRITE FAILED");
     }
 

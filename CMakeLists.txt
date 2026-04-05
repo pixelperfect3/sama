@@ -86,6 +86,10 @@ function(suppress_third_party_warnings target)
         target_compile_options(${target} PRIVATE
             $<$<COMPILE_LANGUAGE:C,CXX>:-w>
         )
+        get_target_property(_target_type ${target} TYPE)
+        if(_target_type STREQUAL "EXECUTABLE" AND APPLE)
+            target_link_options(${target} PRIVATE "LINKER:-no_warn_duplicate_libraries")
+        endif()
     endif()
 endfunction()
 
@@ -93,7 +97,7 @@ foreach(_tp_target
     bgfx bimg bx shaderc shaderc_shared spirv-cross spirv-tools spirv-tools-opt
     glslang SPIRV MachineIndependent GenericCodeGen OSDependent OGLCompiler glslang-default-resource-limits
     glsl-optimizer glcpp mesa fcpp astc astc-codec etc2 iqa nvtt squish pvrtc edtaa3
-    Jolt glfw
+    Jolt glfw example-common
 )
     suppress_third_party_warnings(${_tp_target})
 endforeach()
@@ -523,7 +527,7 @@ target_include_directories(engine_assets PRIVATE
     ${cgltf_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/tinyobjloader
 )
-target_link_libraries(engine_assets PUBLIC engine_rendering engine_threading engine_scene engine_animation glm::glm)
+target_link_libraries(engine_assets PUBLIC engine_threading engine_scene engine_animation)
 
 # --- engine_ecs static library ---
 add_library(engine_ecs STATIC engine/ecs/Registry.cpp)
@@ -537,7 +541,7 @@ add_library(engine_scene STATIC
     engine/scene/SceneManager.cpp
 )
 target_include_directories(engine_scene PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_scene PUBLIC engine_ecs engine_io engine_rendering glm::glm)
+target_link_libraries(engine_scene PUBLIC engine_rendering)
 
 # --- engine_audio static library ---
 # Compiles SoLoud core + miniaudio backend + engine audio code into a single
@@ -579,7 +583,7 @@ target_include_directories(engine_audio PUBLIC ${CMAKE_SOURCE_DIR})
 target_include_directories(engine_audio PUBLIC ${SOLOUD_INC_DIR})
 # Use our patched miniaudio.h (v0.11) instead of SoLoud's bundled v0.9.
 target_include_directories(engine_audio BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/third_party/soloud_patches)
-target_link_libraries(engine_audio PUBLIC engine_ecs engine_scene glm::glm)
+target_link_libraries(engine_audio PUBLIC engine_scene)
 
 if(APPLE)
     target_link_libraries(engine_audio PUBLIC
@@ -596,7 +600,7 @@ add_library(engine_physics STATIC
     engine/physics/PhysicsSystem.cpp
 )
 target_include_directories(engine_physics PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_physics PUBLIC engine_ecs engine_scene Jolt glm::glm)
+target_link_libraries(engine_physics PUBLIC engine_scene Jolt)
 
 # engine_physics needs the same GLM flags as the rest of the engine.
 target_compile_definitions(engine_physics PUBLIC
@@ -642,7 +646,7 @@ target_include_directories(engine_rendering PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
-target_link_libraries(engine_rendering PUBLIC bgfx bx bimg glfw glm::glm engine_ecs engine_io)
+target_link_libraries(engine_rendering PUBLIC bgfx bimg glfw engine_ecs engine_io)
 
 # Increase bgfx bone matrix limit from default 32 to 128 for skeletal animation.
 # u_model[128] = 512 vec4 uniforms, fits in BGFX_CONFIG_MAX_UNIFORMS (512).
@@ -718,7 +722,7 @@ add_executable(engine_tests
     tests/game/TestProjectConfig.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine engine_threading engine_memory engine_io engine_assets engine_rendering engine_scene engine_physics engine_audio engine_animation engine_game glm::glm Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
@@ -783,11 +787,7 @@ add_executable(engine_screenshot_tests
 )
 
 target_link_libraries(engine_screenshot_tests PRIVATE
-    engine
     engine_assets
-    engine_rendering
-    glm::glm
-    glfw
     Catch2::Catch2   # NOT Catch2WithMain — we supply our own main
 )
 
@@ -823,7 +823,7 @@ add_library(engine_input STATIC
 )
 
 target_include_directories(engine_input PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_input PUBLIC engine engine_io)
+target_link_libraries(engine_input PUBLIC engine_io)
 
 # Desktop GLFW backend
 add_library(engine_input_glfw STATIC
@@ -865,7 +865,6 @@ add_executable(engine_input_tests
 
 target_include_directories(engine_input_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(engine_input_tests PRIVATE
-    engine_input
     engine_input_glfw
     Catch2::Catch2WithMain
 )
@@ -881,12 +880,10 @@ target_compile_definitions(engine_input_tests PRIVATE
 add_library(engine_core STATIC engine/core/Engine.cpp)
 target_include_directories(engine_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(engine_core PUBLIC
-    engine_rendering
     engine_input_glfw
     engine_memory
     engine_debug
     engine_scene
-    glm::glm
 )
 
 # --- engine_game static library ---
@@ -896,7 +893,7 @@ add_library(engine_game STATIC
     engine/game/ProjectConfig.cpp
 )
 target_include_directories(engine_game PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(engine_game PUBLIC engine_core engine_scene engine_ecs engine_io)
+target_link_libraries(engine_game PUBLIC engine_core)
 
 # --- helmet_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -906,8 +903,6 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(helmet_demo PRIVATE
         engine_core
         engine_assets
-        engine_debug
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -939,8 +934,6 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(hierarchy_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(hierarchy_demo PRIVATE
         engine_core
-        engine_scene
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -962,10 +955,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(physics_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(physics_demo PRIVATE
         engine_core
-        engine_scene
         engine_physics
-        glm::glm
-        Jolt
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -991,11 +981,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(physics_demo_v2 PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(physics_demo_v2 PRIVATE
         engine_game
-        engine_core
-        engine_scene
         engine_physics
-        glm::glm
-        Jolt
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1017,9 +1003,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(audio_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(audio_demo PRIVATE
         engine_core
-        engine_scene
         engine_audio
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1043,9 +1027,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(scene_demo PRIVATE ${CMAKE_SOURCE_DIR})
     target_link_libraries(scene_demo PRIVATE
         engine_assets
-        engine_rendering
         engine_input_glfw
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1068,9 +1050,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(animation_demo PRIVATE
         engine_core
         engine_assets
-        engine_scene
         engine_animation
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1101,9 +1081,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(ik_demo PRIVATE
         engine_core
         engine_assets
-        engine_scene
         engine_animation
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1134,9 +1112,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(ik_hand_demo PRIVATE
         engine_core
         engine_assets
-        engine_scene
         engine_animation
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1195,11 +1171,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         ${CMAKE_CURRENT_BINARY_DIR}/include
     )
     target_link_libraries(sama_editor PRIVATE
-        engine_rendering
         engine_scene
         engine_memory
-        engine_ecs
-        glm::glm
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
