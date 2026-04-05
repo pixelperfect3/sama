@@ -77,7 +77,7 @@ Tracks all decisions and progress made during development.
 
 - **Run tests:**
   ```bash
-  build/engine_tests                          # all unit tests (412 cases)
+  build/engine_tests                          # all unit tests (445 cases)
   build/engine_tests "[scenegraph]"           # tests by tag
   build/engine_tests "[physics]"
   build/engine_tests "[audio]"
@@ -707,6 +707,29 @@ Both stb_image and bimg can load PNG/JPG images. Investigated replacing stb_imag
 
 ### Status
 - Policy defined; applied as each library is integrated
+
+### Umbrella CMake Targets (Game Developer Ergonomics)
+
+Problem: Before umbrella targets, a game's `CMakeLists.txt` had to list 10+ individual `engine_*` libraries with transitive deps in the right order. Easy to miss one (link error) or include too many (binary bloat).
+
+Solution: Four `INTERFACE` targets that aggregate curated dependency sets:
+
+| Target | Aggregates | Use case |
+|--------|-----------|----------|
+| `sama_minimal` | core + game + rendering + scene + ecs + memory | Simple 3D scenes, UI, prototypes |
+| `sama_3d` | minimal + physics + audio + animation + assets | Most 3D games (default) |
+| `sama_2d` | minimal + io | 2D games, UI tools |
+| `sama` | 3d + input + io + threading | Full engine |
+
+**Why INTERFACE libraries:** No extra compilation — just a named dependency list. Zero build-time cost, zero binary size overhead, standard CMake pattern.
+
+**Why four variants instead of one:** Binary size matters (mobile app stores, download rates). A 2D UI tool shouldn't link Jolt (+20MB) or SoLoud. Games that don't need physics can skip `engine_physics`. The umbrella targets codify common configurations.
+
+**Alternative considered:** Single `libsama.a` bundle. Rejected because:
+1. Kills modularity — users can't exclude subsystems
+2. Platform-specific bundling tools (libtool/ar/lib.exe)
+3. Symbol collision risk when transitively bundling third-party libs
+4. Dead code elimination already handles unused symbols at link time — the umbrella `INTERFACE` approach gives us the same benefit without the bundling complexity
 
 ---
 
