@@ -895,6 +895,59 @@ add_library(engine_game STATIC
 target_include_directories(engine_game PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(engine_game PUBLIC engine_core)
 
+# ===========================================================================
+# Umbrella targets — convenience aggregates for game developers.
+#
+# Link ONE of these from your game's CMakeLists.txt instead of listing every
+# engine library manually. These are INTERFACE libraries: no extra compilation,
+# just a curated dependency list.
+#
+# sama_minimal   — rendering + scene + ECS + game loop. No physics/audio/anim.
+#                  Good for: simple 3D scenes, UI apps, prototypes.
+# sama_3d        — minimal + physics + audio + animation + IK + asset loading.
+#                  Good for: most 3D games (recommended default).
+# sama           — everything, including input glfw backend and IO. Kitchen sink.
+# sama_2d        — minimal + 2D sprite rendering only, no 3D physics.
+#                  Good for: 2D games, UI tools.
+# ===========================================================================
+
+# Core libs every game needs (rendering, ECS, scene, game loop, memory).
+add_library(sama_minimal INTERFACE)
+target_link_libraries(sama_minimal INTERFACE
+    engine_core
+    engine_game
+    engine_rendering
+    engine_scene
+    engine_ecs
+    engine_memory
+)
+
+# 3D games: minimal + physics + audio + animation/IK + asset loading.
+add_library(sama_3d INTERFACE)
+target_link_libraries(sama_3d INTERFACE
+    sama_minimal
+    engine_physics
+    engine_audio
+    engine_animation
+    engine_assets
+)
+
+# Full engine: everything including input + IO + threading.
+add_library(sama INTERFACE)
+target_link_libraries(sama INTERFACE
+    sama_3d
+    engine_input
+    engine_io
+    engine_threading
+)
+
+# 2D games: minimal only (sprite rendering is in engine_rendering already).
+add_library(sama_2d INTERFACE)
+target_link_libraries(sama_2d INTERFACE
+    sama_minimal
+    engine_io
+)
+
 # --- helmet_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(helmet_demo apps/helmet_demo/main.mm)

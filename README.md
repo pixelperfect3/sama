@@ -88,6 +88,112 @@ build/engine_tests "[config]"
 build/engine_tests "[ik]"
 ```
 
+## Using Sama in Your Game
+
+Sama provides four umbrella CMake targets so you can link only the subsystems you need:
+
+| Target | Includes | Good for |
+|--------|----------|----------|
+| `sama_minimal` | renderer + scene + ECS + game loop + memory | simple 3D scenes, UI apps, prototypes |
+| `sama_3d` | minimal + physics + audio + animation/IK + asset loading | most 3D games (recommended default) |
+| `sama_2d` | minimal + JSON I/O (sprite rendering is in the renderer) | 2D games, UI tools |
+| `sama` | everything (includes input, IO, threading) | full-featured games |
+
+### Quick start (game in the Sama repo)
+
+Create your game under `apps/`:
+
+```
+sama/
+└── apps/
+    └── my_game/
+        ├── CMakeLists.txt
+        ├── main.mm
+        ├── MyGame.h
+        └── MyGame.cpp
+```
+
+**`apps/my_game/CMakeLists.txt`:**
+
+```cmake
+add_executable(my_game main.mm MyGame.cpp)
+
+# Pick ONE umbrella target
+target_link_libraries(my_game PRIVATE sama_3d)
+
+# macOS frameworks (required by bgfx Metal + window)
+if(APPLE)
+    target_link_libraries(my_game PRIVATE
+        "-framework Cocoa"
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework IOKit"
+        "-framework CoreFoundation"
+    )
+endif()
+```
+
+Add to the top-level `CMakeLists.txt`:
+```cmake
+add_subdirectory(apps/my_game)
+```
+
+Build only your game:
+```bash
+cmake --build build --target my_game -j$(sysctl -n hw.ncpu)
+```
+
+### Minimal game code
+
+```cpp
+// apps/my_game/main.mm
+#include "engine/game/GameRunner.h"
+#include "MyGame.h"
+
+int main() {
+    MyGame game;
+    engine::game::GameRunner runner(game);
+    return runner.run("project.json");  // or runner.run() for defaults
+}
+```
+
+See `docs/AI_NATIVE.md` Section 4 for the complete minimal game template (entity setup, lighting, camera).
+
+### Standalone project (Sama as a dependency)
+
+```cmake
+# your_game/CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(MyGame CXX)
+set(CMAKE_CXX_STANDARD 20)
+
+include(FetchContent)
+FetchContent_Declare(
+    sama
+    GIT_REPOSITORY https://github.com/pixelperfect3/sama.git
+    GIT_TAG        main  # pin to a specific commit in production
+)
+FetchContent_MakeAvailable(sama)
+
+add_executable(my_game main.mm MyGame.cpp)
+target_link_libraries(my_game PRIVATE sama_3d)
+```
+
+**Note:** Pulling Sama as a FetchContent dependency will build all demos and tests by default. To skip them, you'd need Sama to expose `SAMA_BUILD_DEMOS=OFF` / `SAMA_BUILD_TESTS=OFF` options (not yet implemented).
+
+### Manually picking libraries (advanced)
+
+If you want finer control than the umbrella targets, link individual libraries:
+
+```cmake
+target_link_libraries(my_game PRIVATE
+    engine_core engine_game engine_rendering engine_scene engine_ecs engine_memory
+    # omit engine_physics, engine_audio, etc. if not needed
+)
+```
+
+All individual libraries are listed in `CMakeLists.txt` — look for `add_library(engine_*)` entries.
+
 ## Architecture
 
 The engine is organized into modular static libraries, each owning a specific subsystem. Systems declare their component read/write sets as type aliases, and the compile-time DAG scheduler resolves execution order and parallelism opportunities.
