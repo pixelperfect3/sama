@@ -1,4 +1,4 @@
-# Sama Engine -- AI-Native Usage Guide
+# Sama Engine -- Agent & API Reference
 
 This document is designed for AI coding tools (Claude Code, Codex, Cursor, etc.) to
 quickly and correctly build games with the Sama engine. Every code snippet uses the

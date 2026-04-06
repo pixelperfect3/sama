@@ -157,7 +157,7 @@ int main() {
 }
 ```
 
-See `docs/AI_NATIVE.md` Section 4 for the complete minimal game template (entity setup, lighting, camera).
+See `docs/AGENTS.md` Section 4 for the complete minimal game template (entity setup, lighting, camera).
 
 ### Standalone project (Sama as a dependency)
 
