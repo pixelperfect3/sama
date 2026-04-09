@@ -16,6 +16,7 @@
 
 @interface EditorMetalView : NSView
 {
+@public
     BOOL keyPressed_[256];
     BOOL modCommand_;
     BOOL modShift_;
@@ -441,6 +442,7 @@ struct CocoaEditorWindow::Impl
     EditorSplitDelegate* hSplitDelegate = nil;
     EditorSplitDelegate* vSplitDelegate = nil;
     EditorMenuHandler* menuHandler = nil;
+    id keyMonitor = nil;  // NSEvent local monitor for window-level key events
     CAMetalLayer* metalLayer = nil;
 
     // Split views.
@@ -718,6 +720,29 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         // Make the metal view first responder for keyboard events.
         [impl_->window makeFirstResponder:impl_->metalView];
 
+        // Install a window-level key monitor so key events are captured
+        // regardless of which view has focus (e.g., Delete when hierarchy
+        // panel's NSTableView is focused).
+        EditorMetalView* metalViewRef = impl_->metalView;
+        impl_->keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                                                 handler:^NSEvent*(NSEvent* event) {
+                                                                   uint8_t code =
+                                                                       mapKeyCode([event keyCode]);
+                                                                   if (code != 0)
+                                                                   {
+                                                                       metalViewRef
+                                                                           ->keyPressed_[code] = YES;
+                                                                   }
+                                                                   // Update modifiers.
+                                                                   NSEventModifierFlags mods =
+                                                                       [event modifierFlags];
+                                                                   metalViewRef->modCommand_ =
+                                                                       (mods & NSEventModifierFlagCommand) != 0;
+                                                                   metalViewRef->modShift_ =
+                                                                       (mods & NSEventModifierFlagShift) != 0;
+                                                                   return event;  // pass through
+                                                                 }];
+
         return true;
     }
 }
@@ -726,6 +751,12 @@ void CocoaEditorWindow::shutdown()
 {
     @autoreleasepool
     {
+        if (impl_->keyMonitor)
+        {
+            [NSEvent removeMonitor:impl_->keyMonitor];
+            impl_->keyMonitor = nil;
+        }
+
         impl_->hierarchyView.reset();
         impl_->propertiesView.reset();
         impl_->consoleView.reset();
