@@ -33,29 +33,36 @@ public:
                 uint16_t fbWidth, uint16_t fbHeight);
 
 private:
-    // Submit a colored line as two vertices.
+    // Submit a thick line as a camera-facing quad (6 vertices, 2 triangles).
     void drawLine(const glm::vec3& from, const glm::vec3& to, uint32_t color);
 
     // Draw an arrow (line + cone tip approximated by lines).
     void drawArrow(const glm::vec3& origin, const glm::vec3& dir, float length, uint32_t color);
 
-    // Submit all buffered lines to bgfx.
+    // Submit all buffered geometry to bgfx.
     void flush(const glm::mat4& view, const glm::mat4& proj, uint16_t fbWidth, uint16_t fbHeight);
 
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout layout_;
     bool initialized_ = false;
 
-    // Line vertex buffer (transient, rebuilt each frame).
+    // Quad vertex buffer (transient, rebuilt each frame).
+    // Each "line" is a camera-facing quad (6 vertices).
     struct LineVertex
     {
         float x, y, z;
         uint32_t abgr;
     };
 
-    static constexpr uint32_t kMaxLineVerts = 512;
+    static constexpr uint32_t kMaxLineVerts = 4096;
     LineVertex lineVerts_[kMaxLineVerts];
     uint32_t lineVertCount_ = 0;
+
+    // Camera position for billboard computation — set each frame before drawing.
+    glm::vec3 cameraPos_{0.0f};
+
+    // Line width in world-space units (will be scaled by distance).
+    static constexpr float kLineWidth = 0.012f;
 
     // View ID for gizmo overlay rendering.
     static constexpr bgfx::ViewId kGizmoView = 50;

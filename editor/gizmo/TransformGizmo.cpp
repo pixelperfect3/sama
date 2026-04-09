@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "editor/EditorState.h"
 #include "editor/platform/IEditorWindow.h"
@@ -122,6 +123,33 @@ float TransformGizmo::projectMouseOntoAxis(const glm::vec3& axis, const glm::mat
     return projected * worldPerNdc;
 }
 
+float TransformGizmo::computeRotationAngle(const glm::vec3& axis, const glm::mat4& view,
+                                           const glm::mat4& proj) const
+{
+    // Project gizmo center to screen space.
+    float scale = window_.contentScale();
+    float mx = static_cast<float>(window_.mouseX()) * scale;
+    float my = static_cast<float>(window_.mouseY()) * scale;
+    float w = static_cast<float>(window_.framebufferWidth());
+    float h = static_cast<float>(window_.framebufferHeight());
+
+    glm::mat4 vp = proj * view;
+    glm::vec4 center4 = vp * glm::vec4(gizmoPos_, 1.0f);
+    if (std::abs(center4.w) < 1e-6f)
+        return 0.0f;
+
+    // Center in pixel coords.
+    glm::vec2 centerScreen;
+    centerScreen.x = (center4.x / center4.w * 0.5f + 0.5f) * w;
+    centerScreen.y = (1.0f - (center4.y / center4.w * 0.5f + 0.5f)) * h;
+
+    // Mouse position relative to center.
+    float dx = mx - centerScreen.x;
+    float dy = my - centerScreen.y;
+
+    return std::atan2(dy, dx);
+}
+
 void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4& proj)
 {
     cachedView_ = view;
@@ -208,6 +236,14 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
             {
                 dragStartTransform_ = *tc;
             }
+
+            // For rotation mode, capture the starting angle.
+            if (mode_ == GizmoMode::Rotate)
+            {
+                int axisIdx = static_cast<int>(hoveredAxis_) - 1;
+                dragStartAngle_ = computeRotationAngle(axes[axisIdx], view, proj);
+                dragPrevAngle_ = dragStartAngle_;
+            }
         }
     }
     else
@@ -248,7 +284,27 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
                     tc->flags |= 0x01;
                 }
             }
-            // Rotate mode left as future work.
+            else if (mode_ == GizmoMode::Rotate)
+            {
+                float currentAngle = computeRotationAngle(axisDir, view, proj);
+                float angleDelta = currentAngle - dragPrevAngle_;
+
+                // Handle wrap-around at +/- PI.
+                if (angleDelta > 3.14159265f)
+                    angleDelta -= 2.0f * 3.14159265f;
+                else if (angleDelta < -3.14159265f)
+                    angleDelta += 2.0f * 3.14159265f;
+
+                dragPrevAngle_ = currentAngle;
+
+                auto* tc = registry_.get<TransformComponent>(selE);
+                if (tc)
+                {
+                    glm::quat deltaRot = glm::angleAxis(angleDelta, axisDir);
+                    tc->rotation = glm::normalize(deltaRot * glm::quat(tc->rotation));
+                    tc->flags |= 0x01;  // dirty
+                }
+            }
         }
     }
 

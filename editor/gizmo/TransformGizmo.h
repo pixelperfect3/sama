@@ -120,6 +120,14 @@ private:
     bool dragJustEnded_ = false;
     rendering::TransformComponent dragStartTransform_{};
 
+    // Rotation drag state: angle at drag start so we can compute deltas.
+    float dragStartAngle_ = 0.0f;
+    float dragPrevAngle_ = 0.0f;
+
+    // Compute angle of mouse around the rotation axis (for rotate gizmo).
+    float computeRotationAngle(const glm::vec3& axis, const glm::mat4& view,
+                               const glm::mat4& proj) const;
+
     // Cached for drag computations.
     glm::mat4 cachedView_{1.0f};
     glm::mat4 cachedProj_{1.0f};

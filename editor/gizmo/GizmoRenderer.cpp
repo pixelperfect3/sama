@@ -51,11 +51,38 @@ void GizmoRenderer::shutdown()
 
 void GizmoRenderer::drawLine(const glm::vec3& from, const glm::vec3& to, uint32_t color)
 {
-    if (lineVertCount_ + 2 > kMaxLineVerts)
+    if (lineVertCount_ + 6 > kMaxLineVerts)
         return;
 
-    lineVerts_[lineVertCount_++] = {from.x, from.y, from.z, color};
-    lineVerts_[lineVertCount_++] = {to.x, to.y, to.z, color};
+    // Build a camera-facing quad for the line segment.
+    glm::vec3 lineDir = to - from;
+    float lineLen = glm::length(lineDir);
+    if (lineLen < 1e-6f)
+        return;
+    lineDir /= lineLen;
+
+    glm::vec3 midpoint = (from + to) * 0.5f;
+    glm::vec3 toCamera = glm::normalize(cameraPos_ - midpoint);
+    glm::vec3 side = glm::normalize(glm::cross(lineDir, toCamera));
+
+    // Scale width by distance to camera for roughly constant screen-space width.
+    float dist = glm::length(cameraPos_ - midpoint);
+    float halfW = kLineWidth * dist * 0.5f;
+    glm::vec3 offset = side * halfW;
+
+    // 4 corners.
+    glm::vec3 v0 = from - offset;
+    glm::vec3 v1 = from + offset;
+    glm::vec3 v2 = to + offset;
+    glm::vec3 v3 = to - offset;
+
+    // 2 triangles (6 vertices).
+    lineVerts_[lineVertCount_++] = {v0.x, v0.y, v0.z, color};
+    lineVerts_[lineVertCount_++] = {v1.x, v1.y, v1.z, color};
+    lineVerts_[lineVertCount_++] = {v2.x, v2.y, v2.z, color};
+    lineVerts_[lineVertCount_++] = {v0.x, v0.y, v0.z, color};
+    lineVerts_[lineVertCount_++] = {v2.x, v2.y, v2.z, color};
+    lineVerts_[lineVertCount_++] = {v3.x, v3.y, v3.z, color};
 }
 
 void GizmoRenderer::drawArrow(const glm::vec3& origin, const glm::vec3& dir, float length,
@@ -121,9 +148,10 @@ void GizmoRenderer::flush(const glm::mat4& view, const glm::mat4& proj, uint16_t
     glm::mat4 identity(1.0f);
     bgfx::setTransform(glm::value_ptr(identity));
 
-    // Render as lines, no depth test, no backface culling.
+    // Render as triangles (quads), no depth test, no backface culling, alpha blend.
     uint64_t state =
-        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_PT_LINES | BGFX_STATE_LINEAA;
+        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_MSAA |
+        BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA);
 
     bgfx::setState(state);
     bgfx::submit(kGizmoView, program_);
@@ -141,6 +169,7 @@ void GizmoRenderer::render(const TransformGizmo& gizmo, const glm::mat4& view,
 
     // Scale gizmo by distance for constant screen size.
     glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
+    cameraPos_ = camPos;
     float dist = glm::length(pos - camPos);
     float scale = dist * 0.15f;
 
