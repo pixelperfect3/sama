@@ -22,12 +22,15 @@
 @interface PropertiesFieldDelegate : NSObject <NSTextFieldDelegate>
 @property(nonatomic, copy) void (^onValueChanged)(int fieldId, float newValue);
 @property(nonatomic, copy) void (^onColorChanged)(int fieldId, float r, float g, float b);
+@property(nonatomic, assign) BOOL suppressCallbacks;  // set during rebuild to prevent stale events
 @end
 
 @implementation PropertiesFieldDelegate
 
 - (void)controlTextDidEndEditing:(NSNotification*)notification
 {
+    if (_suppressCallbacks)
+        return;
     NSTextField* field = notification.object;
     int fieldId = (int)field.tag;
     float value = field.floatValue;
@@ -221,13 +224,25 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
 {
     @autoreleasepool
     {
+        // Suppress callbacks during rebuild — removing a focused text field fires
+        // controlTextDidEndEditing with stale data that corrupts entity state.
+        impl_->delegate.suppressCallbacks = YES;
+
         // Remove all existing views from the stack.
+        // Resign first responder first to prevent end-editing on removal.
+        NSWindow* win = impl_->scrollView.window;
+        if (win && [[win firstResponder] isKindOfClass:[NSTextView class]])
+        {
+            [win makeFirstResponder:nil];
+        }
         for (NSView* view in [impl_->stackView.arrangedSubviews copy])
         {
             [impl_->stackView removeArrangedSubview:view];
             [view removeFromSuperview];
         }
         impl_->fieldViews.clear();
+
+        impl_->delegate.suppressCallbacks = NO;
 
         if (fields.empty())
         {
