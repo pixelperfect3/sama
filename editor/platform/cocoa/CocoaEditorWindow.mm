@@ -3,6 +3,10 @@
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+
+#include <functional>
+#include <string>
 
 #include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaHierarchyView.h"
@@ -251,6 +255,31 @@ static uint8_t mapKeyCode(unsigned short vk)
 @end
 
 // ---------------------------------------------------------------------------
+// EditorMenuTarget -- routes NSMenu actions back to a C++ callback.
+// ---------------------------------------------------------------------------
+
+using MenuCallbackFn = std::function<void(const std::string&)>;
+static MenuCallbackFn* s_menuCallbackPtr = nullptr;
+
+@interface EditorMenuTarget : NSObject
+- (void)menuAction:(id)sender;
+@end
+
+@implementation EditorMenuTarget
+
+- (void)menuAction:(id)sender
+{
+    NSMenuItem* item = (NSMenuItem*)sender;
+    NSString* actionName = item.representedObject;
+    if (actionName && s_menuCallbackPtr && *s_menuCallbackPtr)
+    {
+        (*s_menuCallbackPtr)([actionName UTF8String]);
+    }
+}
+
+@end
+
+// ---------------------------------------------------------------------------
 // SplitViewDelegate -- constrains panel sizes.
 // ---------------------------------------------------------------------------
 
@@ -346,6 +375,15 @@ struct CocoaEditorWindow::Impl
     // Bottom tab view for Console + Resources.
     NSTabView* bottomTabView = nil;
 
+    // Menu.
+    MenuCallback menuCallback;
+    EditorMenuTarget* menuTarget = nil;
+
+    void wireMenuCallback()
+    {
+        s_menuCallbackPtr = &menuCallback;
+    }
+
     uint32_t windowWidth = 0;
     uint32_t windowHeight = 0;
 
@@ -409,6 +447,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         // -- Create the Metal viewport view -----------------------------------
         impl_->metalView = [[EditorMetalView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
         [impl_->metalView setWantsLayer:YES];
+        impl_->metalView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         impl_->metalLayer = (CAMetalLayer*)[impl_->metalView layer];
 
         CGFloat scale = [impl_->window backingScaleFactor];
@@ -429,6 +468,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         impl_->horizontalSplit.vertical = YES;  // vertical dividers = horizontal split
         impl_->horizontalSplit.dividerStyle = NSSplitViewDividerStyleThin;
         impl_->horizontalSplit.delegate = impl_->hSplitDelegate;
+        impl_->horizontalSplit.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
         // Helper: wrap a view in a container with a title bar.
         auto wrapWithTitle = [](NSView* contentView, NSString* title) -> NSView*
@@ -505,9 +545,10 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         [impl_->horizontalSplit addSubview:rightView];
 
         // Set initial panel widths.
+        CGFloat dividerW = impl_->horizontalSplit.dividerThickness;
         CGFloat leftWidth = 200.0;
         CGFloat rightWidth = 250.0;
-        CGFloat centerWidth = w - leftWidth - rightWidth - 2.0;  // 2px for dividers
+        CGFloat centerWidth = w - leftWidth - rightWidth - dividerW * 2.0;
 
         [leftView setFrameSize:NSMakeSize(leftWidth, h - 150)];
         [impl_->metalView setFrameSize:NSMakeSize(centerWidth, h - 150)];
@@ -518,14 +559,15 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         [impl_->verticalSplit addSubview:bottomView];
 
         // Set initial heights.
+        CGFloat dividerH = impl_->verticalSplit.dividerThickness;
         CGFloat bottomHeight = 150.0;
-        CGFloat topHeight = h - bottomHeight - 1.0;
+        CGFloat topHeight = h - bottomHeight - dividerH;
         [impl_->horizontalSplit setFrameSize:NSMakeSize(w, topHeight)];
         [bottomView setFrameSize:NSMakeSize(w, bottomHeight)];
 
-        // Set divider positions.
-        [impl_->verticalSplit adjustSubviews];
+        // Force layout.
         [impl_->horizontalSplit adjustSubviews];
+        [impl_->verticalSplit adjustSubviews];
 
         // Set as content view.
         [impl_->window setContentView:impl_->verticalSplit];
@@ -536,6 +578,137 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
 
         // Make the metal view first responder for keyboard events.
         [impl_->window makeFirstResponder:impl_->metalView];
+
+        // -- Build native macOS menu bar --------------------------------------
+        impl_->wireMenuCallback();
+        impl_->menuTarget = [[EditorMenuTarget alloc] init];
+
+        auto makeItem = [&](NSString* title, NSString* key, NSUInteger modMask,
+                            NSString* action) -> NSMenuItem*
+        {
+            NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
+                                                          action:@selector(menuAction:)
+                                                   keyEquivalent:key];
+            item.target = impl_->menuTarget;
+            item.representedObject = action;
+            if (modMask != 0)
+            {
+                item.keyEquivalentModifierMask = modMask;
+            }
+            else
+            {
+                item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+            }
+            return item;
+        };
+
+        NSMenu* mainMenu = [[NSMenu alloc] init];
+
+        // -- App menu (required for Cmd+Q) ---
+        {
+            NSMenuItem* appItem = [[NSMenuItem alloc] init];
+            NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Sama Editor"];
+            [appMenu addItemWithTitle:@"About Sama Editor" action:nil keyEquivalent:@""];
+            [appMenu addItem:[NSMenuItem separatorItem]];
+            [appMenu addItemWithTitle:@"Quit Sama Editor"
+                               action:@selector(terminate:)
+                        keyEquivalent:@"q"];
+            appItem.submenu = appMenu;
+            [mainMenu addItem:appItem];
+        }
+
+        // -- File menu ---
+        {
+            NSMenuItem* fileItem = [[NSMenuItem alloc] init];
+            NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+
+            [fileMenu
+                addItem:makeItem(@"New Scene", @"n", NSEventModifierFlagCommand, @"new_scene")];
+            [fileMenu addItem:makeItem(@"Open Scene...", @"o", NSEventModifierFlagCommand,
+                                       @"open_scene")];
+            [fileMenu addItem:[NSMenuItem separatorItem]];
+            [fileMenu
+                addItem:makeItem(@"Save Scene", @"s", NSEventModifierFlagCommand, @"save_scene")];
+            [fileMenu addItem:makeItem(@"Save Scene As...", @"S",
+                                       NSEventModifierFlagCommand | NSEventModifierFlagShift,
+                                       @"save_scene_as")];
+
+            fileItem.submenu = fileMenu;
+            [mainMenu addItem:fileItem];
+        }
+
+        // -- Edit menu ---
+        {
+            NSMenuItem* editItem = [[NSMenuItem alloc] init];
+            NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+
+            [editMenu addItem:makeItem(@"Undo", @"z", NSEventModifierFlagCommand, @"undo")];
+            [editMenu
+                addItem:makeItem(@"Redo", @"Z",
+                                 NSEventModifierFlagCommand | NSEventModifierFlagShift, @"redo")];
+            [editMenu addItem:[NSMenuItem separatorItem]];
+            {
+                NSMenuItem* del = [[NSMenuItem alloc] initWithTitle:@"Delete"
+                                                             action:@selector(menuAction:)
+                                                      keyEquivalent:@""];
+                del.keyEquivalentModifierMask = 0;
+                del.target = impl_->menuTarget;
+                del.representedObject = @"delete";
+                [editMenu addItem:del];
+            }
+            [editMenu
+                addItem:makeItem(@"Select All", @"a", NSEventModifierFlagCommand, @"select_all")];
+
+            editItem.submenu = editMenu;
+            [mainMenu addItem:editItem];
+        }
+
+        // -- Entity menu ---
+        {
+            NSMenuItem* entityItem = [[NSMenuItem alloc] init];
+            NSMenu* entityMenu = [[NSMenu alloc] initWithTitle:@"Entity"];
+
+            [entityMenu addItem:makeItem(@"Create Empty", @"N",
+                                         NSEventModifierFlagCommand | NSEventModifierFlagShift,
+                                         @"create_empty")];
+            [entityMenu addItem:makeItem(@"Create Cube", @"", 0, @"create_cube")];
+            [entityMenu addItem:makeItem(@"Create Sphere", @"", 0, @"create_sphere")];
+            [entityMenu addItem:makeItem(@"Create Light", @"", 0, @"create_light")];
+
+            entityItem.submenu = entityMenu;
+            [mainMenu addItem:entityItem];
+        }
+
+        // -- View menu ---
+        {
+            NSMenuItem* viewItem = [[NSMenuItem alloc] init];
+            NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+
+            {
+                NSMenuItem* toggleConsole = [[NSMenuItem alloc] initWithTitle:@"Toggle Console"
+                                                                       action:@selector(menuAction:)
+                                                                keyEquivalent:@"`"];
+                toggleConsole.keyEquivalentModifierMask = 0;
+                toggleConsole.target = impl_->menuTarget;
+                toggleConsole.representedObject = @"toggle_console";
+                [viewMenu addItem:toggleConsole];
+            }
+            {
+                NSMenuItem* toggleResources =
+                    [[NSMenuItem alloc] initWithTitle:@"Toggle Resources"
+                                               action:@selector(menuAction:)
+                                        keyEquivalent:@"p"];
+                toggleResources.keyEquivalentModifierMask = 0;
+                toggleResources.target = impl_->menuTarget;
+                toggleResources.representedObject = @"toggle_resources";
+                [viewMenu addItem:toggleResources];
+            }
+
+            viewItem.submenu = viewMenu;
+            [mainMenu addItem:viewItem];
+        }
+
+        [NSApp setMainMenu:mainMenu];
 
         return true;
     }
@@ -564,6 +737,7 @@ void CocoaEditorWindow::shutdown()
         impl_->metalLayer = nil;
         impl_->verticalSplit = nil;
         impl_->horizontalSplit = nil;
+        impl_->menuTarget = nil;
     }
 }
 
@@ -826,6 +1000,83 @@ CocoaConsoleView* CocoaEditorWindow::consoleView() const
 CocoaResourceView* CocoaEditorWindow::resourceView() const
 {
     return impl_->resourceView.get();
+}
+
+// --- Native file dialogs ---------------------------------------------------
+
+std::string CocoaEditorWindow::showSaveDialog(const char* defaultName, const char* fileExtension)
+{
+    @autoreleasepool
+    {
+        NSSavePanel* panel = [NSSavePanel savePanel];
+        panel.canCreateDirectories = YES;
+
+        if (defaultName)
+        {
+            panel.nameFieldStringValue = [NSString stringWithUTF8String:defaultName];
+        }
+
+        if (fileExtension)
+        {
+            NSString* ext = [NSString stringWithUTF8String:fileExtension];
+            // Remove leading dot if present.
+            if ([ext hasPrefix:@"."])
+                ext = [ext substringFromIndex:1];
+            panel.allowedContentTypes = @[ [UTType typeWithFilenameExtension:ext] ];
+        }
+
+        if ([panel runModal] == NSModalResponseOK)
+        {
+            return std::string([[panel.URL path] UTF8String]);
+        }
+        return {};
+    }
+}
+
+std::string CocoaEditorWindow::showOpenDialog(const char* fileExtension)
+{
+    @autoreleasepool
+    {
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        panel.canChooseFiles = YES;
+        panel.canChooseDirectories = NO;
+        panel.allowsMultipleSelection = NO;
+
+        if (fileExtension)
+        {
+            NSString* ext = [NSString stringWithUTF8String:fileExtension];
+            if ([ext hasPrefix:@"."])
+                ext = [ext substringFromIndex:1];
+            panel.allowedContentTypes = @[ [UTType typeWithFilenameExtension:ext] ];
+        }
+
+        if ([panel runModal] == NSModalResponseOK)
+        {
+            return std::string([[panel.URL path] UTF8String]);
+        }
+        return {};
+    }
+}
+
+// --- Window title -----------------------------------------------------------
+
+void CocoaEditorWindow::setWindowTitle(const std::string& title)
+{
+    @autoreleasepool
+    {
+        if (impl_->window)
+        {
+            NSString* nsTitle = [NSString stringWithUTF8String:title.c_str()];
+            [impl_->window setTitle:nsTitle];
+        }
+    }
+}
+
+// --- Menu action callback ---------------------------------------------------
+
+void CocoaEditorWindow::setMenuActionCallback(MenuCallback cb)
+{
+    impl_->menuCallback = std::move(cb);
 }
 
 }  // namespace engine::editor

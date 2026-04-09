@@ -34,6 +34,7 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/assets/StdFileSystem.h"
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/memory/FrameArena.h"
@@ -49,6 +50,7 @@
 #include "engine/scene/NameComponent.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/TransformSystem.h"
+#include "engine/threading/ThreadPool.h"
 
 using engine::ecs::EntityID;
 using engine::ecs::INVALID_ENTITY;
@@ -114,8 +116,15 @@ struct EditorApp::Impl
     // Undo/redo
     CommandStack commandStack;
 
+    // Asset loading support
+    std::unique_ptr<engine::threading::ThreadPool> threadPool;
+    std::unique_ptr<engine::assets::StdFileSystem> fileSystem;
+    std::unique_ptr<engine::assets::AssetManager> assetManager;
+
     // Scene serialization
     scene::SceneSerializer sceneSerializer;
+    std::string scenePath;       // current save path (empty = unsaved)
+    bool sceneModified = false;  // unsaved-changes indicator
 
     // Status message (shown briefly in HUD)
     char statusMsg[128] = {};
@@ -153,6 +162,30 @@ struct EditorApp::Impl
 
     // Sync console log to the native console view.
     void syncConsoleView();
+
+    // Update window title with scene name and modification indicator.
+    void updateWindowTitle();
+
+    // Mark scene as modified (unsaved changes).
+    void markSceneModified();
+
+    // Save the scene to a path. Returns true on success.
+    bool saveSceneTo(const std::string& path);
+
+    // Save with dialog (Save As). Returns true on success.
+    bool saveSceneAs();
+
+    // Save to current path or show dialog if first time.
+    bool saveScene();
+
+    // Open a scene from file dialog.
+    bool openScene();
+
+    // Create a new empty scene.
+    void newScene();
+
+    // Handle a menu action string.
+    void handleMenuAction(const std::string& action);
 };
 
 void EditorApp::Impl::refreshHierarchyView()
@@ -476,6 +509,257 @@ void EditorApp::Impl::syncConsoleView()
     lastLogCount = currentCount;
 }
 
+void EditorApp::Impl::updateWindowTitle()
+{
+    std::string title = "Sama Editor";
+    if (!scenePath.empty())
+    {
+        // Extract filename from path.
+        std::string filename = scenePath;
+        auto pos = filename.find_last_of('/');
+        if (pos != std::string::npos)
+            filename = filename.substr(pos + 1);
+        title += " \xe2\x80\x94 " + filename;  // em-dash
+    }
+    if (sceneModified)
+    {
+        title += " \xe2\x80\xa2";  // bullet
+    }
+    window->setWindowTitle(title);
+}
+
+void EditorApp::Impl::markSceneModified()
+{
+    if (!sceneModified)
+    {
+        sceneModified = true;
+        updateWindowTitle();
+    }
+}
+
+bool EditorApp::Impl::saveSceneTo(const std::string& path)
+{
+    if (sceneSerializer.saveScene(registry, resources, path.c_str()))
+    {
+        scenePath = path;
+        sceneModified = false;
+        updateWindowTitle();
+
+        // Extract filename for status.
+        std::string filename = path;
+        auto pos = filename.find_last_of('/');
+        if (pos != std::string::npos)
+            filename = filename.substr(pos + 1);
+
+        snprintf(statusMsg, sizeof(statusMsg), "Saved %s", filename.c_str());
+        EditorLog::instance().info(statusMsg);
+        statusTimer = 3.0f;
+        return true;
+    }
+    else
+    {
+        snprintf(statusMsg, sizeof(statusMsg), "Failed to save scene!");
+        EditorLog::instance().error("Failed to save scene!");
+        statusTimer = 3.0f;
+        return false;
+    }
+}
+
+bool EditorApp::Impl::saveSceneAs()
+{
+    std::string path = window->showSaveDialog("scene.json", ".json");
+    if (path.empty())
+        return false;
+    return saveSceneTo(path);
+}
+
+bool EditorApp::Impl::saveScene()
+{
+    if (scenePath.empty())
+    {
+        return saveSceneAs();
+    }
+    return saveSceneTo(scenePath);
+}
+
+bool EditorApp::Impl::openScene()
+{
+    std::string path = window->showOpenDialog(".json");
+    if (path.empty())
+        return false;
+
+    // Clear existing entities.
+    std::vector<EntityID> toDelete;
+    registry.forEachEntity([&](EntityID e) { toDelete.push_back(e); });
+    for (EntityID e : toDelete)
+    {
+        registry.destroyEntity(e);
+    }
+    editorState.clearSelection();
+    commandStack.clear();
+
+    if (sceneSerializer.loadScene(path.c_str(), registry, resources, *assetManager))
+    {
+        scenePath = path;
+        sceneModified = false;
+        updateWindowTitle();
+
+        std::string filename = path;
+        auto pos = filename.find_last_of('/');
+        if (pos != std::string::npos)
+            filename = filename.substr(pos + 1);
+
+        snprintf(statusMsg, sizeof(statusMsg), "Loaded %s", filename.c_str());
+        EditorLog::instance().info(statusMsg);
+        statusTimer = 3.0f;
+        hierarchyDirty = true;
+        propertiesDirty = true;
+        return true;
+    }
+    else
+    {
+        snprintf(statusMsg, sizeof(statusMsg), "Failed to load scene!");
+        EditorLog::instance().error("Failed to load scene!");
+        statusTimer = 3.0f;
+        return false;
+    }
+}
+
+void EditorApp::Impl::newScene()
+{
+    // Clear existing entities.
+    std::vector<EntityID> toDelete;
+    registry.forEachEntity([&](EntityID e) { toDelete.push_back(e); });
+    for (EntityID e : toDelete)
+    {
+        registry.destroyEntity(e);
+    }
+    editorState.clearSelection();
+    commandStack.clear();
+    scenePath.clear();
+    sceneModified = false;
+    updateWindowTitle();
+
+    snprintf(statusMsg, sizeof(statusMsg), "New scene");
+    EditorLog::instance().info("New scene");
+    statusTimer = 2.0f;
+    hierarchyDirty = true;
+    propertiesDirty = true;
+}
+
+void EditorApp::Impl::handleMenuAction(const std::string& action)
+{
+    if (action == "new_scene")
+    {
+        newScene();
+    }
+    else if (action == "open_scene")
+    {
+        openScene();
+    }
+    else if (action == "save_scene")
+    {
+        saveScene();
+    }
+    else if (action == "save_scene_as")
+    {
+        saveSceneAs();
+    }
+    else if (action == "undo")
+    {
+        const char* desc = commandStack.undoDescription();
+        commandStack.undo();
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Undo: %s", desc);
+        EditorLog::instance().info(buf);
+        hierarchyDirty = true;
+        propertiesDirty = true;
+        markSceneModified();
+    }
+    else if (action == "redo")
+    {
+        const char* desc = commandStack.redoDescription();
+        commandStack.redo();
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Redo: %s", desc);
+        EditorLog::instance().info(buf);
+        hierarchyDirty = true;
+        propertiesDirty = true;
+        markSceneModified();
+    }
+    else if (action == "delete")
+    {
+        EntityID selE = editorState.primarySelection();
+        if (selE != INVALID_ENTITY)
+        {
+            auto cmd = std::make_unique<DeleteEntityCommand>(registry, editorState, selE);
+            commandStack.execute(std::move(cmd));
+            snprintf(statusMsg, sizeof(statusMsg), "Deleted entity");
+            statusTimer = 2.0f;
+            EditorLog::instance().info("Deleted entity");
+            hierarchyDirty = true;
+            propertiesDirty = true;
+            markSceneModified();
+        }
+    }
+    else if (action == "create_empty")
+    {
+        auto cmd = std::make_unique<CreateEntityCommand>(registry, editorState);
+        commandStack.execute(std::move(cmd));
+        snprintf(statusMsg, sizeof(statusMsg), "Created new entity");
+        statusTimer = 2.0f;
+        EditorLog::instance().info("Created new entity");
+        hierarchyDirty = true;
+        propertiesDirty = true;
+        markSceneModified();
+    }
+    else if (action == "create_cube")
+    {
+        auto cmd = std::make_unique<CreateEntityCommand>(registry, editorState);
+        commandStack.execute(std::move(cmd));
+        EntityID e = editorState.primarySelection();
+        if (e != INVALID_ENTITY)
+        {
+            if (!registry.has<MeshComponent>(e))
+            {
+                registry.emplace<MeshComponent>(e, MeshComponent{cubeMeshId});
+            }
+            auto* nc = registry.get<engine::scene::NameComponent>(e);
+            if (nc)
+                nc->name = "Cube";
+        }
+        snprintf(statusMsg, sizeof(statusMsg), "Created cube entity");
+        statusTimer = 2.0f;
+        EditorLog::instance().info("Created cube entity");
+        hierarchyDirty = true;
+        propertiesDirty = true;
+        markSceneModified();
+    }
+    else if (action == "create_light")
+    {
+        auto cmd = std::make_unique<CreateEntityCommand>(registry, editorState);
+        commandStack.execute(std::move(cmd));
+        EntityID e = editorState.primarySelection();
+        if (e != INVALID_ENTITY)
+        {
+            PointLightComponent pl{};
+            pl.color = {1.0f, 1.0f, 1.0f};
+            pl.intensity = 1.0f;
+            pl.radius = 10.0f;
+            registry.emplace<PointLightComponent>(e, pl);
+            auto* nc = registry.get<engine::scene::NameComponent>(e);
+            if (nc)
+                nc->name = "Point Light";
+        }
+        snprintf(statusMsg, sizeof(statusMsg), "Created light entity");
+        statusTimer = 2.0f;
+        EditorLog::instance().info("Created light entity");
+        hierarchyDirty = true;
+        propertiesDirty = true;
+        markSceneModified();
+    }
+}
+
 EditorApp::EditorApp() : impl_(std::make_unique<Impl>()) {}
 
 EditorApp::~EditorApp()
@@ -669,8 +953,18 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->camera.pitch = 25.0f;
     impl_->camera.target = {0.0f, 0.5f, 0.0f};
 
+    // -- Asset manager --------------------------------------------------------
+    impl_->threadPool = std::make_unique<engine::threading::ThreadPool>(2);
+    impl_->fileSystem = std::make_unique<engine::assets::StdFileSystem>(".");
+    impl_->assetManager =
+        std::make_unique<engine::assets::AssetManager>(*impl_->threadPool, *impl_->fileSystem);
+
     // -- Scene serializer -----------------------------------------------------
     impl_->sceneSerializer.registerEngineComponents();
+
+    // -- Menu action callback -------------------------------------------------
+    impl_->window->setMenuActionCallback([this](const std::string& action)
+                                         { impl_->handleMenuAction(action); });
 
     // -- Frame arena ----------------------------------------------------------
     impl_->frameArena = std::make_unique<engine::memory::FrameArena>(2 * 1024 * 1024);
@@ -874,6 +1168,7 @@ void EditorApp::run()
                         impl_->registry, selE, impl_->gizmo->dragStartTransform(), *tc);
                     impl_->commandStack.execute(std::move(cmd));
                     impl_->propertiesDirty = true;
+                    impl_->markSceneModified();
                 }
             }
         }
@@ -899,29 +1194,31 @@ void EditorApp::run()
             }
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->markSceneModified();
         }
 
         // -- Keyboard shortcuts -----------------------------------------------
-        // Cmd+S = save scene
-        if (impl_->window->isKeyPressed('S') && impl_->window->isCommandDown())
+        // Cmd+Shift+S = save scene as
+        if (impl_->window->isKeyPressed('S') && impl_->window->isCommandDown() &&
+            impl_->window->isShiftDown())
         {
-            if (impl_->sceneSerializer.saveScene(impl_->registry, impl_->resources,
-                                                 "editor_scene.json"))
-            {
-                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
-                         "Scene saved to editor_scene.json");
-                EditorLog::instance().info("Scene saved to editor_scene.json");
-            }
-            else
-            {
-                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Failed to save scene!");
-                EditorLog::instance().error("Failed to save scene!");
-            }
-            impl_->statusTimer = 3.0f;
+            impl_->saveSceneAs();
+        }
+        // Cmd+S = save scene
+        else if (impl_->window->isKeyPressed('S') && impl_->window->isCommandDown())
+        {
+            impl_->saveScene();
         }
 
-        // Cmd+N = create new entity
-        if (impl_->window->isKeyPressed('N') && impl_->window->isCommandDown())
+        // Cmd+O = open scene
+        if (impl_->window->isKeyPressed('O') && impl_->window->isCommandDown())
+        {
+            impl_->openScene();
+        }
+
+        // Cmd+Shift+N = create new entity
+        if (impl_->window->isKeyPressed('N') && impl_->window->isCommandDown() &&
+            impl_->window->isShiftDown())
         {
             auto cmd = std::make_unique<CreateEntityCommand>(impl_->registry, impl_->editorState);
             impl_->commandStack.execute(std::move(cmd));
@@ -930,6 +1227,12 @@ void EditorApp::run()
             EditorLog::instance().info("Created new entity");
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->markSceneModified();
+        }
+        // Cmd+N = new scene
+        else if (impl_->window->isKeyPressed('N') && impl_->window->isCommandDown())
+        {
+            impl_->newScene();
         }
 
         // Delete/Backspace = delete selected entity
@@ -946,6 +1249,7 @@ void EditorApp::run()
                 EditorLog::instance().info("Deleted entity");
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->markSceneModified();
             }
         }
 
