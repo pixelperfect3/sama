@@ -61,6 +61,28 @@
     _scrollDeltaY += [event scrollingDeltaY];
 }
 
+// Suppress context menu on right-click so right-drag works for camera orbit.
+- (void)rightMouseDown:(NSEvent*)event
+{
+    // Intentionally empty — don't call super, which would show a context menu.
+}
+
+- (void)rightMouseDragged:(NSEvent*)event
+{
+    // Intentionally empty — mouse delta is polled via pressedMouseButtons.
+}
+
+- (void)rightMouseUp:(NSEvent*)event
+{
+    // Intentionally empty.
+}
+
+// Suppress context menu from menu key.
+- (NSMenu*)menuForEvent:(NSEvent*)event
+{
+    return nil;
+}
+
 // Map macOS virtual key codes to ASCII-ish codes.
 static uint8_t mapKeyCode(unsigned short vk)
 {
