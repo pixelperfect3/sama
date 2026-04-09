@@ -34,6 +34,7 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/assets/StdFileSystem.h"
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/memory/FrameArena.h"
@@ -49,6 +50,7 @@
 #include "engine/scene/NameComponent.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/TransformSystem.h"
+#include "engine/threading/ThreadPool.h"
 
 using engine::ecs::EntityID;
 using engine::ecs::INVALID_ENTITY;
@@ -114,8 +116,14 @@ struct EditorApp::Impl
     // Undo/redo
     CommandStack commandStack;
 
+    // Asset management (needed for scene deserialization).
+    std::unique_ptr<engine::threading::ThreadPool> threadPool;
+    std::unique_ptr<engine::assets::StdFileSystem> fileSystem;
+    std::unique_ptr<engine::assets::AssetManager> assetManager;
+
     // Scene serialization
     scene::SceneSerializer sceneSerializer;
+    std::string currentScenePath;
 
     // Status message (shown briefly in HUD)
     char statusMsg[128] = {};
@@ -669,6 +677,12 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->camera.pitch = 25.0f;
     impl_->camera.target = {0.0f, 0.5f, 0.0f};
 
+    // -- Asset manager (for scene loading) -------------------------------------
+    impl_->threadPool = std::make_unique<engine::threading::ThreadPool>(2);
+    impl_->fileSystem = std::make_unique<engine::assets::StdFileSystem>(".");
+    impl_->assetManager =
+        std::make_unique<engine::assets::AssetManager>(*impl_->threadPool, *impl_->fileSystem);
+
     // -- Scene serializer -----------------------------------------------------
     impl_->sceneSerializer.registerEngineComponents();
 
@@ -902,22 +916,69 @@ void EditorApp::run()
         }
 
         // -- Keyboard shortcuts -----------------------------------------------
-        // Cmd+S = save scene
+        // Cmd+Shift+S = save scene as (always show dialog)
+        // Cmd+S       = save scene (use current path, or show dialog if none)
         if (impl_->window->isKeyPressed('S') && impl_->window->isCommandDown())
         {
-            if (impl_->sceneSerializer.saveScene(impl_->registry, impl_->resources,
-                                                 "editor_scene.json"))
+            std::string path = impl_->currentScenePath;
+
+            if (impl_->window->isShiftDown() || path.empty())
             {
-                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
-                         "Scene saved to editor_scene.json");
-                EditorLog::instance().info("Scene saved to editor_scene.json");
+                path = impl_->window->showSaveDialog("scene.json", "json");
             }
-            else
+
+            if (!path.empty())
             {
-                snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Failed to save scene!");
-                EditorLog::instance().error("Failed to save scene!");
+                if (impl_->sceneSerializer.saveScene(impl_->registry, impl_->resources,
+                                                     path.c_str()))
+                {
+                    impl_->currentScenePath = path;
+                    snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Scene saved to %s",
+                             path.substr(path.find_last_of('/') + 1).c_str());
+                    EditorLog::instance().info(impl_->statusMsg);
+
+                    // Update window title.
+                    std::string title = "Sama Editor — " + path.substr(path.find_last_of('/') + 1);
+                    impl_->window->setWindowTitle(title.c_str());
+                }
+                else
+                {
+                    snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Failed to save scene!");
+                    EditorLog::instance().error("Failed to save scene!");
+                }
+                impl_->statusTimer = 3.0f;
             }
-            impl_->statusTimer = 3.0f;
+        }
+
+        // Cmd+O = open scene
+        if (impl_->window->isKeyPressed('O') && impl_->window->isCommandDown())
+        {
+            std::string path = impl_->window->showOpenDialog("json");
+            if (!path.empty())
+            {
+                if (impl_->sceneSerializer.loadScene(path.c_str(), impl_->registry,
+                                                     impl_->resources, *impl_->assetManager))
+                {
+                    impl_->currentScenePath = path;
+                    impl_->commandStack.clear();
+                    impl_->editorState.clearSelection();
+                    impl_->hierarchyDirty = true;
+                    impl_->propertiesDirty = true;
+
+                    snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Opened %s",
+                             path.substr(path.find_last_of('/') + 1).c_str());
+                    EditorLog::instance().info(impl_->statusMsg);
+
+                    std::string title = "Sama Editor — " + path.substr(path.find_last_of('/') + 1);
+                    impl_->window->setWindowTitle(title.c_str());
+                }
+                else
+                {
+                    snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Failed to open scene!");
+                    EditorLog::instance().error("Failed to open scene!");
+                }
+                impl_->statusTimer = 3.0f;
+            }
         }
 
         // Cmd+N = create new entity

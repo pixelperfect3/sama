@@ -3,6 +3,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaHierarchyView.h"
@@ -804,6 +805,46 @@ uint32_t CocoaEditorWindow::viewportFramebufferHeight() const
 bool CocoaEditorWindow::isMouseOverViewport() const
 {
     return impl_->mouseOverViewport;
+}
+
+// --- Native file dialogs ----------------------------------------------------
+
+std::string CocoaEditorWindow::showSaveDialog(const char* defaultName, const char* extension)
+{
+    @autoreleasepool
+    {
+        NSSavePanel* panel = [NSSavePanel savePanel];
+        panel.allowedContentTypes = @[ [UTType typeWithFilenameExtension:@(extension)] ];
+        panel.nameFieldStringValue = @(defaultName);
+        if ([panel runModal] == NSModalResponseOK)
+        {
+            return std::string([[panel.URL path] UTF8String]);
+        }
+        return {};
+    }
+}
+
+std::string CocoaEditorWindow::showOpenDialog(const char* extension)
+{
+    @autoreleasepool
+    {
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        panel.allowedContentTypes = @[ [UTType typeWithFilenameExtension:@(extension)] ];
+        panel.allowsMultipleSelection = NO;
+        if ([panel runModal] == NSModalResponseOK)
+        {
+            return std::string([[panel.URLs[0] path] UTF8String]);
+        }
+        return {};
+    }
+}
+
+void CocoaEditorWindow::setWindowTitle(const char* title)
+{
+    @autoreleasepool
+    {
+        [impl_->window setTitle:@(title)];
+    }
 }
 
 // --- Native panel views -----------------------------------------------------

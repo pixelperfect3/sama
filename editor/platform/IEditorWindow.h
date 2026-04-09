@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace engine::editor
 {
@@ -50,6 +51,13 @@ public:
     virtual bool isShiftDown() const = 0;
     virtual bool isControlDown() const = 0;
     virtual bool isOptionDown() const = 0;
+
+    // Native file dialogs. Return empty string if cancelled.
+    virtual std::string showSaveDialog(const char* defaultName, const char* extension) = 0;
+    virtual std::string showOpenDialog(const char* extension) = 0;
+
+    // Window title.
+    virtual void setWindowTitle(const char* title) = 0;
 };
 
 }  // namespace engine::editor

@@ -60,6 +60,10 @@ public:
     bool isControlDown() const override;
     bool isOptionDown() const override;
 
+    std::string showSaveDialog(const char* defaultName, const char* extension) override;
+    std::string showOpenDialog(const char* extension) override;
+    void setWindowTitle(const char* title) override;
+
     // --- Viewport-specific dimensions ----------------------------------------
     // These return the size of just the center 3D viewport panel,
     // not the entire window.
