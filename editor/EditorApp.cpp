@@ -1122,6 +1122,14 @@ void EditorApp::run()
             std::string path = impl_->window->showOpenDialog("json");
             if (!path.empty())
             {
+                // Clear existing entities before loading.
+                std::vector<EntityID> toDelete;
+                impl_->registry.forEachEntity([&](EntityID e) { toDelete.push_back(e); });
+                for (auto e : toDelete)
+                {
+                    impl_->registry.destroyEntity(e);
+                }
+
                 if (impl_->sceneSerializer.loadScene(path.c_str(), impl_->registry,
                                                      impl_->resources, *impl_->assetManager))
                 {

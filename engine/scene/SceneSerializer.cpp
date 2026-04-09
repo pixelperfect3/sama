@@ -2,7 +2,9 @@
 
 #include <unordered_map>
 
+#include "engine/physics/PhysicsComponents.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/MeshBuilder.h"
 #include "engine/scene/HierarchyComponents.h"
 #include "engine/scene/NameComponent.h"
 #include "engine/scene/SceneGraph.h"
@@ -55,6 +57,8 @@ void SceneSerializer::registerEngineComponents()
             tc.scale = val.hasMember("scale") ? val["scale"].getVec3() : math::Vec3(1.0f);
             tc.flags = 1;  // dirty
             reg.emplace<rendering::TransformComponent>(e, tc);
+            reg.emplace<rendering::WorldTransformComponent>(
+                e, rendering::WorldTransformComponent{math::Mat4(1.0f)});
         });
 
     // ----- Camera -----
@@ -199,6 +203,213 @@ void SceneSerializer::registerEngineComponents()
             sl.cosOuterAngle = val["cosOuterAngle"].getFloat(0.8f);
             sl.radius = val["radius"].getFloat(10.0f);
             reg.emplace<rendering::SpotLightComponent>(e, sl);
+        });
+
+    // ----- Name -----
+    registerComponent(
+        "Name",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources&,
+           io::JsonWriter& w)
+        {
+            const auto* nc = reg.get<NameComponent>(e);
+            if (!nc || nc->name.empty())
+                return;
+            w.key("Name");
+            w.startObject();
+            w.key("name");
+            w.writeString(nc->name.c_str());
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources&, assets::AssetManager&,
+           io::JsonValue val)
+        {
+            NameComponent nc;
+            nc.name = val["name"].getString("");
+            reg.emplace<NameComponent>(e, std::move(nc));
+        });
+
+    // ----- Mesh -----
+    registerComponent(
+        "Mesh",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources&,
+           io::JsonWriter& w)
+        {
+            const auto* mc = reg.get<rendering::MeshComponent>(e);
+            if (!mc)
+                return;
+            w.key("Mesh");
+            w.startObject();
+            w.key("type");
+            w.writeString("cube");
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources& resources,
+           assets::AssetManager&, io::JsonValue val)
+        {
+            const char* type = val["type"].getString("cube");
+            if (std::strcmp(type, "cube") == 0)
+            {
+                uint32_t meshId =
+                    resources.addMesh(rendering::buildMesh(rendering::makeCubeMeshData()));
+                reg.emplace<rendering::MeshComponent>(e, rendering::MeshComponent{meshId});
+            }
+        });
+
+    // ----- Material -----
+    registerComponent(
+        "Material",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources& resources,
+           io::JsonWriter& w)
+        {
+            const auto* mc = reg.get<rendering::MaterialComponent>(e);
+            if (!mc)
+                return;
+            const auto* mat = resources.getMaterial(mc->material);
+            if (!mat)
+                return;
+            w.key("Material");
+            w.startObject();
+            w.key("albedo");
+            w.writeVec4(mat->albedo);
+            w.key("roughness");
+            w.writeFloat(mat->roughness);
+            w.key("metallic");
+            w.writeFloat(mat->metallic);
+            w.key("emissiveScale");
+            w.writeFloat(mat->emissiveScale);
+            w.key("transparent");
+            w.writeUint(mat->transparent);
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources& resources,
+           assets::AssetManager&, io::JsonValue val)
+        {
+            rendering::Material mat{};
+            if (val.hasMember("albedo"))
+                mat.albedo = val["albedo"].getVec4();
+            mat.roughness = val["roughness"].getFloat(0.5f);
+            mat.metallic = val["metallic"].getFloat(0.0f);
+            mat.emissiveScale = val["emissiveScale"].getFloat(0.0f);
+            mat.transparent = static_cast<uint8_t>(val["transparent"].getUint(0));
+            uint32_t matId = resources.addMaterial(mat);
+            reg.emplace<rendering::MaterialComponent>(e, rendering::MaterialComponent{matId});
+        });
+
+    // ----- Visible (VisibleTag) -----
+    registerComponent(
+        "Visible",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources&,
+           io::JsonWriter& w)
+        {
+            const auto* vt = reg.get<rendering::VisibleTag>(e);
+            if (!vt)
+                return;
+            w.key("Visible");
+            w.startObject();
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources&, assets::AssetManager&,
+           io::JsonValue) { reg.emplace<rendering::VisibleTag>(e, rendering::VisibleTag{}); });
+
+    // ----- ShadowVisible (ShadowVisibleTag) -----
+    registerComponent(
+        "ShadowVisible",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources&,
+           io::JsonWriter& w)
+        {
+            const auto* sv = reg.get<rendering::ShadowVisibleTag>(e);
+            if (!sv)
+                return;
+            w.key("ShadowVisible");
+            w.startObject();
+            w.key("cascadeMask");
+            w.writeUint(sv->cascadeMask);
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources&, assets::AssetManager&,
+           io::JsonValue val)
+        {
+            rendering::ShadowVisibleTag sv{};
+            sv.cascadeMask = static_cast<uint8_t>(val["cascadeMask"].getUint(0xFF));
+            reg.emplace<rendering::ShadowVisibleTag>(e, sv);
+        });
+
+    // ----- RigidBody (RigidBodyComponent) -----
+    registerComponent(
+        "RigidBody",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources&,
+           io::JsonWriter& w)
+        {
+            const auto* rb = reg.get<physics::RigidBodyComponent>(e);
+            if (!rb)
+                return;
+            w.key("RigidBody");
+            w.startObject();
+            w.key("mass");
+            w.writeFloat(rb->mass);
+            w.key("type");
+            w.writeInt(static_cast<int32_t>(rb->type));
+            w.key("friction");
+            w.writeFloat(rb->friction);
+            w.key("restitution");
+            w.writeFloat(rb->restitution);
+            w.key("linearDamping");
+            w.writeFloat(rb->linearDamping);
+            w.key("angularDamping");
+            w.writeFloat(rb->angularDamping);
+            w.key("layer");
+            w.writeUint(rb->layer);
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources&, assets::AssetManager&,
+           io::JsonValue val)
+        {
+            physics::RigidBodyComponent rb{};
+            rb.mass = val["mass"].getFloat(1.0f);
+            rb.type = static_cast<physics::BodyType>(val["type"].getInt(1));
+            rb.friction = val["friction"].getFloat(0.5f);
+            rb.restitution = val["restitution"].getFloat(0.3f);
+            rb.linearDamping = val["linearDamping"].getFloat(0.05f);
+            rb.angularDamping = val["angularDamping"].getFloat(0.05f);
+            rb.layer = static_cast<uint8_t>(val["layer"].getUint(0));
+            reg.emplace<physics::RigidBodyComponent>(e, rb);
+        });
+
+    // ----- Collider (ColliderComponent) -----
+    registerComponent(
+        "Collider",
+        [](ecs::EntityID e, const ecs::Registry& reg, const rendering::RenderResources&,
+           io::JsonWriter& w)
+        {
+            const auto* cc = reg.get<physics::ColliderComponent>(e);
+            if (!cc)
+                return;
+            w.key("Collider");
+            w.startObject();
+            w.key("shape");
+            w.writeInt(static_cast<int32_t>(cc->shape));
+            w.key("offset");
+            w.writeVec3(cc->offset);
+            w.key("halfExtents");
+            w.writeVec3(cc->halfExtents);
+            w.key("radius");
+            w.writeFloat(cc->radius);
+            w.key("isSensor");
+            w.writeUint(cc->isSensor);
+            w.endObject();
+        },
+        [](ecs::EntityID e, ecs::Registry& reg, rendering::RenderResources&, assets::AssetManager&,
+           io::JsonValue val)
+        {
+            physics::ColliderComponent cc{};
+            cc.shape = static_cast<physics::ColliderShape>(val["shape"].getInt(0));
+            if (val.hasMember("offset"))
+                cc.offset = val["offset"].getVec3();
+            if (val.hasMember("halfExtents"))
+                cc.halfExtents = val["halfExtents"].getVec3();
+            cc.radius = val["radius"].getFloat(0.5f);
+            cc.isSensor = static_cast<uint8_t>(val["isSensor"].getUint(0));
+            reg.emplace<physics::ColliderComponent>(e, cc);
         });
 }
 
