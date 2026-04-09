@@ -252,6 +252,69 @@ static uint8_t mapKeyCode(unsigned short vk)
 @end
 
 // ---------------------------------------------------------------------------
+// MenuHandler -- routes menu item clicks to a C++ callback via tag IDs.
+// ---------------------------------------------------------------------------
+
+typedef void (*MenuActionFn)(const char* action);
+static MenuActionFn s_menuActionCallback = nullptr;
+
+@interface EditorMenuHandler : NSObject
+- (void)menuAction:(NSMenuItem*)sender;
+@end
+
+@implementation EditorMenuHandler
+- (void)menuAction:(NSMenuItem*)sender
+{
+    if (!s_menuActionCallback)
+        return;
+    // Use the menu item's tag to identify the action.
+    // Tags: 1=new, 2=open, 3=save, 4=saveAs, 5=undo, 6=redo, 7=delete,
+    //        8=createEmpty, 9=createCube, 10=createLight
+    switch (sender.tag)
+    {
+        case 1:
+            s_menuActionCallback("new_scene");
+            break;
+        case 2:
+            s_menuActionCallback("open_scene");
+            break;
+        case 3:
+            s_menuActionCallback("save_scene");
+            break;
+        case 4:
+            s_menuActionCallback("save_scene_as");
+            break;
+        case 5:
+            s_menuActionCallback("undo");
+            break;
+        case 6:
+            s_menuActionCallback("redo");
+            break;
+        case 7:
+            s_menuActionCallback("delete");
+            break;
+        case 8:
+            s_menuActionCallback("create_empty");
+            break;
+        case 9:
+            s_menuActionCallback("create_cube");
+            break;
+        case 10:
+            s_menuActionCallback("create_light");
+            break;
+        default:
+            break;
+    }
+}
+
+// Required: tells macOS all menu items are valid (not grayed out).
+- (BOOL)validateMenuItem:(NSMenuItem*)menuItem
+{
+    return YES;
+}
+@end
+
+// ---------------------------------------------------------------------------
 // SplitViewDelegate -- constrains panel sizes.
 // ---------------------------------------------------------------------------
 
@@ -332,6 +395,7 @@ struct CocoaEditorWindow::Impl
     EditorWindowDelegate* windowDelegate = nil;
     EditorSplitDelegate* hSplitDelegate = nil;
     EditorSplitDelegate* vSplitDelegate = nil;
+    EditorMenuHandler* menuHandler = nil;
     CAMetalLayer* metalLayer = nil;
 
     // Split views.
@@ -400,9 +464,21 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
 
         // -- Native menu bar -----------------------------------------------------
         {
+            impl_->menuHandler = [[EditorMenuHandler alloc] init];
+            SEL menuSel = @selector(menuAction:);
+            id target = impl_->menuHandler;
+
+            auto addItem = [&](NSMenu* menu, NSString* title, NSString* key, NSInteger tag)
+            {
+                NSMenuItem* item = [menu addItemWithTitle:title action:menuSel keyEquivalent:key];
+                item.target = target;
+                item.tag = tag;
+                return item;
+            };
+
             NSMenu* menuBar = [[NSMenu alloc] init];
 
-            // App menu (required for Quit to work)
+            // App menu
             NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
             NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Sama Editor"];
             [appMenu addItemWithTitle:@"About Sama Editor"
@@ -418,13 +494,11 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             // File menu
             NSMenuItem* fileMenuItem = [[NSMenuItem alloc] init];
             NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-            [fileMenu addItemWithTitle:@"New Scene" action:nil keyEquivalent:@"n"];
-            [fileMenu addItemWithTitle:@"Open Scene..." action:nil keyEquivalent:@"o"];
+            addItem(fileMenu, @"New Scene", @"n", 1);
+            addItem(fileMenu, @"Open Scene...", @"o", 2);
             [fileMenu addItem:[NSMenuItem separatorItem]];
-            [fileMenu addItemWithTitle:@"Save Scene" action:nil keyEquivalent:@"s"];
-            NSMenuItem* saveAs = [fileMenu addItemWithTitle:@"Save Scene As..."
-                                                     action:nil
-                                              keyEquivalent:@"S"];
+            addItem(fileMenu, @"Save Scene", @"s", 3);
+            NSMenuItem* saveAs = addItem(fileMenu, @"Save Scene As...", @"S", 4);
             saveAs.keyEquivalentModifierMask =
                 NSEventModifierFlagCommand | NSEventModifierFlagShift;
             fileMenuItem.submenu = fileMenu;
@@ -433,23 +507,20 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             // Edit menu
             NSMenuItem* editMenuItem = [[NSMenuItem alloc] init];
             NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
-            [editMenu addItemWithTitle:@"Undo" action:nil keyEquivalent:@"z"];
-            NSMenuItem* redo = [editMenu addItemWithTitle:@"Redo"
-                                                   action:nil
-                                            keyEquivalent:@"Z"];
-            redo.keyEquivalentModifierMask =
-                NSEventModifierFlagCommand | NSEventModifierFlagShift;
+            addItem(editMenu, @"Undo", @"z", 5);
+            NSMenuItem* redo = addItem(editMenu, @"Redo", @"Z", 6);
+            redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
             [editMenu addItem:[NSMenuItem separatorItem]];
-            [editMenu addItemWithTitle:@"Delete" action:nil keyEquivalent:@""];
+            addItem(editMenu, @"Delete", @"", 7);
             editMenuItem.submenu = editMenu;
             [menuBar addItem:editMenuItem];
 
             // Entity menu
             NSMenuItem* entityMenuItem = [[NSMenuItem alloc] init];
             NSMenu* entityMenu = [[NSMenu alloc] initWithTitle:@"Entity"];
-            [entityMenu addItemWithTitle:@"Create Empty" action:nil keyEquivalent:@""];
-            [entityMenu addItemWithTitle:@"Create Cube" action:nil keyEquivalent:@""];
-            [entityMenu addItemWithTitle:@"Create Light" action:nil keyEquivalent:@""];
+            addItem(entityMenu, @"Create Empty", @"", 8);
+            addItem(entityMenu, @"Create Cube", @"", 9);
+            addItem(entityMenu, @"Create Light", @"", 10);
             entityMenuItem.submenu = entityMenu;
             [menuBar addItem:entityMenuItem];
 
@@ -933,6 +1004,11 @@ CocoaConsoleView* CocoaEditorWindow::consoleView() const
 CocoaResourceView* CocoaEditorWindow::resourceView() const
 {
     return impl_->resourceView.get();
+}
+
+void CocoaEditorWindow::setMenuCallback(MenuCallback callback)
+{
+    s_menuActionCallback = callback;
 }
 
 }  // namespace engine::editor

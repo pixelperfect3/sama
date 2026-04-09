@@ -76,6 +76,11 @@ public:
     // Returns true if the mouse is currently over the 3D viewport panel.
     bool isMouseOverViewport() const;
 
+    // Menu action callback — called when a menu item is clicked.
+    // Action is a string like "save_scene", "undo", "create_cube".
+    using MenuCallback = void (*)(const char* action);
+    void setMenuCallback(MenuCallback callback);
+
     // --- Native panel views --------------------------------------------------
     CocoaHierarchyView* hierarchyView() const;
     CocoaPropertiesView* propertiesView() const;
