@@ -51,10 +51,9 @@ void GizmoRenderer::shutdown()
 
 void GizmoRenderer::drawLine(const glm::vec3& from, const glm::vec3& to, uint32_t color)
 {
-    if (lineVertCount_ + 6 > kMaxLineVerts)
-        return;
-
-    // Build a camera-facing quad for the line segment.
+    // Draw 3 parallel lines offset slightly in camera-perpendicular direction
+    // to create a thicker appearance (~3px). Single lines are nearly invisible
+    // on Retina displays.
     glm::vec3 lineDir = to - from;
     float lineLen = glm::length(lineDir);
     if (lineLen < 1e-6f)
@@ -65,24 +64,26 @@ void GizmoRenderer::drawLine(const glm::vec3& from, const glm::vec3& to, uint32_
     glm::vec3 toCamera = glm::normalize(cameraPos_ - midpoint);
     glm::vec3 side = glm::normalize(glm::cross(lineDir, toCamera));
 
-    // Scale width by distance to camera for roughly constant screen-space width.
+    // Offset scaled by distance for consistent screen-space thickness.
     float dist = glm::length(cameraPos_ - midpoint);
-    float halfW = kLineWidth * dist * 0.5f;
-    glm::vec3 offset = side * halfW;
+    float pixelOff = dist * 0.001f;  // ~1 pixel in world space
 
-    // 4 corners.
-    glm::vec3 v0 = from - offset;
-    glm::vec3 v1 = from + offset;
-    glm::vec3 v2 = to + offset;
-    glm::vec3 v3 = to - offset;
+    // Center line + 2 offset lines = 6 vertices total.
+    if (lineVertCount_ + 6 > kMaxLineVerts)
+        return;
 
-    // 2 triangles (6 vertices).
-    lineVerts_[lineVertCount_++] = {v0.x, v0.y, v0.z, color};
-    lineVerts_[lineVertCount_++] = {v1.x, v1.y, v1.z, color};
-    lineVerts_[lineVertCount_++] = {v2.x, v2.y, v2.z, color};
-    lineVerts_[lineVertCount_++] = {v0.x, v0.y, v0.z, color};
-    lineVerts_[lineVertCount_++] = {v2.x, v2.y, v2.z, color};
-    lineVerts_[lineVertCount_++] = {v3.x, v3.y, v3.z, color};
+    // Center line.
+    lineVerts_[lineVertCount_++] = {from.x, from.y, from.z, color};
+    lineVerts_[lineVertCount_++] = {to.x, to.y, to.z, color};
+
+    // Offset line +side.
+    glm::vec3 off = side * pixelOff;
+    lineVerts_[lineVertCount_++] = {from.x + off.x, from.y + off.y, from.z + off.z, color};
+    lineVerts_[lineVertCount_++] = {to.x + off.x, to.y + off.y, to.z + off.z, color};
+
+    // Offset line -side.
+    lineVerts_[lineVertCount_++] = {from.x - off.x, from.y - off.y, from.z - off.z, color};
+    lineVerts_[lineVertCount_++] = {to.x - off.x, to.y - off.y, to.z - off.z, color};
 }
 
 void GizmoRenderer::drawArrow(const glm::vec3& origin, const glm::vec3& dir, float length,
@@ -148,10 +149,9 @@ void GizmoRenderer::flush(const glm::mat4& view, const glm::mat4& proj, uint16_t
     glm::mat4 identity(1.0f);
     bgfx::setTransform(glm::value_ptr(identity));
 
-    // Render as triangles (quads), no depth test, no backface culling, alpha blend.
+    // Render as lines with anti-aliasing.
     uint64_t state =
-        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_MSAA |
-        BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA);
+        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_PT_LINES | BGFX_STATE_LINEAA;
 
     bgfx::setState(state);
     bgfx::submit(kGizmoView, program_);
