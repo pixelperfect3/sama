@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
-#include <string>
 
 namespace engine::editor
 {
@@ -52,21 +50,6 @@ public:
     virtual bool isShiftDown() const = 0;
     virtual bool isControlDown() const = 0;
     virtual bool isOptionDown() const = 0;
-
-    // --- Native file dialogs ------------------------------------------------
-
-    // Opens native save dialog. Returns chosen path or "" if cancelled.
-    virtual std::string showSaveDialog(const char* defaultName, const char* fileExtension) = 0;
-
-    // Opens native open dialog. Returns chosen path or "" if cancelled.
-    virtual std::string showOpenDialog(const char* fileExtension) = 0;
-
-    // --- Window title -------------------------------------------------------
-    virtual void setWindowTitle(const std::string& title) = 0;
-
-    // --- Menu action callback -----------------------------------------------
-    using MenuCallback = std::function<void(const std::string& action)>;
-    virtual void setMenuActionCallback(MenuCallback cb) = 0;
 };
 
 }  // namespace engine::editor

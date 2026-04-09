@@ -667,7 +667,7 @@ public:
 
     // Identity
     uint32_t id() const noexcept { return id_; }
-    const char* name() const noexcept { return name_; }
+    const char* name() const noexcept { return name_.c_str(); }
 
     // Tree structure -- UiCanvas owns all nodes via PoolAllocator.
     // No unique_ptr; raw pointers are safe because parent always outlives children.
@@ -708,7 +708,7 @@ private:
     friend class UiCanvas;
 
     uint32_t id_ = 0;
-    char name_[32] = {};                          // inline, no heap (SSO equivalent)
+    std::string name_;                            // SSO handles names ≤22 chars without heap
     UiNode* parent_ = nullptr;
     memory::InlinedVector<UiNode*, 4> children_;  // 4 inline ptrs, heap only for 5+ children
     ComputedRect computedRect_{};

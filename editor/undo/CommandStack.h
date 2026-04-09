@@ -38,9 +38,6 @@ public:
     [[nodiscard]] const char* undoDescription() const;
     [[nodiscard]] const char* redoDescription() const;
 
-    // Clear both undo and redo stacks.
-    void clear();
-
     // Max stack size (configurable).
     void setMaxSize(size_t maxSize);
     [[nodiscard]] size_t maxSize() const;

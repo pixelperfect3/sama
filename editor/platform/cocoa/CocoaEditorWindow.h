@@ -60,16 +60,6 @@ public:
     bool isControlDown() const override;
     bool isOptionDown() const override;
 
-    // --- Native file dialogs ------------------------------------------------
-    std::string showSaveDialog(const char* defaultName, const char* fileExtension) override;
-    std::string showOpenDialog(const char* fileExtension) override;
-
-    // --- Window title -------------------------------------------------------
-    void setWindowTitle(const std::string& title) override;
-
-    // --- Menu action callback -----------------------------------------------
-    void setMenuActionCallback(MenuCallback cb) override;
-
     // --- Viewport-specific dimensions ----------------------------------------
     // These return the size of just the center 3D viewport panel,
     // not the entire window.

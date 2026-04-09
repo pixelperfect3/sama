@@ -72,12 +72,6 @@ const char* CommandStack::redoDescription() const
     return redoStack_.back()->description();
 }
 
-void CommandStack::clear()
-{
-    undoStack_.clear();
-    redoStack_.clear();
-}
-
 void CommandStack::setMaxSize(size_t maxSize)
 {
     maxSize_ = maxSize;

@@ -1258,13 +1258,10 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(sama_editor PRIVATE
         engine_scene
         engine_memory
-        engine_assets
-        engine_threading
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
         "-framework MetalKit"
-        "-framework UniformTypeIdentifiers"
     )
     target_compile_definitions(sama_editor PRIVATE
         GLM_FORCE_INTRINSICS
