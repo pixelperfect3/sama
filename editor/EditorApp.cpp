@@ -714,7 +714,12 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         glm::vec3 euler = glm::degrees(glm::eulerAngles(tc->rotation));
                         euler[fieldId - 103] = value;
                         glm::vec3 rad = glm::radians(euler);
-                        tc->rotation = glm::quat(rad);
+                        // Build quaternion from individual axis rotations to avoid
+                        // gimbal lock issues with glm::quat(vec3).
+                        tc->rotation = glm::quat(glm::vec3(rad.x, 0, 0)) *
+                                       glm::quat(glm::vec3(0, rad.y, 0)) *
+                                       glm::quat(glm::vec3(0, 0, rad.z));
+                        tc->rotation = glm::normalize(tc->rotation);
                         tc->flags |= 1;
                     }
                     break;
@@ -813,7 +818,9 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 default:
                     break;
             }
-            impl_->propertiesDirty = true;
+            // Don't set propertiesDirty here — rebuilding the panel while the user
+            // is editing fires controlTextDidEndEditing on the old field, causing a
+            // re-entrant callback loop that corrupts entity state.
         });
 
     // Wire native properties view color-changed callback.
@@ -834,7 +841,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         mat->albedo = {r, g, b, mat->albedo.w};
                 }
             }
-            impl_->propertiesDirty = true;
+            // Don't set propertiesDirty — same re-entrancy issue as above.
         });
 
     impl_->hierarchyPanel =
