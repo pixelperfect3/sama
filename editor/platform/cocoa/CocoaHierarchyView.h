@@ -26,6 +26,7 @@ public:
     };
 
     using SelectionCallback = std::function<void(uint64_t entityId)>;
+    using NameChangedCallback = std::function<void(uint64_t entityId, const char* newName)>;
 
     CocoaHierarchyView();
     ~CocoaHierarchyView();
@@ -38,6 +39,9 @@ public:
 
     // Set the callback for when the user clicks a row.
     void setSelectionCallback(SelectionCallback cb);
+
+    // Set the callback for when the user edits an entity name (double-click to edit).
+    void setNameChangedCallback(NameChangedCallback cb);
 
     // Rebuild the table data from the given entity list.
     // Only call when entities actually changed (dirty flag).

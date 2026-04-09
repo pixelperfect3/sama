@@ -6,10 +6,12 @@
 // HierarchyDataSource -- NSTableView data source and delegate.
 // ---------------------------------------------------------------------------
 
-@interface HierarchyTableDelegate : NSObject <NSTableViewDataSource, NSTableViewDelegate>
+@interface HierarchyTableDelegate
+    : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
 @property(nonatomic, strong) NSMutableArray<NSDictionary*>* entities;
 @property(nonatomic, assign) uint64_t selectedEntityId;
 @property(nonatomic, copy) void (^onSelection)(uint64_t);
+@property(nonatomic, copy) void (^onNameChanged)(uint64_t, NSString*);
 @end
 
 @implementation HierarchyTableDelegate
@@ -41,8 +43,26 @@
         cell = [[NSTableCellView alloc] initWithFrame:NSZeroRect];
         cell.identifier = tableColumn.identifier;
 
-        NSTextField* textField = [NSTextField labelWithString:@""];
-        textField.font = [NSFont systemFontOfSize:12.0];
+        NSTextField* textField;
+        bool isNameCol = [tableColumn.identifier isEqualToString:@"name"];
+
+        if (isNameCol)
+        {
+            // Editable text field for entity names — double-click to edit.
+            textField = [[NSTextField alloc] initWithFrame:NSZeroRect];
+            textField.bordered = NO;
+            textField.drawsBackground = NO;
+            textField.editable = YES;
+            textField.delegate = self;
+            textField.font = [NSFont systemFontOfSize:12.0];
+        }
+        else
+        {
+            textField = [NSTextField labelWithString:@""];
+            textField.font = [NSFont monospacedSystemFontOfSize:10.0 weight:NSFontWeightRegular];
+            textField.textColor = [NSColor secondaryLabelColor];
+        }
+
         textField.translatesAutoresizingMaskIntoConstraints = NO;
         [cell addSubview:textField];
         cell.textField = textField;
@@ -59,15 +79,31 @@
     if ([tableColumn.identifier isEqualToString:@"name"])
     {
         cell.textField.stringValue = info[@"name"];
+        cell.textField.tag = row;  // store row index for edit callback
     }
     else if ([tableColumn.identifier isEqualToString:@"tags"])
     {
         cell.textField.stringValue = info[@"tags"];
-        cell.textField.textColor = [NSColor secondaryLabelColor];
-        cell.textField.font = [NSFont monospacedSystemFontOfSize:10.0 weight:NSFontWeightRegular];
     }
 
     return cell;
+}
+
+// Called when the user finishes editing a name field (press Enter or click away).
+- (void)controlTextDidEndEditing:(NSNotification*)notification
+{
+    NSTextField* textField = notification.object;
+    NSInteger row = textField.tag;
+    if (row >= 0 && row < (NSInteger)[_entities count])
+    {
+        NSDictionary* info = _entities[(NSUInteger)row];
+        uint64_t eid = [info[@"entityId"] unsignedLongLongValue];
+        NSString* newName = textField.stringValue;
+        if (_onNameChanged)
+        {
+            _onNameChanged(eid, newName);
+        }
+    }
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification*)notification
@@ -101,6 +137,7 @@ struct CocoaHierarchyView::Impl
     NSTableView* tableView = nil;
     HierarchyTableDelegate* delegate = nil;
     SelectionCallback selectionCallback;
+    NameChangedCallback nameChangedCallback;
     bool suppressSelectionCallback = false;
 };
 
@@ -178,6 +215,18 @@ void* CocoaHierarchyView::nativeView() const
 void CocoaHierarchyView::setSelectionCallback(SelectionCallback cb)
 {
     impl_->selectionCallback = std::move(cb);
+}
+
+void CocoaHierarchyView::setNameChangedCallback(NameChangedCallback cb)
+{
+    impl_->nameChangedCallback = std::move(cb);
+    auto* rawImpl = impl_.get();
+    impl_->delegate.onNameChanged = ^(uint64_t entityId, NSString* newName) {
+      if (rawImpl && rawImpl->nameChangedCallback)
+      {
+          rawImpl->nameChangedCallback(entityId, [newName UTF8String]);
+      }
+    };
 }
 
 void CocoaHierarchyView::setEntities(const std::vector<EntityInfo>& entities)

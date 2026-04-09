@@ -639,6 +639,26 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             impl_->propertiesDirty = true;
         });
 
+    // Wire name editing in the hierarchy panel to update NameComponent.
+    impl_->window->hierarchyView()->setNameChangedCallback(
+        [this](uint64_t entityId, const char* newName)
+        {
+            auto eid = static_cast<EntityID>(entityId);
+            auto* nc = impl_->registry.get<engine::scene::NameComponent>(eid);
+            if (nc)
+            {
+                nc->name = newName;
+            }
+            else
+            {
+                impl_->registry.emplace<engine::scene::NameComponent>(
+                    eid, engine::scene::NameComponent{newName});
+            }
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
+            EditorLog::instance().info((std::string("Renamed entity to: ") + newName).c_str());
+        });
+
     // Wire selection change to mark properties dirty.
     impl_->editorState.setSelectionChangedCallback(
         [this]()
