@@ -34,6 +34,10 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/assets/GltfAsset.h"
+#include "engine/assets/GltfLoader.h"
+#include "engine/assets/GltfSceneSpawner.h"
+#include "engine/assets/ObjLoader.h"
 #include "engine/assets/StdFileSystem.h"
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
@@ -882,6 +886,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->fileSystem = std::make_unique<engine::assets::StdFileSystem>(".");
     impl_->assetManager =
         std::make_unique<engine::assets::AssetManager>(*impl_->threadPool, *impl_->fileSystem);
+    impl_->assetManager->registerLoader(std::make_unique<engine::assets::GltfLoader>());
+    impl_->assetManager->registerLoader(std::make_unique<engine::assets::ObjLoader>());
 
     // -- Scene serializer -----------------------------------------------------
     impl_->sceneSerializer.registerEngineComponents();
@@ -1247,6 +1253,83 @@ void EditorApp::run()
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
             }
+            else if (action == "import_asset")
+            {
+                std::string path = impl_->window->showImportDialog();
+                if (!path.empty())
+                {
+                    auto handle = impl_->assetManager->load<engine::assets::GltfAsset>(path);
+
+                    // Synchronous wait: pump uploads until the asset is ready.
+                    while (impl_->assetManager->state(handle) ==
+                           engine::assets::AssetState::Loading)
+                    {
+                        impl_->assetManager->processUploads();
+                    }
+
+                    if (impl_->assetManager->state(handle) == engine::assets::AssetState::Ready)
+                    {
+                        const auto* asset =
+                            impl_->assetManager->get<engine::assets::GltfAsset>(handle);
+
+                        // Record entity count before spawn to find new entities.
+                        std::vector<EntityID> entitiesBefore;
+                        impl_->registry.forEachEntity([&](EntityID e)
+                                                      { entitiesBefore.push_back(e); });
+
+                        engine::assets::GltfSceneSpawner::spawn(*asset, impl_->registry,
+                                                                impl_->resources);
+
+                        // Find newly spawned entities and add NameComponents.
+                        std::vector<EntityID> newEntities;
+                        impl_->registry.forEachEntity(
+                            [&](EntityID e)
+                            {
+                                if (std::find(entitiesBefore.begin(), entitiesBefore.end(), e) ==
+                                    entitiesBefore.end())
+                                {
+                                    newEntities.push_back(e);
+                                }
+                            });
+
+                        // Derive a display name from the file path.
+                        std::string filename = path.substr(path.find_last_of('/') + 1);
+                        for (size_t i = 0; i < newEntities.size(); ++i)
+                        {
+                            if (!impl_->registry.has<engine::scene::NameComponent>(newEntities[i]))
+                            {
+                                std::string name = (newEntities.size() == 1)
+                                                       ? filename
+                                                       : filename + " [" + std::to_string(i) + "]";
+                                impl_->registry.emplace<engine::scene::NameComponent>(
+                                    newEntities[i], engine::scene::NameComponent{name});
+                            }
+                        }
+
+                        // Select the first spawned entity.
+                        if (!newEntities.empty())
+                        {
+                            impl_->editorState.clearSelection();
+                            impl_->editorState.select(newEntities[0]);
+                        }
+
+                        char buf[256];
+                        snprintf(buf, sizeof(buf), "Imported %s (%zu entities)", filename.c_str(),
+                                 newEntities.size());
+                        EditorLog::instance().info(buf);
+                    }
+                    else
+                    {
+                        const auto& err = impl_->assetManager->error(handle);
+                        char buf[512];
+                        snprintf(buf, sizeof(buf), "Import failed: %s", err.c_str());
+                        EditorLog::instance().error(buf);
+                    }
+
+                    impl_->hierarchyDirty = true;
+                    impl_->propertiesDirty = true;
+                }
+            }
             impl_->pendingMenuAction.clear();
         }
 
@@ -1357,6 +1440,12 @@ void EditorApp::run()
             EditorLog::instance().info("Created new entity");
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+        }
+
+        // Cmd+I = import 3D asset
+        if (impl_->window->isKeyPressed('I') && impl_->window->isCommandDown())
+        {
+            impl_->pendingMenuAction = "import_asset";
         }
 
         // Delete/Backspace = delete selected entity

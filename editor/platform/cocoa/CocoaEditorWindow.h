@@ -62,6 +62,7 @@ public:
 
     std::string showSaveDialog(const char* defaultName, const char* extension) override;
     std::string showOpenDialog(const char* extension) override;
+    std::string showImportDialog() override;
     void setWindowTitle(const char* title) override;
 
     // --- Viewport-specific dimensions ----------------------------------------

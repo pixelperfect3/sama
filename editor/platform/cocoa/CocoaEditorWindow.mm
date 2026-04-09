@@ -348,6 +348,9 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 10:
             s_menuActionCallback("create_light");
             break;
+        case 11:
+            s_menuActionCallback("import_asset");
+            break;
         default:
             break;
     }
@@ -541,6 +544,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
             addItem(fileMenu, @"New Scene", @"n", 1);
             addItem(fileMenu, @"Open Scene...", @"o", 2);
+            addItem(fileMenu, @"Import Asset...", @"i", 11);
             [fileMenu addItem:[NSMenuItem separatorItem]];
             addItem(fileMenu, @"Save Scene", @"s", 3);
             NSMenuItem* saveAs = addItem(fileMenu, @"Save Scene As...", @"S", 4);
@@ -724,24 +728,22 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         // regardless of which view has focus (e.g., Delete when hierarchy
         // panel's NSTableView is focused).
         EditorMetalView* metalViewRef = impl_->metalView;
-        impl_->keyMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
-                                                                 handler:^NSEvent*(NSEvent* event) {
-                                                                   uint8_t code =
-                                                                       mapKeyCode([event keyCode]);
-                                                                   if (code != 0)
-                                                                   {
-                                                                       metalViewRef
-                                                                           ->keyPressed_[code] = YES;
-                                                                   }
-                                                                   // Update modifiers.
-                                                                   NSEventModifierFlags mods =
-                                                                       [event modifierFlags];
-                                                                   metalViewRef->modCommand_ =
-                                                                       (mods & NSEventModifierFlagCommand) != 0;
-                                                                   metalViewRef->modShift_ =
-                                                                       (mods & NSEventModifierFlagShift) != 0;
-                                                                   return event;  // pass through
-                                                                 }];
+        impl_->keyMonitor = [NSEvent
+            addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                         handler:^NSEvent*(NSEvent* event) {
+                                           uint8_t code = mapKeyCode([event keyCode]);
+                                           if (code != 0)
+                                           {
+                                               metalViewRef->keyPressed_[code] = YES;
+                                           }
+                                           // Update modifiers.
+                                           NSEventModifierFlags mods = [event modifierFlags];
+                                           metalViewRef->modCommand_ =
+                                               (mods & NSEventModifierFlagCommand) != 0;
+                                           metalViewRef->modShift_ =
+                                               (mods & NSEventModifierFlagShift) != 0;
+                                           return event;  // pass through
+                                         }];
 
         return true;
     }
@@ -1035,6 +1037,26 @@ std::string CocoaEditorWindow::showOpenDialog(const char* extension)
     {
         NSOpenPanel* panel = [NSOpenPanel openPanel];
         panel.allowedContentTypes = @[ [UTType typeWithFilenameExtension:@(extension)] ];
+        panel.allowsMultipleSelection = NO;
+        if ([panel runModal] == NSModalResponseOK)
+        {
+            return std::string([[panel.URLs[0] path] UTF8String]);
+        }
+        return {};
+    }
+}
+
+std::string CocoaEditorWindow::showImportDialog()
+{
+    @autoreleasepool
+    {
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        panel.title = @"Import 3D Asset";
+        panel.allowedContentTypes = @[
+            [UTType typeWithFilenameExtension:@"glb"],
+            [UTType typeWithFilenameExtension:@"gltf"],
+            [UTType typeWithFilenameExtension:@"obj"],
+        ];
         panel.allowsMultipleSelection = NO;
         if ([panel runModal] == NSModalResponseOK)
         {

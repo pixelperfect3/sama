@@ -56,6 +56,9 @@ public:
     virtual std::string showSaveDialog(const char* defaultName, const char* extension) = 0;
     virtual std::string showOpenDialog(const char* extension) = 0;
 
+    // Import dialog for 3D assets (glTF/GLB, OBJ). Returns empty string if cancelled.
+    virtual std::string showImportDialog() = 0;
+
     // Window title.
     virtual void setWindowTitle(const char* title) = 0;
 };
