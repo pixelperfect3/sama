@@ -672,6 +672,171 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             }
         });
 
+    // Wire native properties view value-changed callback.
+    impl_->window->propertiesView()->setValueChangedCallback(
+        [this](int fieldId, float value)
+        {
+            EntityID entity = impl_->editorState.primarySelection();
+            if (entity == INVALID_ENTITY)
+                return;
+
+            auto* tc = impl_->registry.get<TransformComponent>(entity);
+            switch (fieldId)
+            {
+                // Position X/Y/Z
+                case 100:
+                    if (tc)
+                    {
+                        tc->position.x = value;
+                        tc->flags |= 1;
+                    }
+                    break;
+                case 101:
+                    if (tc)
+                    {
+                        tc->position.y = value;
+                        tc->flags |= 1;
+                    }
+                    break;
+                case 102:
+                    if (tc)
+                    {
+                        tc->position.z = value;
+                        tc->flags |= 1;
+                    }
+                    break;
+                // Rotation X/Y/Z (euler degrees -> quaternion)
+                case 103:
+                case 104:
+                case 105:
+                    if (tc)
+                    {
+                        glm::vec3 euler = glm::degrees(glm::eulerAngles(tc->rotation));
+                        euler[fieldId - 103] = value;
+                        glm::vec3 rad = glm::radians(euler);
+                        tc->rotation = glm::quat(rad);
+                        tc->flags |= 1;
+                    }
+                    break;
+                // Scale X/Y/Z
+                case 106:
+                    if (tc)
+                    {
+                        tc->scale.x = value;
+                        tc->flags |= 1;
+                    }
+                    break;
+                case 107:
+                    if (tc)
+                    {
+                        tc->scale.y = value;
+                        tc->flags |= 1;
+                    }
+                    break;
+                case 108:
+                    if (tc)
+                    {
+                        tc->scale.z = value;
+                        tc->flags |= 1;
+                    }
+                    break;
+                // Material roughness
+                case 201:
+                {
+                    auto* mc = impl_->registry.get<MaterialComponent>(entity);
+                    if (mc)
+                    {
+                        Material* mat = impl_->resources.getMaterialMut(mc->material);
+                        if (mat)
+                            mat->roughness = value;
+                    }
+                    break;
+                }
+                // Material metallic
+                case 202:
+                {
+                    auto* mc = impl_->registry.get<MaterialComponent>(entity);
+                    if (mc)
+                    {
+                        Material* mat = impl_->resources.getMaterialMut(mc->material);
+                        if (mat)
+                            mat->metallic = value;
+                    }
+                    break;
+                }
+                // Material emissive scale
+                case 203:
+                {
+                    auto* mc = impl_->registry.get<MaterialComponent>(entity);
+                    if (mc)
+                    {
+                        Material* mat = impl_->resources.getMaterialMut(mc->material);
+                        if (mat)
+                            mat->emissiveScale = value;
+                    }
+                    break;
+                }
+                // Directional light direction X/Y/Z
+                case 300:
+                case 301:
+                case 302:
+                {
+                    auto* dl = impl_->registry.get<DirectionalLightComponent>(entity);
+                    if (dl)
+                        (&dl->direction.x)[fieldId - 300] = value;
+                    break;
+                }
+                // Directional light intensity
+                case 303:
+                {
+                    auto* dl = impl_->registry.get<DirectionalLightComponent>(entity);
+                    if (dl)
+                        dl->intensity = value;
+                    break;
+                }
+                // Point light intensity
+                case 400:
+                {
+                    auto* pl = impl_->registry.get<PointLightComponent>(entity);
+                    if (pl)
+                        pl->intensity = value;
+                    break;
+                }
+                // Point light radius
+                case 401:
+                {
+                    auto* pl = impl_->registry.get<PointLightComponent>(entity);
+                    if (pl)
+                        pl->radius = value;
+                    break;
+                }
+                default:
+                    break;
+            }
+            impl_->propertiesDirty = true;
+        });
+
+    // Wire native properties view color-changed callback.
+    impl_->window->propertiesView()->setColorChangedCallback(
+        [this](int fieldId, float r, float g, float b)
+        {
+            EntityID entity = impl_->editorState.primarySelection();
+            if (entity == INVALID_ENTITY)
+                return;
+
+            if (fieldId == 200)
+            {
+                auto* mc = impl_->registry.get<MaterialComponent>(entity);
+                if (mc)
+                {
+                    Material* mat = impl_->resources.getMaterialMut(mc->material);
+                    if (mat)
+                        mat->albedo = {r, g, b, mat->albedo.w};
+                }
+            }
+            impl_->propertiesDirty = true;
+        });
+
     impl_->hierarchyPanel =
         std::make_unique<HierarchyPanel>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->hierarchyPanel->init();

@@ -16,6 +16,68 @@
 @end
 
 // ---------------------------------------------------------------------------
+// PropertiesFieldDelegate -- handles text field editing & slider/color changes.
+// ---------------------------------------------------------------------------
+
+@interface PropertiesFieldDelegate : NSObject <NSTextFieldDelegate>
+@property(nonatomic, copy) void (^onValueChanged)(int fieldId, float newValue);
+@property(nonatomic, copy) void (^onColorChanged)(int fieldId, float r, float g, float b);
+@end
+
+@implementation PropertiesFieldDelegate
+
+- (void)controlTextDidEndEditing:(NSNotification*)notification
+{
+    NSTextField* field = notification.object;
+    int fieldId = (int)field.tag;
+    float value = field.floatValue;
+    if (_onValueChanged)
+    {
+        _onValueChanged(fieldId, value);
+    }
+}
+
+- (void)sliderChanged:(NSSlider*)sender
+{
+    int fieldId = (int)sender.tag;
+    float value = (float)sender.doubleValue;
+    if (_onValueChanged)
+    {
+        _onValueChanged(fieldId, value);
+    }
+
+    // Update the adjacent value label (tag = fieldId + 10000).
+    NSStackView* row = (NSStackView*)sender.superview;
+    if ([row isKindOfClass:[NSStackView class]])
+    {
+        for (NSView* sub in row.arrangedSubviews)
+        {
+            if (sub.tag == fieldId + 10000 && [sub isKindOfClass:[NSTextField class]])
+            {
+                ((NSTextField*)sub).stringValue = [NSString stringWithFormat:@"%.2f", value];
+                break;
+            }
+        }
+    }
+}
+
+- (void)colorWellChanged:(NSColorWell*)sender
+{
+    int fieldId = (int)sender.tag;
+    NSColor* rgb = [sender.color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!rgb)
+        rgb = sender.color;
+    CGFloat r, g, b, a;
+    [rgb getRed:&r green:&g blue:&b alpha:&a];
+    if (_onColorChanged)
+    {
+        _onColorChanged(fieldId, (float)r, (float)g, (float)b);
+    }
+}
+
+@end
+
+// ---------------------------------------------------------------------------
 // Helper: create a label NSTextField.
 // ---------------------------------------------------------------------------
 
@@ -73,6 +135,7 @@ struct CocoaPropertiesView::Impl
     NSScrollView* scrollView = nil;
     NSStackView* stackView = nil;
     NSTextField* statusLabel = nil;
+    PropertiesFieldDelegate* delegate = nil;
     ValueChangedCallback valueChangedCallback;
     ColorChangedCallback colorChangedCallback;
     std::vector<NSView*> fieldViews;  // Retains views for tag lookup
@@ -108,6 +171,9 @@ CocoaPropertiesView::CocoaPropertiesView() : impl_(std::make_unique<Impl>())
 
         impl_->scrollView.documentView = container;
 
+        // Create the delegate that handles field edits.
+        impl_->delegate = [[PropertiesFieldDelegate alloc] init];
+
         // Status label shown when nothing is selected.
         impl_->statusLabel = makeLabel(@"No entity selected", 12.0);
         [impl_->stackView addArrangedSubview:impl_->statusLabel];
@@ -121,6 +187,7 @@ CocoaPropertiesView::~CocoaPropertiesView()
         impl_->scrollView = nil;
         impl_->stackView = nil;
         impl_->statusLabel = nil;
+        impl_->delegate = nil;
         impl_->fieldViews.clear();
     }
 }
@@ -133,11 +200,21 @@ void* CocoaPropertiesView::nativeView() const
 void CocoaPropertiesView::setValueChangedCallback(ValueChangedCallback cb)
 {
     impl_->valueChangedCallback = std::move(cb);
+    auto& storedCb = impl_->valueChangedCallback;
+    impl_->delegate.onValueChanged = ^(int fieldId, float newValue) {
+      if (storedCb)
+          storedCb(fieldId, newValue);
+    };
 }
 
 void CocoaPropertiesView::setColorChangedCallback(ColorChangedCallback cb)
 {
     impl_->colorChangedCallback = std::move(cb);
+    auto& storedCb = impl_->colorChangedCallback;
+    impl_->delegate.onColorChanged = ^(int fieldId, float r, float g, float b) {
+      if (storedCb)
+          storedCb(fieldId, r, g, b);
+    };
 }
 
 void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields)
@@ -192,6 +269,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
 
                     NSTextField* valueField = makeEditableField(field.value, field.fieldId, nil);
                     valueField.tag = field.fieldId;
+                    valueField.delegate = impl_->delegate;
 
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:valueField];
@@ -213,10 +291,11 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     NSSlider* slider = [NSSlider sliderWithValue:field.value
                                                         minValue:field.minVal
                                                         maxValue:field.maxVal
-                                                          target:nil
-                                                          action:nil];
+                                                          target:impl_->delegate
+                                                          action:@selector(sliderChanged:)];
                     slider.translatesAutoresizingMaskIntoConstraints = NO;
                     slider.tag = field.fieldId;
+                    slider.continuous = YES;
 
                     NSTextField* valueLabel =
                         makeLabel([NSString stringWithFormat:@"%.2f", field.value], 10.0);
@@ -255,6 +334,8 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                                                       alpha:1.0];
                     colorWell.tag = field.fieldId;
                     colorWell.translatesAutoresizingMaskIntoConstraints = NO;
+                    colorWell.target = impl_->delegate;
+                    colorWell.action = @selector(colorWellChanged:);
 
                     NSString* colorStr =
                         [NSString stringWithFormat:@"(%.2f, %.2f, %.2f)", field.color[0],
