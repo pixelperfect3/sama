@@ -213,13 +213,49 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
         hoveredAxis_ = GizmoAxis::None;
         float bestT = 1e30f;
 
-        for (int i = 0; i < 3; ++i)
+        if (mode_ == GizmoMode::Rotate)
         {
-            float t = rayAxisTest(rayO, rayD, gizmoPos_, axes[i], scaledLength, scaledHitRadius);
-            if (t > 0.0f && t < bestT)
+            // For rotation, test ray against a circle (ring) in each axis plane.
+            // The circle lies in the plane perpendicular to the axis, centered
+            // at gizmoPos_, with radius = scaledLength * 0.8 (matches renderer).
+            float ringRadius = scaledLength * 0.8f;
+            float ringTolerance = scaledHitRadius * 2.0f;  // generous hit zone
+
+            for (int i = 0; i < 3; ++i)
             {
-                bestT = t;
-                hoveredAxis_ = static_cast<GizmoAxis>(i + 1);
+                // Intersect ray with the plane perpendicular to axes[i]
+                // passing through gizmoPos_.
+                float denom = glm::dot(rayD, axes[i]);
+                if (std::abs(denom) < 1e-6f)
+                    continue;  // ray parallel to plane
+
+                float tPlane = glm::dot(gizmoPos_ - rayO, axes[i]) / denom;
+                if (tPlane < 0.0f)
+                    continue;  // behind camera
+
+                glm::vec3 hitPoint = rayO + rayD * tPlane;
+                float distFromCenter = glm::length(hitPoint - gizmoPos_);
+
+                // Check if the hit is near the ring (within tolerance).
+                if (std::abs(distFromCenter - ringRadius) < ringTolerance && tPlane < bestT)
+                {
+                    bestT = tPlane;
+                    hoveredAxis_ = static_cast<GizmoAxis>(i + 1);
+                }
+            }
+        }
+        else
+        {
+            // Translate/Scale: test ray against straight line axes.
+            for (int i = 0; i < 3; ++i)
+            {
+                float t =
+                    rayAxisTest(rayO, rayD, gizmoPos_, axes[i], scaledLength, scaledHitRadius);
+                if (t > 0.0f && t < bestT)
+                {
+                    bestT = t;
+                    hoveredAxis_ = static_cast<GizmoAxis>(i + 1);
+                }
             }
         }
 

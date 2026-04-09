@@ -23,6 +23,8 @@
     BOOL modOption_;
 }
 @property(nonatomic, assign) double scrollDeltaY;
+@property(nonatomic, assign) BOOL leftMouseHeld;
+@property(nonatomic, assign) BOOL rightMouseHeld;
 - (BOOL)wasKeyPressed:(uint8_t)keyCode;
 - (BOOL)isCommandDown;
 - (BOOL)isShiftDown;
@@ -61,20 +63,32 @@
     _scrollDeltaY += [event scrollingDeltaY];
 }
 
-// Suppress context menu on right-click so right-drag works for camera orbit.
+// Track mouse button state via events — more reliable than pressedMouseButtons
+// on trackpads and with system right-click settings.
+- (void)mouseDown:(NSEvent*)event
+{
+    _leftMouseHeld = YES;
+}
+
+- (void)mouseUp:(NSEvent*)event
+{
+    _leftMouseHeld = NO;
+}
+
 - (void)rightMouseDown:(NSEvent*)event
 {
-    // Intentionally empty — don't call super, which would show a context menu.
+    _rightMouseHeld = YES;
+    // Don't call super — suppresses context menu.
 }
 
 - (void)rightMouseDragged:(NSEvent*)event
 {
-    // Intentionally empty — mouse delta is polled via pressedMouseButtons.
+    // No-op — state tracked by rightMouseHeld.
 }
 
 - (void)rightMouseUp:(NSEvent*)event
 {
-    // Intentionally empty.
+    _rightMouseHeld = NO;
 }
 
 // Suppress context menu from menu key.
@@ -795,10 +809,10 @@ void CocoaEditorWindow::pollEvents()
             impl_->deltaY = impl_->mouseY - impl_->prevMouseY;
         }
 
-        // Mouse buttons.
-        NSUInteger buttons = [NSEvent pressedMouseButtons];
-        impl_->leftDown = (buttons & (1 << 0)) != 0;
-        impl_->rightDown = (buttons & (1 << 1)) != 0;
+        // Mouse buttons — tracked via NSView event handlers for reliability
+        // on trackpads and with system right-click settings.
+        impl_->leftDown = impl_->metalView.leftMouseHeld;
+        impl_->rightDown = impl_->metalView.rightMouseHeld;
 
         // Scroll delta (accumulated by the metal view, consumed here).
         impl_->scrollY = impl_->metalView.scrollDeltaY;
