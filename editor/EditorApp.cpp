@@ -61,6 +61,11 @@ using namespace engine::rendering;
 namespace engine::editor
 {
 
+// Static pointer to the pending menu action string in EditorApp::Impl.
+// Set during init(); the menu callback writes the action name here,
+// and the run loop reads it each frame.
+static std::string* s_pendingMenuAction = nullptr;
+
 // ---------------------------------------------------------------------------
 // Impl
 // ---------------------------------------------------------------------------
@@ -152,6 +157,9 @@ struct EditorApp::Impl
     bool propertiesDirty = true;
     size_t lastLogCount = 0;
     EntityID lastSelectedEntity = INVALID_ENTITY;
+
+    // Menu action pending from native menu click (set by static callback).
+    std::string pendingMenuAction;
 
     // Build entity info list for the hierarchy panel.
     void refreshHierarchyView();
@@ -702,6 +710,17 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->hierarchyDirty = true;
     impl_->propertiesDirty = true;
 
+    // Wire native menu bar to EditorApp via static callback.
+    s_pendingMenuAction = &impl_->pendingMenuAction;
+    impl_->window->setMenuCallback(
+        [](const char* action)
+        {
+            if (s_pendingMenuAction)
+            {
+                *s_pendingMenuAction = action;
+            }
+        });
+
     impl_->initialized = true;
     return true;
 }
@@ -890,6 +909,153 @@ void EditorApp::run()
                     impl_->propertiesDirty = true;
                 }
             }
+        }
+
+        // -- Process menu actions (from native menu bar clicks) ---------------
+        if (!impl_->pendingMenuAction.empty())
+        {
+            const auto& action = impl_->pendingMenuAction;
+            if (action == "save_scene")
+            {
+                impl_->window->isKeyPressed('S');  // trigger same path below
+                // Direct save: reuse the Cmd+S logic inline.
+            }
+            if (action == "save_scene_as" || action == "save_scene")
+            {
+                std::string path;
+                if (action == "save_scene_as" || impl_->currentScenePath.empty())
+                {
+                    path = impl_->window->showSaveDialog("scene.json", "json");
+                }
+                else
+                {
+                    path = impl_->currentScenePath;
+                }
+                if (!path.empty())
+                {
+                    if (impl_->sceneSerializer.saveScene(impl_->registry, impl_->resources,
+                                                         path.c_str()))
+                    {
+                        impl_->currentScenePath = path;
+                        char buf[256];
+                        snprintf(buf, sizeof(buf), "Scene saved to %s", path.c_str());
+                        EditorLog::instance().info(buf);
+                        impl_->window->setWindowTitle(
+                            ("Sama Editor — " + path.substr(path.find_last_of('/') + 1)).c_str());
+                    }
+                }
+            }
+            else if (action == "open_scene")
+            {
+                std::string path = impl_->window->showOpenDialog("json");
+                if (!path.empty())
+                {
+                    // Clear existing entities.
+                    std::vector<EntityID> toDelete;
+                    impl_->registry.forEachEntity([&](EntityID e) { toDelete.push_back(e); });
+                    for (auto e : toDelete)
+                    {
+                        impl_->registry.destroyEntity(e);
+                    }
+                    impl_->sceneSerializer.loadScene(path.c_str(), impl_->registry,
+                                                     impl_->resources, *impl_->assetManager);
+                    impl_->currentScenePath = path;
+                    impl_->hierarchyDirty = true;
+                    impl_->propertiesDirty = true;
+                    impl_->commandStack.clear();
+                    EditorLog::instance().info(
+                        ("Opened " + path.substr(path.find_last_of('/') + 1)).c_str());
+                    impl_->window->setWindowTitle(
+                        ("Sama Editor — " + path.substr(path.find_last_of('/') + 1)).c_str());
+                }
+            }
+            else if (action == "new_scene")
+            {
+                std::vector<EntityID> toDelete;
+                impl_->registry.forEachEntity([&](EntityID e) { toDelete.push_back(e); });
+                for (auto e : toDelete)
+                {
+                    impl_->registry.destroyEntity(e);
+                }
+                impl_->currentScenePath.clear();
+                impl_->commandStack.clear();
+                impl_->editorState.clearSelection();
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+                impl_->window->setWindowTitle("Sama Editor");
+                EditorLog::instance().info("New scene");
+            }
+            else if (action == "undo")
+            {
+                impl_->commandStack.undo();
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+            else if (action == "redo")
+            {
+                impl_->commandStack.redo();
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+            else if (action == "delete")
+            {
+                EntityID selE = impl_->editorState.primarySelection();
+                if (selE != INVALID_ENTITY)
+                {
+                    auto cmd = std::make_unique<DeleteEntityCommand>(impl_->registry,
+                                                                     impl_->editorState, selE);
+                    impl_->commandStack.execute(std::move(cmd));
+                    impl_->hierarchyDirty = true;
+                    impl_->propertiesDirty = true;
+                }
+            }
+            else if (action == "create_empty")
+            {
+                auto cmd =
+                    std::make_unique<CreateEntityCommand>(impl_->registry, impl_->editorState);
+                impl_->commandStack.execute(std::move(cmd));
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+            else if (action == "create_cube")
+            {
+                auto cmd =
+                    std::make_unique<CreateEntityCommand>(impl_->registry, impl_->editorState);
+                impl_->commandStack.execute(std::move(cmd));
+                // Add mesh + material to the new entity.
+                EntityID newE = impl_->editorState.primarySelection();
+                if (newE != INVALID_ENTITY)
+                {
+                    uint32_t meshId = impl_->resources.addMesh(buildMesh(makeCubeMeshData()));
+                    impl_->registry.emplace<MeshComponent>(newE, MeshComponent{meshId});
+                    Material mat{};
+                    mat.albedo = {0.6f, 0.6f, 0.6f, 1.0f};
+                    mat.roughness = 0.5f;
+                    uint32_t matId = impl_->resources.addMaterial(mat);
+                    impl_->registry.emplace<MaterialComponent>(newE, MaterialComponent{matId});
+                    impl_->registry.emplace<VisibleTag>(newE);
+                }
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+            else if (action == "create_light")
+            {
+                auto cmd =
+                    std::make_unique<CreateEntityCommand>(impl_->registry, impl_->editorState);
+                impl_->commandStack.execute(std::move(cmd));
+                EntityID newE = impl_->editorState.primarySelection();
+                if (newE != INVALID_ENTITY)
+                {
+                    DirectionalLightComponent dl{};
+                    dl.direction = {0.4f, -0.7f, 0.5f};
+                    dl.color = {1.0f, 0.95f, 0.85f};
+                    dl.intensity = 6.0f;
+                    impl_->registry.emplace<DirectionalLightComponent>(newE, dl);
+                }
+                impl_->hierarchyDirty = true;
+                impl_->propertiesDirty = true;
+            }
+            impl_->pendingMenuAction.clear();
         }
 
         // -- Undo/Redo keyboard shortcuts -----------------------------------
