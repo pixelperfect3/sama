@@ -25,6 +25,8 @@
 @property(nonatomic, assign) double scrollDeltaY;
 @property(nonatomic, assign) BOOL leftMouseHeld;
 @property(nonatomic, assign) BOOL rightMouseHeld;
+@property(nonatomic, assign) double mouseMoveAccumX;
+@property(nonatomic, assign) double mouseMoveAccumY;
 - (BOOL)wasKeyPressed:(uint8_t)keyCode;
 - (BOOL)isCommandDown;
 - (BOOL)isShiftDown;
@@ -75,6 +77,12 @@
     _leftMouseHeld = NO;
 }
 
+- (void)mouseDragged:(NSEvent*)event
+{
+    _mouseMoveAccumX += [event deltaX];
+    _mouseMoveAccumY += [event deltaY];
+}
+
 - (void)rightMouseDown:(NSEvent*)event
 {
     _rightMouseHeld = YES;
@@ -83,7 +91,8 @@
 
 - (void)rightMouseDragged:(NSEvent*)event
 {
-    // No-op — state tracked by rightMouseHeld.
+    _mouseMoveAccumX += [event deltaX];
+    _mouseMoveAccumY += [event deltaY];
 }
 
 - (void)rightMouseUp:(NSEvent*)event
@@ -453,8 +462,6 @@ struct CocoaEditorWindow::Impl
     // Mouse state
     double mouseX = 0.0;
     double mouseY = 0.0;
-    double prevMouseX = 0.0;
-    double prevMouseY = 0.0;
     double deltaX = 0.0;
     double deltaY = 0.0;
     double scrollY = 0.0;
@@ -792,22 +799,16 @@ void CocoaEditorWindow::pollEvents()
         double mx = vpLocal.x;
         double my = vpFrame.size.height - vpLocal.y;
 
-        impl_->prevMouseX = impl_->mouseX;
-        impl_->prevMouseY = impl_->mouseY;
         impl_->mouseX = mx;
         impl_->mouseY = my;
 
-        if (impl_->firstFrame)
-        {
-            impl_->deltaX = 0.0;
-            impl_->deltaY = 0.0;
-            impl_->firstFrame = false;
-        }
-        else
-        {
-            impl_->deltaX = impl_->mouseX - impl_->prevMouseX;
-            impl_->deltaY = impl_->mouseY - impl_->prevMouseY;
-        }
+        // Mouse deltas from event accumulators — more reliable than position
+        // differencing, especially during right-drag where
+        // mouseLocationOutsideOfEventStream may not update.
+        impl_->deltaX = impl_->metalView.mouseMoveAccumX;
+        impl_->deltaY = impl_->metalView.mouseMoveAccumY;
+        impl_->metalView.mouseMoveAccumX = 0.0;
+        impl_->metalView.mouseMoveAccumY = 0.0;
 
         // Mouse buttons — tracked via NSView event handlers for reliability
         // on trackpads and with system right-click settings.
