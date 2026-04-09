@@ -667,14 +667,15 @@ public:
 
     // Identity
     uint32_t id() const noexcept { return id_; }
-    const char* name() const noexcept { return name_.c_str(); }
+    const char* name() const noexcept { return name_; }
 
-    // Tree structure
+    // Tree structure -- UiCanvas owns all nodes via PoolAllocator.
+    // No unique_ptr; raw pointers are safe because parent always outlives children.
     UiNode* parent() const noexcept { return parent_; }
-    std::span<std::unique_ptr<UiNode>> children() noexcept;
+    std::span<UiNode* const> children() const noexcept;
 
-    UiNode& addChild(std::unique_ptr<UiNode> child);
-    std::unique_ptr<UiNode> removeChild(uint32_t childId);
+    void addChild(UiNode* child);       // child allocated from UiCanvas pool
+    void removeChild(uint32_t childId);
 
     // Layout -- anchor + offset model (similar to Unity RectTransform)
     UiAnchor anchor;
@@ -707,11 +708,15 @@ private:
     friend class UiCanvas;
 
     uint32_t id_ = 0;
-    std::string name_;
+    char name_[32] = {};                          // inline, no heap (SSO equivalent)
     UiNode* parent_ = nullptr;
-    std::vector<std::unique_ptr<UiNode>> children_;
+    memory::InlinedVector<UiNode*, 4> children_;  // 4 inline ptrs, heap only for 5+ children
     ComputedRect computedRect_{};
 };
+
+// Ownership: UiCanvas owns a PoolAllocator<UiNode, 256> (or arena).
+// All nodes are allocated from the pool — no per-node new/delete.
+// Canvas destructor resets the pool, freeing all nodes in one shot.
 
 }  // namespace engine::ui
 ```
