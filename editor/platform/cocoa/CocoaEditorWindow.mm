@@ -398,6 +398,72 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         NSString* nsTitle = [NSString stringWithUTF8String:(title ? title : "Sama Editor")];
         [impl_->window setTitle:nsTitle];
 
+        // -- Native menu bar -----------------------------------------------------
+        {
+            NSMenu* menuBar = [[NSMenu alloc] init];
+
+            // App menu (required for Quit to work)
+            NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* appMenu = [[NSMenu alloc] initWithTitle:@"Sama Editor"];
+            [appMenu addItemWithTitle:@"About Sama Editor"
+                               action:@selector(orderFrontStandardAboutPanel:)
+                        keyEquivalent:@""];
+            [appMenu addItem:[NSMenuItem separatorItem]];
+            [appMenu addItemWithTitle:@"Quit Sama Editor"
+                               action:@selector(terminate:)
+                        keyEquivalent:@"q"];
+            appMenuItem.submenu = appMenu;
+            [menuBar addItem:appMenuItem];
+
+            // File menu
+            NSMenuItem* fileMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+            [fileMenu addItemWithTitle:@"New Scene" action:nil keyEquivalent:@"n"];
+            [fileMenu addItemWithTitle:@"Open Scene..." action:nil keyEquivalent:@"o"];
+            [fileMenu addItem:[NSMenuItem separatorItem]];
+            [fileMenu addItemWithTitle:@"Save Scene" action:nil keyEquivalent:@"s"];
+            NSMenuItem* saveAs = [fileMenu addItemWithTitle:@"Save Scene As..."
+                                                     action:nil
+                                              keyEquivalent:@"S"];
+            saveAs.keyEquivalentModifierMask =
+                NSEventModifierFlagCommand | NSEventModifierFlagShift;
+            fileMenuItem.submenu = fileMenu;
+            [menuBar addItem:fileMenuItem];
+
+            // Edit menu
+            NSMenuItem* editMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+            [editMenu addItemWithTitle:@"Undo" action:nil keyEquivalent:@"z"];
+            NSMenuItem* redo = [editMenu addItemWithTitle:@"Redo"
+                                                   action:nil
+                                            keyEquivalent:@"Z"];
+            redo.keyEquivalentModifierMask =
+                NSEventModifierFlagCommand | NSEventModifierFlagShift;
+            [editMenu addItem:[NSMenuItem separatorItem]];
+            [editMenu addItemWithTitle:@"Delete" action:nil keyEquivalent:@""];
+            editMenuItem.submenu = editMenu;
+            [menuBar addItem:editMenuItem];
+
+            // Entity menu
+            NSMenuItem* entityMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* entityMenu = [[NSMenu alloc] initWithTitle:@"Entity"];
+            [entityMenu addItemWithTitle:@"Create Empty" action:nil keyEquivalent:@""];
+            [entityMenu addItemWithTitle:@"Create Cube" action:nil keyEquivalent:@""];
+            [entityMenu addItemWithTitle:@"Create Light" action:nil keyEquivalent:@""];
+            entityMenuItem.submenu = entityMenu;
+            [menuBar addItem:entityMenuItem];
+
+            // View menu
+            NSMenuItem* viewMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+            [viewMenu addItemWithTitle:@"Toggle Console" action:nil keyEquivalent:@""];
+            [viewMenu addItemWithTitle:@"Toggle Resources" action:nil keyEquivalent:@""];
+            viewMenuItem.submenu = viewMenu;
+            [menuBar addItem:viewMenuItem];
+
+            [NSApp setMainMenu:menuBar];
+        }
+
         impl_->windowWidth = w;
         impl_->windowHeight = h;
 
