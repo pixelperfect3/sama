@@ -25,6 +25,10 @@
 #include "generated/shaders/fs_shadow_glsl.bin.h"
 #include "generated/shaders/fs_shadow_mtl.bin.h"
 #include "generated/shaders/fs_shadow_spv.bin.h"
+#include "generated/shaders/fs_slug_essl.bin.h"
+#include "generated/shaders/fs_slug_glsl.bin.h"
+#include "generated/shaders/fs_slug_mtl.bin.h"
+#include "generated/shaders/fs_slug_spv.bin.h"
 #include "generated/shaders/fs_sprite_essl.bin.h"
 #include "generated/shaders/fs_sprite_glsl.bin.h"
 #include "generated/shaders/fs_sprite_mtl.bin.h"
@@ -53,6 +57,10 @@
 #include "generated/shaders/vs_shadow_skinned_mtl.bin.h"
 #include "generated/shaders/vs_shadow_skinned_spv.bin.h"
 #include "generated/shaders/vs_shadow_spv.bin.h"
+#include "generated/shaders/vs_slug_essl.bin.h"
+#include "generated/shaders/vs_slug_glsl.bin.h"
+#include "generated/shaders/vs_slug_mtl.bin.h"
+#include "generated/shaders/vs_slug_spv.bin.h"
 #include "generated/shaders/vs_sprite_essl.bin.h"
 #include "generated/shaders/vs_sprite_glsl.bin.h"
 #include "generated/shaders/vs_sprite_mtl.bin.h"
@@ -116,6 +124,13 @@ static const bgfx::EmbeddedShader kGizmoShaders[] = {
 static const bgfx::EmbeddedShader kMsdfShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_sprite),
     BGFX_EMBEDDED_SHADER(fs_msdf),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+// Slug text — vector glyphs from packed Bezier curves; own vs + fs.
+static const bgfx::EmbeddedShader kSlugShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_slug),
+    BGFX_EMBEDDED_SHADER(fs_slug),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -290,6 +305,27 @@ bgfx::ProgramHandle loadGizmoProgram()
         return BGFX_INVALID_HANDLE;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kGizmoShaders, renderer, "fs_gizmo");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadSlugProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kSlugShaders, renderer, "vs_slug");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSlugShaders, renderer, "fs_slug");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
