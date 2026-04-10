@@ -371,6 +371,25 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT ANDROID ""     fs_sprite_essl COMPILED_SHADERS)
 
+# Slug — GPU Bezier-curve glyph rendering. Same vertex layout / varyings as
+# sprite, so it shares varying.def.sc. Four platform variants like sprite.
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_slug.sc VERTEX   OSX     metal  vs_slug_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_slug.sc FRAGMENT OSX     metal  fs_slug_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_slug.sc VERTEX   LINUX   spirv  vs_slug_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_slug.sc FRAGMENT LINUX   spirv  fs_slug_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_slug.sc VERTEX   LINUX   120    vs_slug_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_slug.sc FRAGMENT LINUX   120    fs_slug_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_slug.sc VERTEX   ANDROID ""     vs_slug_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_slug.sc FRAGMENT ANDROID ""     fs_slug_essl COMPILED_SHADERS)
+
 # Shadow — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   OSX     metal  vs_shadow_mtl  COMPILED_SHADERS)
@@ -742,6 +761,7 @@ add_executable(engine_tests
     tests/game/TestProjectConfig.cpp
     tests/ui/TestUiNode.cpp
     tests/ui/TestUiLayout.cpp
+    tests/ui/TestSlugFont.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui Catch2::Catch2WithMain)
@@ -932,6 +952,7 @@ add_library(engine_ui STATIC
     engine/ui/UiDrawList.cpp
     engine/ui/UiCanvas.cpp
     engine/ui/UiRenderer.cpp
+    engine/ui/SlugFont.cpp
     engine/ui/widgets/UiPanel.cpp
     engine/ui/widgets/UiImage.cpp
     engine/ui/widgets/UiText.cpp
@@ -941,6 +962,19 @@ add_library(engine_ui STATIC
 )
 target_include_directories(engine_ui PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_ui PUBLIC engine_rendering)
+
+# FreeType2 — TTF parser used by SlugFont (and, in parallel, MsdfFont).
+# We use find_package so Homebrew / system installs are picked up with no
+# network fetch required. When FreeType is not found the Slug backend
+# compiles as a stub (loadFromFile returns false, tests skip).
+find_package(Freetype QUIET)
+if(Freetype_FOUND)
+    target_link_libraries(engine_ui PUBLIC Freetype::Freetype)
+    target_compile_definitions(engine_ui PUBLIC SAMA_HAS_FREETYPE=1)
+else()
+    target_compile_definitions(engine_ui PUBLIC SAMA_HAS_FREETYPE=0)
+    message(STATUS "Freetype not found — SlugFont will compile as a stub")
+endif()
 
 # ===========================================================================
 # Umbrella targets — convenience aggregates for game developers.
