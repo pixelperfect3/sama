@@ -113,7 +113,24 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
 
     canvas_ = std::make_unique<UiCanvas>(screenW_, screenH_);
     uiRenderer_.init();
+
+    // Try to load all three font backends. The bitmap path uses the same
+    // embedded debug atlas as engine::ui::defaultFont() and always succeeds.
+    // MSDF needs JetBrainsMono-Regular-msdf.{json,png} which only exist if
+    // someone ran msdf-atlas-gen — gracefully skipped otherwise. Slug needs
+    // FreeType + JetBrainsMono-Regular.ttf (which IS checked in).
+    fontLoaded_[0] = bitmapFont_.createDebugFont();
+    fontLoaded_[1] = msdfFont_.loadFromFile("assets/fonts/default/JetBrainsMono-Regular-msdf.json",
+                                            "assets/fonts/default/JetBrainsMono-Regular-msdf.png");
+    fontLoaded_[2] = slugFont_.loadFromFile("assets/fonts/default/JetBrainsMono-Regular.ttf", 24.f);
+
+    // Default to bitmap (always loads). cycleFontBackend will skip slots
+    // that didn't load when the user presses F.
+    currentFontIndex_ = 0;
+    currentFont_ = fontLoaded_[0] ? static_cast<engine::ui::IFont*>(&bitmapFont_) : nullptr;
+
     buildMainMenu();
+    applyFontToCanvas();
 }
 
 void UiTestApp::onUpdate(Engine& engine, engine::ecs::Registry& /*registry*/, float dt)
@@ -146,6 +163,13 @@ void UiTestApp::onUpdate(Engine& engine, engine::ecs::Registry& /*registry*/, fl
     else if (input.isKeyPressed(Key::Num4))
     {
         switchScreen(Screen::Inventory);
+    }
+
+    // F = cycle font backend (Bitmap → MSDF → Slug → ...).
+    if (input.isKeyPressed(Key::F))
+    {
+        cycleFontBackend();
+        applyFontToCanvas();
     }
 
     // HUD-specific input.
@@ -307,6 +331,86 @@ void UiTestApp::switchScreen(Screen screen)
         case Screen::Inventory:
             buildInventory();
             break;
+    }
+
+    // Re-apply the active font to every widget the build*() functions just
+    // created — they all leave font=nullptr (default), so we override here.
+    applyFontToCanvas();
+}
+
+// =============================================================================
+// Font backend cycling
+// =============================================================================
+
+void UiTestApp::applyFontToCanvas()
+{
+    if (!canvas_)
+    {
+        return;
+    }
+    // Walk the entire UiNode tree and rewrite font pointers on every text
+    // widget. We rely on dynamic_cast since the canvas pool stores nodes by
+    // base UiNode*.
+    auto walk = [&](auto& self, engine::ui::UiNode* node) -> void
+    {
+        if (!node)
+            return;
+        if (auto* t = dynamic_cast<engine::ui::UiText*>(node))
+        {
+            t->font = currentFont_;
+        }
+        else if (auto* b = dynamic_cast<engine::ui::UiButton*>(node))
+        {
+            b->font = currentFont_;
+        }
+        for (auto* child : node->children())
+        {
+            self(self, child);
+        }
+    };
+    walk(walk, canvas_->root());
+}
+
+void UiTestApp::cycleFontBackend()
+{
+    // Step through the three slots, skipping any that didn't load. If none
+    // loaded (shouldn't happen — bitmap always works), leave currentFont_
+    // as it was.
+    for (int step = 1; step <= 3; ++step)
+    {
+        int next = (currentFontIndex_ + step) % 3;
+        if (fontLoaded_[next])
+        {
+            currentFontIndex_ = next;
+            switch (next)
+            {
+                case 0:
+                    currentFont_ = &bitmapFont_;
+                    break;
+                case 1:
+                    currentFont_ = &msdfFont_;
+                    break;
+                case 2:
+                    currentFont_ = &slugFont_;
+                    break;
+            }
+            return;
+        }
+    }
+}
+
+const char* UiTestApp::fontBackendLabel() const
+{
+    switch (currentFontIndex_)
+    {
+        case 0:
+            return "Bitmap";
+        case 1:
+            return "MSDF";
+        case 2:
+            return "Slug";
+        default:
+            return "?";
     }
 }
 
@@ -1154,13 +1258,21 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
     bgfx::touch(viewId);
 
-    // Emit the screen title as a real UI text command so the BitmapFont
-    // path is exercised end-to-end (was previously drawn via dbgTextPrintf).
+    // Emit the screen title + active font backend label as a real UI text
+    // command so whichever backend the user picked is exercised end-to-end.
     static const char* screenNames[] = {"Main Menu", "HUD", "Settings", "Inventory"};
-    char titleBuf[64];
-    std::snprintf(titleBuf, sizeof(titleBuf), "UI Test - %s",
-                  screenNames[static_cast<int>(currentScreen_)]);
-    canvas_->drawList().drawText({12.f, 6.f}, titleBuf, {1.f, 1.f, 1.f, 1.f});
+    char titleBuf[96];
+    std::snprintf(titleBuf, sizeof(titleBuf), "UI Test - %s   [Font: %s]   (F=cycle)",
+                  screenNames[static_cast<int>(currentScreen_)], fontBackendLabel());
+    canvas_->drawList().drawText({12.f, 6.f}, titleBuf, {1.f, 1.f, 1.f, 1.f}, currentFont_, 18.f);
+
+    // Show which backends loaded successfully (small line below the title).
+    char loadedBuf[128];
+    std::snprintf(loadedBuf, sizeof(loadedBuf), "Loaded: Bitmap=%s  MSDF=%s  Slug=%s",
+                  fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
+                  fontLoaded_[2] ? "yes" : "no");
+    canvas_->drawList().drawText({12.f, 30.f}, loadedBuf, {0.7f, 0.7f, 0.85f, 1.f}, currentFont_,
+                                 12.f);
 
     // UiRenderer walks rect + text commands and submits batched draw calls
     // using the engine's default bitmap font for any Text command whose

@@ -7,11 +7,15 @@
 
 #include "engine/game/IGame.h"
 #include "engine/math/Types.h"
+#include "engine/ui/BitmapFont.h"
+#include "engine/ui/MsdfFont.h"
+#include "engine/ui/SlugFont.h"
 #include "engine/ui/UiCanvas.h"
 #include "engine/ui/UiRenderer.h"
 
 namespace engine::ui
 {
+class IFont;
 class UiPanel;
 class UiText;
 class UiButton;
@@ -29,6 +33,8 @@ class UiProgressBar;
 //   4 — Inventory      (4x4 item grid, selection, info)
 //
 // Press 1/2/3/4 to switch screens.
+// Press F to cycle the active font backend (Bitmap → MSDF → Slug → ...).
+// Backends that fail to load (missing asset, FreeType disabled) are skipped.
 // =============================================================================
 
 class UiTestApp final : public engine::game::IGame
@@ -73,12 +79,33 @@ private:
     // Helpers
     void dispatchMouseEvents(engine::core::Engine& engine);
 
+    // Font backend cycling. Walks the canvas tree and rewrites every
+    // UiText/UiButton's font pointer to `currentFont_`. Called from
+    // switchScreen() and from the F-key handler.
+    void applyFontToCanvas();
+    // Pick the next backend that loaded successfully (skips failed ones).
+    void cycleFontBackend();
+    // Human-readable label for the active backend, used in the title bar.
+    const char* fontBackendLabel() const;
+
     // State
     Screen currentScreen_ = Screen::MainMenu;
     std::unique_ptr<engine::ui::UiCanvas> canvas_;
     engine::ui::UiRenderer uiRenderer_;
     uint16_t screenW_ = 1280;
     uint16_t screenH_ = 720;
+
+    // Font backends. Loaded once in onInit; pointers stay valid for the
+    // lifetime of the app. The bitmap backend always loads (it uses an
+    // embedded debug atlas with no filesystem dependency). MSDF and Slug
+    // may fail if assets or FreeType are missing — fontLoaded_[i] tracks
+    // which slots are usable.
+    engine::ui::BitmapFont bitmapFont_;
+    engine::ui::MsdfFont msdfFont_;
+    engine::ui::SlugFont slugFont_;
+    bool fontLoaded_[3] = {false, false, false};  // [Bitmap, MSDF, Slug]
+    int currentFontIndex_ = 0;                    // 0=Bitmap, 1=MSDF, 2=Slug
+    engine::ui::IFont* currentFont_ = nullptr;
 
     // HUD state
     float health_ = 75.f;
