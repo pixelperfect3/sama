@@ -2,6 +2,7 @@
 
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
+#include <mach-o/dyld.h>  // _NSGetExecutablePath, for asset path resolution
 
 #include <algorithm>
 #include <chrono>
@@ -62,6 +63,9 @@
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
+#include "engine/ui/MsdfFont.h"
+#include "engine/ui/UiDrawList.h"
+#include "engine/ui/UiRenderer.h"
 
 using engine::ecs::EntityID;
 using engine::ecs::INVALID_ENTITY;
@@ -169,6 +173,13 @@ struct EditorApp::Impl
     uint16_t fbW = 0;
     uint16_t fbH = 0;
     bool initialized = false;
+
+    // HUD text rendering — replaces bgfx::dbgTextPrintf with a real
+    // MSDF-rendered overlay using JetBrains Mono. Drawn on view kViewImGui.
+    engine::ui::MsdfFont hudFont;
+    bool hudFontLoaded = false;
+    engine::ui::UiDrawList hudDrawList;
+    engine::ui::UiRenderer uiRenderer;
 
     // Viewport click-to-select tracking.
     bool prevLeftDown = false;
@@ -1361,6 +1372,56 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         fprintf(stderr, "EditorApp: physics.init() failed\n");
     }
 
+    // -- HUD font (JetBrains Mono via MSDF) -----------------------------------
+    // Resolve the asset paths against several candidates so the editor works
+    // whether the user runs ./build/sama_editor from the repo root or from
+    // inside the build/ directory.
+    impl_->uiRenderer.init();
+    auto findAsset = [](const char* relPath) -> std::string
+    {
+        const char* prefixes[] = {"", "../", "../../", "../../../"};
+        for (const char* p : prefixes)
+        {
+            std::string c = std::string(p) + relPath;
+            if (FILE* f = std::fopen(c.c_str(), "rb"))
+            {
+                std::fclose(f);
+                return c;
+            }
+        }
+        char execPath[4096] = {};
+        uint32_t execPathSize = sizeof(execPath);
+        if (_NSGetExecutablePath(execPath, &execPathSize) == 0)
+        {
+            std::string base(execPath);
+            auto slash = base.find_last_of('/');
+            if (slash != std::string::npos)
+                base.resize(slash);
+            std::string prefix = base + "/";
+            for (int depth = 0; depth < 6; ++depth)
+            {
+                std::string c = prefix + relPath;
+                if (FILE* f = std::fopen(c.c_str(), "rb"))
+                {
+                    std::fclose(f);
+                    return c;
+                }
+                prefix += "../";
+            }
+        }
+        return relPath;
+    };
+    const std::string hudJson = findAsset("assets/fonts/JetBrainsMono-msdf.json");
+    const std::string hudPng = findAsset("assets/fonts/JetBrainsMono-msdf.png");
+    impl_->hudFontLoaded = impl_->hudFont.loadFromFile(hudJson.c_str(), hudPng.c_str());
+    if (!impl_->hudFontLoaded)
+    {
+        fprintf(stderr,
+                "EditorApp: failed to load HUD font (%s) — HUD will fall back to "
+                "bgfx debug text\n",
+                hudJson.c_str());
+    }
+
     // -- Timing ---------------------------------------------------------------
     impl_->prevTime =
         std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -2221,53 +2282,106 @@ void EditorApp::run()
         }
         impl_->syncConsoleView();
 
-        // -- HUD (viewport overlay only: FPS, gizmo mode, shortcuts) ----------
+        // -- HUD (viewport overlay: FPS, gizmo mode, shortcuts, status) -------
+        // Built every frame as a UiDrawList of text commands and submitted on
+        // view kViewImGui through the engine's UiRenderer + the JetBrains Mono
+        // MSDF font (loaded once in init()). Falls back to bgfx debug text if
+        // the font failed to load.
         bgfx::dbgTextClear();
-        bgfx::dbgTextPrintf(1, 1, 0x0f, "Sama Editor  |  %.1f fps  |  %.3f ms",
-                            dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f);
+
         const char* modeStr = "Translate";
         if (impl_->gizmo->mode() == GizmoMode::Rotate)
             modeStr = "Rotate";
         else if (impl_->gizmo->mode() == GizmoMode::Scale)
             modeStr = "Scale";
-        bgfx::dbgTextPrintf(
-            1, 2, 0x07,
-            "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  Cmd+Shift+Z=redo",
-            modeStr);
 
-        // Play state indicator.
+        char fpsBuf[128];
+        snprintf(fpsBuf, sizeof(fpsBuf), "Sama Editor  |  %.1f fps  |  %.3f ms",
+                 dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f);
+        char shortcutBuf[256];
+        snprintf(shortcutBuf, sizeof(shortcutBuf),
+                 "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  "
+                 "Cmd+Shift+Z=redo",
+                 modeStr);
+
+        const char* playStr = "Space=play";
+        engine::math::Vec4 playColor{0.5f, 0.5f, 0.5f, 1.f};  // dark gray
         {
             auto ps = impl_->editorState.playState();
             if (ps == EditorPlayState::Playing)
             {
-                bgfx::dbgTextPrintf(1, 3, 0x0a, "> PLAYING  (Space=pause, Esc=stop)");
+                playStr = "> PLAYING  (Space=pause, Esc=stop)";
+                playColor = {0.4f, 1.0f, 0.4f, 1.f};  // green
             }
             else if (ps == EditorPlayState::Paused)
             {
-                bgfx::dbgTextPrintf(1, 3, 0x0e, "|| PAUSED  (Space=resume, Esc=stop)");
+                playStr = "|| PAUSED  (Space=resume, Esc=stop)";
+                playColor = {1.0f, 1.0f, 0.4f, 1.f};  // yellow
             }
-            else
+        }
+
+        if (impl_->hudFontLoaded)
+        {
+            // MSDF path: clear list, push text commands, submit on view 15.
+            impl_->hudDrawList.clear();
+            const auto* font = static_cast<const engine::ui::IFont*>(&impl_->hudFont);
+
+            const engine::math::Vec4 white{1.f, 1.f, 1.f, 1.f};
+            const engine::math::Vec4 gray{0.75f, 0.75f, 0.75f, 1.f};
+            const engine::math::Vec4 green{0.4f, 1.0f, 0.4f, 1.f};
+
+            impl_->hudDrawList.drawText({12.f, 8.f}, fpsBuf, white, font, 16.f);
+            impl_->hudDrawList.drawText({12.f, 28.f}, shortcutBuf, gray, font, 13.f);
+            impl_->hudDrawList.drawText({12.f, 46.f}, playStr, playColor, font, 14.f);
+
+            if (impl_->statusTimer > 0.0f)
             {
-                bgfx::dbgTextPrintf(1, 3, 0x08, "Space=play");
+                impl_->hudDrawList.drawText({400.f, 8.f}, impl_->statusMsg, green, font, 16.f);
             }
-        }
 
-        // Status message.
-        if (impl_->statusTimer > 0.0f)
-        {
-            bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
-        }
+            if (impl_->addComponentMenuOpen)
+            {
+                impl_->hudDrawList.drawText({24.f, 80.f}, "--- Add Component ---", white, font,
+                                            16.f);
+                impl_->hudDrawList.drawText({24.f, 100.f}, "1) DirectionalLight", gray, font, 14.f);
+                impl_->hudDrawList.drawText({24.f, 116.f}, "2) PointLight", gray, font, 14.f);
+                impl_->hudDrawList.drawText({24.f, 132.f}, "3) Mesh (cube)", gray, font, 14.f);
+                impl_->hudDrawList.drawText({24.f, 148.f}, "4) Rigid Body", gray, font, 14.f);
+                impl_->hudDrawList.drawText({24.f, 164.f}, "5) Box Collider", gray, font, 14.f);
+                impl_->hudDrawList.drawText({24.f, 184.f}, "Esc to cancel",
+                                            engine::math::Vec4{0.5f, 0.5f, 0.5f, 1.f}, font, 12.f);
+            }
 
-        // Add component menu (still as HUD overlay on viewport).
-        if (impl_->addComponentMenuOpen)
+            // Set up view 15 to overlay text on top of the rendered scene
+            // without clearing colour. The depth state of UiRenderer's text
+            // pass already disables depth test/write, so the view doesn't
+            // need a depth attach either.
+            bgfx::setViewName(kViewImGui, "EditorHUD");
+            bgfx::setViewRect(kViewImGui, 0, 0, impl_->fbW, impl_->fbH);
+            bgfx::setViewClear(kViewImGui, BGFX_CLEAR_NONE);
+            bgfx::touch(kViewImGui);
+            impl_->uiRenderer.render(impl_->hudDrawList, kViewImGui, impl_->fbW, impl_->fbH);
+        }
+        else
         {
-            bgfx::dbgTextPrintf(2, 4, 0x0f, "--- Add Component ---");
-            bgfx::dbgTextPrintf(2, 5, 0x07, "1) DirectionalLight");
-            bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
-            bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
-            bgfx::dbgTextPrintf(2, 8, 0x07, "4) Rigid Body");
-            bgfx::dbgTextPrintf(2, 9, 0x07, "5) Box Collider");
-            bgfx::dbgTextPrintf(2, 10, 0x08, "Esc to cancel");
+            // Fallback to bgfx debug text — same content, ugly font.
+            bgfx::dbgTextPrintf(1, 1, 0x0f, "%s", fpsBuf);
+            bgfx::dbgTextPrintf(1, 2, 0x07, "%s", shortcutBuf);
+            bgfx::dbgTextPrintf(1, 3, playColor.y > 0.7f ? 0x0a : 0x08, "%s", playStr);
+            if (impl_->statusTimer > 0.0f)
+            {
+                bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
+            }
+            if (impl_->addComponentMenuOpen)
+            {
+                bgfx::dbgTextPrintf(2, 4, 0x0f, "--- Add Component ---");
+                bgfx::dbgTextPrintf(2, 5, 0x07, "1) DirectionalLight");
+                bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
+                bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
+                bgfx::dbgTextPrintf(2, 8, 0x07, "4) Rigid Body");
+                bgfx::dbgTextPrintf(2, 9, 0x07, "5) Box Collider");
+                bgfx::dbgTextPrintf(2, 10, 0x08, "Esc to cancel");
+            }
         }
 
         // -- Resource panel update --------------------------------------------
@@ -2310,6 +2424,10 @@ void EditorApp::shutdown()
     }
 
     impl_->gizmoRenderer.shutdown();
+
+    // Tear down HUD font + UI renderer.
+    impl_->hudFont.shutdown();
+    impl_->uiRenderer.shutdown();
 
     // Shut down physics (destroys all remaining bodies internally).
     impl_->physics.shutdown();

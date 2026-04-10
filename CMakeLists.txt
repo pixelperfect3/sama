@@ -1366,6 +1366,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         engine_assets
         engine_threading
         engine_physics
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
