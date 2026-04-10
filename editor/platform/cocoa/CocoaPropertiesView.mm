@@ -22,10 +22,12 @@
 @interface PropertiesFieldDelegate : NSObject <NSTextFieldDelegate>
 @property(nonatomic, copy) void (^onValueChanged)(int fieldId, float newValue);
 @property(nonatomic, copy) void (^onColorChanged)(int fieldId, float r, float g, float b);
+@property(nonatomic, copy) void (^onIntChanged)(int fieldId, int newIndex);
 @property(nonatomic, copy) void (^onAddComponent)(NSString* componentType);
 @property(nonatomic, assign) BOOL suppressCallbacks;  // set during rebuild to prevent stale events
 - (void)addComponentClicked:(NSButton*)sender;
 - (void)addComponentMenuItemPicked:(NSMenuItem*)sender;
+- (void)popupChanged:(NSPopUpButton*)sender;
 @end
 
 @implementation PropertiesFieldDelegate
@@ -118,6 +120,16 @@
     }
 }
 
+- (void)popupChanged:(NSPopUpButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onIntChanged)
+    {
+        _onIntChanged((int)sender.tag, (int)sender.indexOfSelectedItem);
+    }
+}
+
 @end
 
 // ---------------------------------------------------------------------------
@@ -181,6 +193,7 @@ struct CocoaPropertiesView::Impl
     PropertiesFieldDelegate* delegate = nil;
     ValueChangedCallback valueChangedCallback;
     ColorChangedCallback colorChangedCallback;
+    IntChangedCallback intChangedCallback;
     AddComponentCallback addComponentCallback;
     std::vector<NSView*> fieldViews;  // Retains views for tag lookup
 };
@@ -258,6 +271,16 @@ void CocoaPropertiesView::setColorChangedCallback(ColorChangedCallback cb)
     impl_->delegate.onColorChanged = ^(int fieldId, float r, float g, float b) {
       if (storedCb)
           storedCb(fieldId, r, g, b);
+    };
+}
+
+void CocoaPropertiesView::setIntChangedCallback(IntChangedCallback cb)
+{
+    impl_->intChangedCallback = std::move(cb);
+    auto& storedCb = impl_->intChangedCallback;
+    impl_->delegate.onIntChanged = ^(int fieldId, int newIndex) {
+      if (storedCb)
+          storedCb(fieldId, newIndex);
     };
 }
 
@@ -372,6 +395,39 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:slider];
                     [row addArrangedSubview:valueLabel];
+                    [impl_->stackView addArrangedSubview:row];
+                    impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
+                    break;
+                }
+                case PropertyField::Type::DropdownField:
+                {
+                    NSStackView* row = [NSStackView stackViewWithViews:@[]];
+                    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                    row.spacing = 6.0;
+                    row.translatesAutoresizingMaskIntoConstraints = NO;
+
+                    NSString* labelStr = [NSString stringWithUTF8String:field.label.c_str()];
+                    NSTextField* label = makeLabel(labelStr, 11.0);
+                    [label.widthAnchor constraintEqualToConstant:60].active = YES;
+
+                    NSPopUpButton* popup =
+                        [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 110, 24)
+                                                   pullsDown:NO];
+                    popup.translatesAutoresizingMaskIntoConstraints = NO;
+                    popup.tag = field.fieldId;
+                    popup.target = impl_->delegate;
+                    popup.action = @selector(popupChanged:);
+                    for (const auto& opt : field.options)
+                    {
+                        [popup addItemWithTitle:[NSString stringWithUTF8String:opt.c_str()]];
+                    }
+                    if (field.currentIndex >= 0 && field.currentIndex < (int)field.options.size())
+                    {
+                        [popup selectItemAtIndex:field.currentIndex];
+                    }
+
+                    [row addArrangedSubview:label];
+                    [row addArrangedSubview:popup];
                     [impl_->stackView addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;

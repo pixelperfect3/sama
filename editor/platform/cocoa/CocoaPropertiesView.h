@@ -23,11 +23,12 @@ public:
     {
         enum class Type : uint8_t
         {
-            Label,        // Read-only label
-            FloatField,   // Editable float
-            ColorField,   // Color display (R,G,B)
-            SliderField,  // 0..1 slider
-            Header,       // Section header
+            Label,         // Read-only label
+            FloatField,    // Editable float
+            ColorField,    // Color display (R,G,B)
+            SliderField,   // 0..1 slider
+            Header,        // Section header
+            DropdownField  // NSPopUpButton with a list of options + current index
         };
 
         Type type = Type::Label;
@@ -37,10 +38,15 @@ public:
         float maxVal = 1.0f;
         float color[3] = {1.0f, 1.0f, 1.0f};
         int fieldId = 0;  // Unique ID for callback
+
+        // DropdownField only:
+        std::vector<std::string> options;
+        int currentIndex = 0;
     };
 
     using ValueChangedCallback = std::function<void(int fieldId, float newValue)>;
     using ColorChangedCallback = std::function<void(int fieldId, float r, float g, float b)>;
+    using IntChangedCallback = std::function<void(int fieldId, int newIndex)>;
     using AddComponentCallback = std::function<void(const std::string& componentType)>;
 
     CocoaPropertiesView();
@@ -55,6 +61,7 @@ public:
     // Set callbacks.
     void setValueChangedCallback(ValueChangedCallback cb);
     void setColorChangedCallback(ColorChangedCallback cb);
+    void setIntChangedCallback(IntChangedCallback cb);
     // Fires when the user picks a component from the "+ Add Component" menu.
     // The componentType string is one of: "directional_light", "point_light",
     // "mesh", "rigid_body", "box_collider".

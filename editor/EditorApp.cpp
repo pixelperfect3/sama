@@ -612,24 +612,12 @@ void EditorApp::Impl::refreshPropertiesView()
             fields.push_back(hdr);
         }
         {
-            const char* typeStr = "Dynamic";
-            switch (rb->type)
-            {
-                case engine::physics::BodyType::Static:
-                    typeStr = "Static";
-                    break;
-                case engine::physics::BodyType::Dynamic:
-                    typeStr = "Dynamic";
-                    break;
-                case engine::physics::BodyType::Kinematic:
-                    typeStr = "Kinematic";
-                    break;
-            }
             CocoaPropertiesView::PropertyField f;
-            f.type = CocoaPropertiesView::PropertyField::Type::Label;
-            char buf[64];
-            snprintf(buf, sizeof(buf), "Type: %s", typeStr);
-            f.label = buf;
+            f.type = CocoaPropertiesView::PropertyField::Type::DropdownField;
+            f.label = "Type";
+            f.options = {"Static", "Dynamic", "Kinematic"};
+            f.currentIndex = static_cast<int>(rb->type);
+            f.fieldId = 505;
             fields.push_back(f);
         }
         {
@@ -685,27 +673,12 @@ void EditorApp::Impl::refreshPropertiesView()
             fields.push_back(hdr);
         }
         {
-            const char* shapeStr = "Box";
-            switch (cc->shape)
-            {
-                case engine::physics::ColliderShape::Box:
-                    shapeStr = "Box";
-                    break;
-                case engine::physics::ColliderShape::Sphere:
-                    shapeStr = "Sphere";
-                    break;
-                case engine::physics::ColliderShape::Capsule:
-                    shapeStr = "Capsule";
-                    break;
-                case engine::physics::ColliderShape::Mesh:
-                    shapeStr = "Mesh";
-                    break;
-            }
             CocoaPropertiesView::PropertyField f;
-            f.type = CocoaPropertiesView::PropertyField::Type::Label;
-            char buf[64];
-            snprintf(buf, sizeof(buf), "Shape: %s", shapeStr);
-            f.label = buf;
+            f.type = CocoaPropertiesView::PropertyField::Type::DropdownField;
+            f.label = "Shape";
+            f.options = {"Box", "Sphere", "Capsule", "Mesh"};
+            f.currentIndex = static_cast<int>(cc->shape);
+            f.fieldId = 514;
             fields.push_back(f);
         }
         const char* extLabels[] = {"HalfX", "HalfY", "HalfZ"};
@@ -1273,6 +1246,34 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 }
             }
             // Don't set propertiesDirty — same re-entrancy issue as above.
+        });
+
+    // Wire native properties view int-changed callback (dropdowns).
+    impl_->window->propertiesView()->setIntChangedCallback(
+        [this](int fieldId, int newIndex)
+        {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
+            EntityID entity = impl_->editorState.primarySelection();
+            if (entity == INVALID_ENTITY)
+                return;
+
+            if (fieldId == 505)
+            {
+                auto* rb = impl_->registry.get<engine::physics::RigidBodyComponent>(entity);
+                if (rb && newIndex >= 0 && newIndex <= 2)
+                {
+                    rb->type = static_cast<engine::physics::BodyType>(newIndex);
+                }
+            }
+            else if (fieldId == 514)
+            {
+                auto* cc = impl_->registry.get<engine::physics::ColliderComponent>(entity);
+                if (cc && newIndex >= 0 && newIndex <= 3)
+                {
+                    cc->shape = static_cast<engine::physics::ColliderShape>(newIndex);
+                }
+            }
         });
 
     // Wire native properties view "+ Add Component" button.
