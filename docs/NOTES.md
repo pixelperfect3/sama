@@ -904,6 +904,43 @@ Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera 
 
 ---
 
+## UI Widget System (`engine::ui`)
+
+Retained-mode UI tree for game UIs (menus, HUD, inventory). Not ECS entities — UI nodes are plain C++ objects owned by `UiCanvas` via pool allocation. Architecture in `docs/GAME_LAYER_ARCHITECTURE.md` Section 5.
+
+### Components
+- `UiNode` — base class with parent/child tree, anchor+offset layout, `InlinedVector<UiNode*, 4>` children
+- `UiCanvas` — root container, owns all nodes, runs layout + draw list generation
+- `UiDrawList` — per-frame draw command list (rect, textured rect, text)
+- 6 widgets: `UiPanel`, `UiImage`, `UiText`, `UiButton`, `UiSlider`, `UiProgressBar`
+
+### Key decisions
+- **Retained-mode, not immediate:** UI tree persists across frames — better for animation, state, and styling than ImGui's immediate model
+- **Not ECS:** UI nodes form deep variable-depth trees with parent-relative coordinates. SparseSet iteration (flat, unordered) doesn't map well to recursive tree traversal. Dedicated tree with pointer-based links is simpler and faster for layout.
+- **Pool allocation:** UiCanvas owns all nodes. No per-node `new`/`delete`. Canvas destructor frees everything.
+- **`InlinedVector<UiNode*, 4>` children:** 4 inline pointers, heap only for 5+ children. Zero heap allocs for typical UI trees.
+- **Text rendering:** Phase 1 bitmap fonts, Phase 2 Slug (GPU bezier curves, patent now public domain) or MSDF. Runtime-selectable per device tier.
+
+### Status
+- [x] Phase 1: UiNode tree, UiCanvas, 6 widgets, UiDrawList — 26 tests (77 assertions)
+- [ ] Phase 2: Layout system (anchor+offset) + event dispatch — in progress
+- [ ] Phase 3: UiRenderer (orthographic quad batching) + screenshot test — in progress
+- [ ] Phase 4: Text rendering (bitmap fonts)
+- [ ] Phase 5: JSON style sheets
+- [ ] Phase 6: Slug/MSDF font rendering
+
+---
+
+## Scene Serializer
+
+- Serialize/deserialize all engine component types to JSON
+- Registered handlers: Transform, WorldTransform, Camera, DirectionalLight, PointLight, SpotLight, Mesh, Material, Visible, ShadowVisible, RigidBody, Collider, Name
+
+### Status
+- [x] Full component serialization — committed
+
+---
+
 ## Editor
 
 Architecture is documented in `docs/EDITOR_ARCHITECTURE.md`. The editor uses native platform UI (AppKit on macOS, Win32 on Windows) rather than ImGui, for superior text rendering, accessibility, and system integration. The 3D viewport renders through bgfx Metal.
