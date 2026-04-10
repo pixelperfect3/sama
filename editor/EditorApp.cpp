@@ -2195,16 +2195,19 @@ void EditorApp::run()
         }
 
         // -- Gizmo rendering --------------------------------------------------
+        // Hide all editor gizmos in Play/Paused mode so the viewport shows a
+        // clean preview of the running game (Unity/Unreal/Godot convention).
+        if (impl_->editorState.playState() == EditorPlayState::Editing)
         {
             EntityID selE = impl_->editorState.primarySelection();
             if (selE != INVALID_ENTITY)
             {
                 impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
             }
-        }
 
-        // -- Light gizmo rendering --------------------------------------------
-        impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
+            // Light gizmos (directional cylinder + arrows, point light icon).
+            impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
+        }
 
         // -- Native panel updates (dirty-flag guarded) ------------------------
         if (impl_->hierarchyDirty)
