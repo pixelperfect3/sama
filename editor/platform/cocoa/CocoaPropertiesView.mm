@@ -379,15 +379,90 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
             return;
         }
 
+        // Section grouping: each Header field starts a new "section" with a
+        // tinted background and a separator line above it. Subsequent rows
+        // are appended to that section's inner stack until the next Header.
+        // The first Header (entity name / id) is treated as a plain title
+        // sitting outside any section.
+        NSStackView* currentSectionStack = nil;
+        int sectionIndex = 0;
+        bool sawFirstHeader = false;
+
         for (const auto& field : fields)
         {
+            // Where to add this field's view: the active section's inner
+            // stack if we're inside one, otherwise the outer stackView
+            // (used for the entity-title header at the top).
+            NSStackView* targetStack =
+                currentSectionStack != nil ? currentSectionStack : impl_->stackView;
+
             switch (field.type)
             {
                 case PropertyField::Type::Header:
                 {
-                    NSTextField* header =
-                        makeHeader([NSString stringWithUTF8String:field.label.c_str()]);
-                    [impl_->stackView addArrangedSubview:header];
+                    NSString* labelStr = [NSString stringWithUTF8String:field.label.c_str()];
+
+                    if (!sawFirstHeader)
+                    {
+                        // Entity-title header: bare label, no section
+                        // background. Sits at the top of the panel.
+                        sawFirstHeader = true;
+                        NSTextField* title = makeHeader(labelStr);
+                        title.font = [NSFont boldSystemFontOfSize:13.0];
+                        [impl_->stackView addArrangedSubview:title];
+                        impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)title);
+                        break;
+                    }
+
+                    // Component-section header: finalize the previous
+                    // section (if any) and start a new tinted container.
+                    NSView* sectionView = [[NSView alloc] init];
+                    sectionView.wantsLayer = YES;
+                    // Alternating dark/light tones for clear visual separation
+                    // between component sections. The contrast is high enough
+                    // to be obvious but stays muted so the field text remains
+                    // legible in both light and dark mode.
+                    const CGFloat tone = (sectionIndex % 2 == 0) ? 0.14 : 0.28;
+                    sectionView.layer.backgroundColor =
+                        [NSColor colorWithCalibratedWhite:tone alpha:1.0].CGColor;
+                    sectionView.layer.cornerRadius = 6.0;
+                    sectionView.layer.borderWidth = 1.0;
+                    sectionView.layer.borderColor =
+                        [NSColor colorWithCalibratedWhite:0.40 alpha:0.5].CGColor;
+                    sectionView.translatesAutoresizingMaskIntoConstraints = NO;
+
+                    NSStackView* inner = [NSStackView stackViewWithViews:@[]];
+                    inner.orientation = NSUserInterfaceLayoutOrientationVertical;
+                    inner.alignment = NSLayoutAttributeLeading;
+                    inner.spacing = 4.0;
+                    inner.translatesAutoresizingMaskIntoConstraints = NO;
+                    inner.edgeInsets = NSEdgeInsetsMake(8, 10, 8, 10);
+
+                    [sectionView addSubview:inner];
+                    [NSLayoutConstraint activateConstraints:@[
+                        [inner.topAnchor constraintEqualToAnchor:sectionView.topAnchor],
+                        [inner.leadingAnchor constraintEqualToAnchor:sectionView.leadingAnchor],
+                        [inner.trailingAnchor constraintEqualToAnchor:sectionView.trailingAnchor],
+                        [inner.bottomAnchor constraintEqualToAnchor:sectionView.bottomAnchor],
+                    ]];
+
+                    [impl_->stackView addArrangedSubview:sectionView];
+                    // Stretch the section view to the full width of the outer
+                    // stack so the colored background spans the panel.
+                    [sectionView.leadingAnchor
+                        constraintEqualToAnchor:impl_->stackView.leadingAnchor]
+                        .active = YES;
+                    [sectionView.trailingAnchor
+                        constraintEqualToAnchor:impl_->stackView.trailingAnchor]
+                        .active = YES;
+                    impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)sectionView);
+
+                    currentSectionStack = inner;
+                    targetStack = inner;
+                    ++sectionIndex;
+
+                    NSTextField* header = makeHeader(labelStr);
+                    [targetStack addArrangedSubview:header];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)header);
                     break;
                 }
@@ -395,7 +470,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                 {
                     NSString* text = [NSString stringWithUTF8String:field.label.c_str()];
                     NSTextField* label = makeLabel(text, 11.0);
-                    [impl_->stackView addArrangedSubview:label];
+                    [targetStack addArrangedSubview:label];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)label);
                     break;
                 }
@@ -416,7 +491,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
 
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:valueField];
-                    [impl_->stackView addArrangedSubview:row];
+                    [targetStack addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;
                 }
@@ -447,7 +522,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:slider];
                     [row addArrangedSubview:valueLabel];
-                    [impl_->stackView addArrangedSubview:row];
+                    [targetStack addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;
                 }
@@ -480,7 +555,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
 
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:popup];
-                    [impl_->stackView addArrangedSubview:row];
+                    [targetStack addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;
                 }
@@ -521,7 +596,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:colorWell];
                     [row addArrangedSubview:colorLabel];
-                    [impl_->stackView addArrangedSubview:row];
+                    [targetStack addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;
                 }
@@ -567,7 +642,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:nameLabel];
                     [row addArrangedSubview:browseBtn];
-                    [impl_->stackView addArrangedSubview:row];
+                    [targetStack addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;
                 }
