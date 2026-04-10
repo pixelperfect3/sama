@@ -1282,6 +1282,8 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/inspectors/MaterialInspector.cpp
         editor/inspectors/LightInspector.cpp
         editor/inspectors/NameInspector.cpp
+        editor/inspectors/RigidBodyInspector.cpp
+        editor/inspectors/ColliderInspector.cpp
         editor/gizmo/TransformGizmo.cpp
         editor/gizmo/GizmoRenderer.cpp
         editor/undo/CommandStack.cpp

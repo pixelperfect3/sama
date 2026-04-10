@@ -15,9 +15,11 @@
 #include "editor/EditorState.h"
 #include "editor/gizmo/GizmoRenderer.h"
 #include "editor/gizmo/TransformGizmo.h"
+#include "editor/inspectors/ColliderInspector.h"
 #include "editor/inspectors/LightInspector.h"
 #include "editor/inspectors/MaterialInspector.h"
 #include "editor/inspectors/NameInspector.h"
+#include "editor/inspectors/RigidBodyInspector.h"
 #include "editor/inspectors/TransformInspector.h"
 #include "editor/panels/AssetBrowserPanel.h"
 #include "editor/panels/ConsolePanel.h"
@@ -1003,6 +1005,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->propertiesPanel->addInspector(
         std::make_unique<MaterialInspector>(*impl_->window, impl_->resources));
     impl_->propertiesPanel->addInspector(std::make_unique<LightInspector>(*impl_->window));
+    impl_->propertiesPanel->addInspector(std::make_unique<RigidBodyInspector>(*impl_->window));
+    impl_->propertiesPanel->addInspector(std::make_unique<ColliderInspector>(*impl_->window));
     impl_->propertiesPanel->init();
 
     impl_->assetBrowserPanel =
@@ -1696,6 +1700,34 @@ void EditorApp::run()
                     }
                     impl_->addComponentMenuOpen = false;
                 }
+                if (impl_->window->isKeyPressed('4'))
+                {
+                    if (!impl_->registry.has<physics::RigidBodyComponent>(selE))
+                    {
+                        impl_->registry.emplace<physics::RigidBodyComponent>(
+                            selE, physics::RigidBodyComponent{});
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added RigidBody");
+                        impl_->statusTimer = 2.0f;
+                        impl_->propertiesDirty = true;
+                        impl_->hierarchyDirty = true;
+                    }
+                    impl_->addComponentMenuOpen = false;
+                }
+                if (impl_->window->isKeyPressed('5'))
+                {
+                    if (!impl_->registry.has<physics::ColliderComponent>(selE))
+                    {
+                        physics::ColliderComponent cc{};
+                        cc.shape = physics::ColliderShape::Box;
+                        cc.halfExtents = {0.5f, 0.5f, 0.5f};
+                        impl_->registry.emplace<physics::ColliderComponent>(selE, cc);
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added Box Collider");
+                        impl_->statusTimer = 2.0f;
+                        impl_->propertiesDirty = true;
+                        impl_->hierarchyDirty = true;
+                    }
+                    impl_->addComponentMenuOpen = false;
+                }
                 if (impl_->window->isKeyPressed(0x1B))  // Escape
                 {
                     impl_->addComponentMenuOpen = false;
@@ -1967,7 +1999,9 @@ void EditorApp::run()
             bgfx::dbgTextPrintf(2, 5, 0x07, "1) DirectionalLight");
             bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
             bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
-            bgfx::dbgTextPrintf(2, 8, 0x08, "Esc to cancel");
+            bgfx::dbgTextPrintf(2, 8, 0x07, "4) Rigid Body");
+            bgfx::dbgTextPrintf(2, 9, 0x07, "5) Box Collider");
+            bgfx::dbgTextPrintf(2, 10, 0x08, "Esc to cancel");
         }
 
         // -- Resource panel update --------------------------------------------
