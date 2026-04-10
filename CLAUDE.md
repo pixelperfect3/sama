@@ -38,6 +38,7 @@
 - **Common pitfalls:** `docs/AGENTS.md` Section 6 — check before submitting code
 - **Component reference:** `docs/AGENTS.md` Section 5 — lists all component types with fields
 - **Minimal game template:** `docs/AGENTS.md` Section 4 — copy and modify to start a new game
+- **Build a level in the editor:** `docs/LEVEL_BUILDING_GUIDE.md` — hands-on tutorial covering camera, hierarchy, properties, physics, and a worked falling-cube example
 - Always add `WorldTransformComponent` alongside `TransformComponent`
 - Always add `VisibleTag` for entities that should render
 - Always call `assets.processUploads()` each frame after async loading
