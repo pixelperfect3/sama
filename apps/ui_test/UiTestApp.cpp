@@ -112,6 +112,7 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
     screenH_ = engine.fbHeight();
 
     canvas_ = std::make_unique<UiCanvas>(screenW_, screenH_);
+    uiRenderer_.init();
     buildMainMenu();
 }
 
@@ -254,6 +255,7 @@ void UiTestApp::onRender(Engine& engine)
 
 void UiTestApp::onShutdown(Engine& /*engine*/, engine::ecs::Registry& /*registry*/)
 {
+    uiRenderer_.shutdown();
     canvas_.reset();
 }
 
@@ -263,11 +265,9 @@ void UiTestApp::onShutdown(Engine& /*engine*/, engine::ecs::Registry& /*registry
 
 void UiTestApp::switchScreen(Screen screen)
 {
-    if (screen == currentScreen_)
-    {
-        return;
-    }
-
+    // Note: we always rebuild even if the screen is unchanged, because some
+    // widgets (e.g. inventory slot selection) trigger a rebuild via this path
+    // to refresh their visual state.
     currentScreen_ = screen;
 
     // Reset canvas -- destroy all children of root, rebuild.
@@ -1145,122 +1145,16 @@ void UiTestApp::dispatchMouseEvents(Engine& engine)
 
 void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
 {
-    const auto& cmds = canvas_->drawList().commands();
-    if (cmds.empty() && fbW == 0)
-    {
-        return;
-    }
-
-    // Set up an orthographic view for UI rendering.
+    // Set up the UI view: clear + viewport. UiRenderer handles the
+    // orthographic projection and submits all rect commands using the
+    // sprite shader program.
     bgfx::ViewId viewId = kViewUi;
     bgfx::setViewName(viewId, "UI");
     bgfx::setViewRect(viewId, 0, 0, fbW, fbH);
-
-    // Orthographic projection: (0,0) top-left, (fbW, fbH) bottom-right.
-    float orthoProj[16];
-    {
-        float L = 0.f;
-        float R = static_cast<float>(fbW);
-        float T = 0.f;
-        float B = static_cast<float>(fbH);
-        float N = -1.f;
-        float F = 1.f;
-        std::memset(orthoProj, 0, sizeof(orthoProj));
-        orthoProj[0] = 2.f / (R - L);
-        orthoProj[5] = 2.f / (T - B);
-        orthoProj[10] = -1.f / (F - N);
-        orthoProj[12] = -(R + L) / (R - L);
-        orthoProj[13] = -(T + B) / (T - B);
-        orthoProj[14] = -N / (F - N);
-        orthoProj[15] = 1.f;
-    }
-
-    float identity[16];
-    std::memset(identity, 0, sizeof(identity));
-    identity[0] = 1.f;
-    identity[5] = 1.f;
-    identity[10] = 1.f;
-    identity[15] = 1.f;
-
-    bgfx::setViewTransform(viewId, identity, orthoProj);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
-
-    // Touch the view so it clears even with no draw calls.
     bgfx::touch(viewId);
 
-    // Count rect commands for transient buffer allocation.
-    uint32_t rectCount = 0;
-    for (const auto& cmd : cmds)
-    {
-        if (cmd.type == UiDrawCmd::Rect || cmd.type == UiDrawCmd::TexturedRect)
-        {
-            rectCount++;
-        }
-    }
-
-    // Render colored quads via transient vertex/index buffers.
-    if (rectCount > 0)
-    {
-        uint32_t vertexCount = rectCount * 4;
-        uint32_t indexCount = rectCount * 6;
-
-        // Check availability.
-        if (bgfx::getAvailTransientVertexBuffer(vertexCount, s_uiVertexLayout) < vertexCount ||
-            bgfx::getAvailTransientIndexBuffer(indexCount) < indexCount)
-        {
-            return;
-        }
-
-        bgfx::TransientVertexBuffer tvb;
-        bgfx::TransientIndexBuffer tib;
-        bgfx::allocTransientVertexBuffer(&tvb, vertexCount, s_uiVertexLayout);
-        bgfx::allocTransientIndexBuffer(&tib, indexCount);
-
-        auto* verts = reinterpret_cast<UiVertex*>(tvb.data);
-        auto* indices = reinterpret_cast<uint16_t*>(tib.data);
-
-        uint32_t vi = 0;
-        uint32_t ii = 0;
-        for (const auto& cmd : cmds)
-        {
-            if (cmd.type != UiDrawCmd::Rect && cmd.type != UiDrawCmd::TexturedRect)
-            {
-                continue;
-            }
-
-            float x0 = cmd.position.x;
-            float y0 = cmd.position.y;
-            float x1 = x0 + cmd.size.x;
-            float y1 = y0 + cmd.size.y;
-            uint32_t abgr = toAbgr(cmd.color);
-
-            uint16_t base = static_cast<uint16_t>(vi);
-            verts[vi++] = {x0, y0, abgr};
-            verts[vi++] = {x1, y0, abgr};
-            verts[vi++] = {x1, y1, abgr};
-            verts[vi++] = {x0, y1, abgr};
-
-            indices[ii++] = base + 0;
-            indices[ii++] = base + 1;
-            indices[ii++] = base + 2;
-            indices[ii++] = base + 0;
-            indices[ii++] = base + 2;
-            indices[ii++] = base + 3;
-        }
-
-        // Submit with a simple flat-color program. We use bgfx's internal
-        // debug draw (no custom program needed -- set state and submit).
-        uint64_t state = 0 | BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA |
-                         BGFX_STATE_MSAA;
-
-        bgfx::setVertexBuffer(0, &tvb);
-        bgfx::setIndexBuffer(&tib);
-        bgfx::setState(state);
-        // Use program handle 0 (invalid) which forces bgfx to use vertex colors
-        // as a flat shader on Metal. If that does not work, we fall through to
-        // debug text only. We use the bgfx internal debug program.
-        bgfx::submit(viewId, BGFX_INVALID_HANDLE);
-    }
+    uiRenderer_.render(canvas_->drawList(), viewId, fbW, fbH);
 
     // Render text commands via bgfx debug text overlay.
     bgfx::dbgTextClear();
@@ -1270,6 +1164,7 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
     bgfx::dbgTextPrintf(1, 0, 0x0f, "UI Test - %s", screenNames[static_cast<int>(currentScreen_)]);
 
     // Render UiDrawCmd::Text commands using dbgTextPrintf.
+    const auto& cmds = canvas_->drawList().commands();
     for (const auto& cmd : cmds)
     {
         if (cmd.type != UiDrawCmd::Text || !cmd.text)

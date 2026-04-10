@@ -8,6 +8,7 @@
 #include "engine/game/IGame.h"
 #include "engine/math/Types.h"
 #include "engine/ui/UiCanvas.h"
+#include "engine/ui/UiRenderer.h"
 
 namespace engine::ui
 {
@@ -75,6 +76,7 @@ private:
     // State
     Screen currentScreen_ = Screen::MainMenu;
     std::unique_ptr<engine::ui::UiCanvas> canvas_;
+    engine::ui::UiRenderer uiRenderer_;
     uint16_t screenW_ = 1280;
     uint16_t screenH_ = 720;
 
