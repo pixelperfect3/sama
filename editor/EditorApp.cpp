@@ -207,13 +207,29 @@ struct EditorApp::Impl
     {
         std::string path;
         engine::assets::AssetHandle<engine::assets::Texture> handle{};
-        uint32_t resourceId = 0;  // index in RenderResources::textures_
+        uint32_t resourceId = 0;        // index in RenderResources::textures_
+        uint32_t materialRefCount = 0;  // number of material slots pointing at this texture
     };
     std::vector<EditorTexture> editorTextures;
 
     // Resolve `absolutePath` to a RenderResources texture id, loading it
     // synchronously if it isn't already cached. Returns 0 on failure.
+    // The returned id has NO ref count added yet — callers must go through
+    // rebindTexture() to install it into a material slot.
     uint32_t loadTextureForMaterial(const std::string& absolutePath);
+
+    // Atomically swap the texture id held by a material slot, maintaining
+    // per-texture reference counts. `materialSlotId` points at the Material
+    // field (e.g. &mat->albedoMapId); `newId` may be 0 to clear the slot.
+    // When a texture's ref count hits zero, its asset handle is released
+    // and its RenderResources slot is freed.
+    void rebindTexture(uint32_t* materialSlotId, uint32_t newId);
+
+    // Release every editor-loaded texture (asset release + RenderResources
+    // removeTexture) and clear the cache.  Called on scene New / Open.
+    // Material slot ids in the registry are invalid after this — callers
+    // must have already cleared/destroyed the referring entities.
+    void clearEditorTextures();
 
     // Look up a previously-loaded texture by its RenderResources id and
     // return its source path (empty if the id is unknown). Used by the
@@ -416,11 +432,66 @@ uint32_t EditorApp::Impl::loadTextureForMaterial(const std::string& absolutePath
     }
 
     const uint32_t resId = resources.addTexture(tex->handle);
-    editorTextures.push_back({absolutePath, handle, resId});
+    editorTextures.push_back({absolutePath, handle, resId, 0u});
 
     snprintf(statusMsg, sizeof(statusMsg), "Loaded texture (id=%u)", resId);
     statusTimer = 2.0f;
     return resId;
+}
+
+void EditorApp::Impl::rebindTexture(uint32_t* materialSlotId, uint32_t newId)
+{
+    if (materialSlotId == nullptr)
+        return;
+
+    const uint32_t oldId = *materialSlotId;
+    if (oldId == newId)
+        return;
+
+    // Increment the new texture's ref count BEFORE writing the slot so that
+    // if newId happens to equal oldId's final reference, we don't momentarily
+    // drop to zero and free a texture we're about to re-use.
+    if (newId != 0)
+    {
+        for (auto& t : editorTextures)
+        {
+            if (t.resourceId == newId)
+            {
+                ++t.materialRefCount;
+                break;
+            }
+        }
+    }
+
+    *materialSlotId = newId;
+
+    if (oldId != 0)
+    {
+        for (auto it = editorTextures.begin(); it != editorTextures.end(); ++it)
+        {
+            if (it->resourceId != oldId)
+                continue;
+            if (it->materialRefCount > 0)
+                --it->materialRefCount;
+            if (it->materialRefCount == 0)
+            {
+                assetManager->release(it->handle);
+                resources.removeTexture(it->resourceId);
+                editorTextures.erase(it);
+            }
+            break;
+        }
+    }
+}
+
+void EditorApp::Impl::clearEditorTextures()
+{
+    for (auto& t : editorTextures)
+    {
+        assetManager->release(t.handle);
+        resources.removeTexture(t.resourceId);
+    }
+    editorTextures.clear();
 }
 
 const std::string& EditorApp::Impl::textureSourcePath(uint32_t resourceId) const
@@ -1453,19 +1524,19 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             switch (fieldId)
             {
                 case 210:
-                    mat->albedoMapId = newId;
+                    impl_->rebindTexture(&mat->albedoMapId, newId);
                     break;
                 case 211:
-                    mat->normalMapId = newId;
+                    impl_->rebindTexture(&mat->normalMapId, newId);
                     break;
                 case 212:
-                    mat->ormMapId = newId;
+                    impl_->rebindTexture(&mat->ormMapId, newId);
                     break;
                 case 213:
-                    mat->emissiveMapId = newId;
+                    impl_->rebindTexture(&mat->emissiveMapId, newId);
                     break;
                 case 214:
-                    mat->occlusionMapId = newId;
+                    impl_->rebindTexture(&mat->occlusionMapId, newId);
                     break;
                 default:
                     break;
@@ -1856,6 +1927,9 @@ void EditorApp::run()
                     {
                         impl_->registry.destroyEntity(e);
                     }
+                    // Hard reset editor-owned textures — any remaining refs
+                    // belonged to the entities we just destroyed.
+                    impl_->clearEditorTextures();
                     impl_->sceneSerializer.loadScene(path.c_str(), impl_->registry,
                                                      impl_->resources, *impl_->assetManager);
                     impl_->currentScenePath = path;
@@ -1876,6 +1950,8 @@ void EditorApp::run()
                 {
                     impl_->registry.destroyEntity(e);
                 }
+                // Hard reset editor-owned textures alongside the entities.
+                impl_->clearEditorTextures();
                 impl_->currentScenePath.clear();
                 impl_->commandStack.clear();
                 impl_->editorState.clearSelection();
@@ -2586,13 +2662,11 @@ void EditorApp::shutdown()
 
     impl_->gizmoRenderer.shutdown();
 
-    // Release editor-loaded textures (decrements asset ref counts; the
-    // RenderResources entries are cleaned up via destroyAll below).
-    for (auto& t : impl_->editorTextures)
-    {
-        impl_->assetManager->release(t.handle);
-    }
-    impl_->editorTextures.clear();
+    // Release editor-loaded textures (decrements asset ref counts and frees
+    // RenderResources texture slots — destroyAll below also drops the
+    // texture vector, but clearing here keeps the release path symmetric
+    // with scene New/Open and avoids any double-release bugs).
+    impl_->clearEditorTextures();
 
     // Tear down HUD font + UI renderer.
     impl_->hudFont.shutdown();
