@@ -9,6 +9,8 @@
 namespace engine::ui
 {
 
+class IFont;
+
 // Clickable panel with a text label and onClick callback.
 class UiButton : public UiNode
 {
@@ -17,6 +19,7 @@ public:
     UiCallback onHover;
 
     std::string label;
+    const IFont* font = nullptr;  // null -> default font
     uint32_t fontId = 0;
     float fontSize = 16.f;
 

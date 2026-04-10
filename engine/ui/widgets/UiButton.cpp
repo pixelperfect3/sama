@@ -1,5 +1,8 @@
 #include "engine/ui/widgets/UiButton.h"
 
+#include "engine/ui/DefaultFont.h"
+#include "engine/ui/IFont.h"
+#include "engine/ui/Measure.h"
 #include "engine/ui/UiDrawList.h"
 #include "engine/ui/UiEvent.h"
 
@@ -71,16 +74,13 @@ void UiButton::onDraw(UiDrawList& drawList) const
     // Draw label text centered in the button.
     if (!label.empty())
     {
-        // Approximate text dimensions using bgfx debug font (8x16 px/char).
-        constexpr float kCharW = 8.f;
-        constexpr float kCharH = 16.f;
-        const float textW = static_cast<float>(label.size()) * kCharW;
-        const float textH = kCharH;
+        const IFont* useFont = font ? font : defaultFont();
+        const math::Vec2 size = measureText(useFont, fontSize, label.c_str());
 
         math::Vec2 textPos;
-        textPos.x = r.position.x + (r.size.x - textW) * 0.5f;
-        textPos.y = r.position.y + (r.size.y - textH) * 0.5f;
-        drawList.drawText(textPos, label.c_str(), textColor);
+        textPos.x = r.position.x + (r.size.x - size.x) * 0.5f;
+        textPos.y = r.position.y + (r.size.y - size.y) * 0.5f;
+        drawList.drawText(textPos, label.c_str(), textColor, font, fontSize);
     }
 }
 

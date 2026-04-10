@@ -36,6 +36,10 @@ public:
     {
         return drawList_;
     }
+    UiDrawList& drawList() noexcept
+    {
+        return drawList_;
+    }
 
     void setScreenSize(uint32_t w, uint32_t h);
 
