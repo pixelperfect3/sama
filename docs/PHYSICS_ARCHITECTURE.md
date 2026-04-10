@@ -301,6 +301,12 @@ public:
     virtual uint32_t addBody(const BodyDesc& desc) = 0;
     virtual void removeBody(uint32_t bodyID) = 0;
 
+    // Bulk teardown — removes and destroys every body in the world and clears
+    // the body→entity map. Used by the editor on Play→Stop and Editing→Play
+    // transitions to reset the simulation to a clean state. PhysicsSystem will
+    // re-register bodies from RigidBodyComponent on the next step.
+    virtual void destroyAllBodies() = 0;
+
     // Transform queries (world-space)
     virtual void getBodyTransform(uint32_t bodyID, math::Vec3& outPos, math::Quat& outRot) const = 0;
     virtual void moveKinematic(uint32_t bodyID, const math::Vec3& targetPos,

@@ -565,6 +565,27 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 - [x] Viewport click-to-select (ray-AABB picking, slab method, gizmo priority)
 - [x] Phase 10: Resource usage inspector — live stats panel (FPS, frame time, draw calls, triangles, texture memory, entity count, arena usage) in a tabbed bottom panel alongside Console. Rolling ring buffer history (120 samples). Native NSTabView with CocoaResourceView labels.
 - [x] Phase 11: Play/pause/stop — EditorPlayState enum, Space=play/pause, Escape=stop. Transform snapshot on play, full restore on stop to prevent scene corruption. HUD indicator shows current state.
+- [x] Phase 12: Physics in Play mode — editor owns `JoltPhysicsEngine` + `PhysicsSystem`, steps simulation only when `playState == Playing`, destroys all bodies on Editing→Play and Play/Paused→Stop transitions. Gizmo + properties + hierarchy edits gated to Editing mode only. `RigidBodyInspector` and `ColliderInspector` added to PropertiesPanel. "Add Component" menu now offers Rigid Body and Box Collider. (Commits `9f3d952`, `dab14f0`, `ec2a684`, `f4ebcf4`)
+
+### Physics in Play Mode — Design
+
+**Decision:** the editor runs the physics simulation only inside Play mode, and resets the world (destroys all Jolt bodies, clears `RigidBodyComponent::bodyID`) on every Editing→Play and Play/Paused→Stop transition. Bodies are recreated from authored components on the next `PhysicsSystem::update`.
+
+**Why a hard reset instead of snapshotting body state:**
+- Jolt body state includes velocities, sleep state, accumulated forces, contact manifolds, and broad-phase tree position. Most of this is not exposed through the `IPhysicsEngine` interface and even if it were, restoring it cleanly across re-creation is fragile (body IDs would need to be remapped).
+- The transform snapshot (taken on Editing→Play, restored on Stop) is the *authoring* truth. After restore, the next Play should start the simulation from that exact authored state — which is precisely what re-creating bodies from `RigidBodyComponent` produces. Trying to "resume" a paused-then-stopped simulation would create surprising results: the user would see their cube end up in a different place than where they parked it in the editor.
+- Costs are negligible: the typical scene has a few hundred bodies at most; `destroyAllBodies` is O(n) Jolt removes plus a hash-map clear. The Play→first-step latency is dominated by `PhysicsSystem::registerNewBodies`, which already runs every frame.
+
+**Why edits are gated to Editing mode only:**
+- During Play, `PhysicsSystem::syncDynamicBodies` writes back into `TransformComponent` every frame from Jolt's authoritative pose. If the gizmo or the properties panel also writes into `TransformComponent`, the two writes race — and Jolt wins on the next step, so the user's edit appears to be silently rejected.
+- The simpler fix is to disable user-initiated transform writes outside Editing mode: gizmo `update()` early-returns, and the PropertiesPanel/HierarchyPanel callbacks check play state before committing. The user can still *inspect* values during Play — they just can't change them.
+- An alternative would be to detect "user has a `RigidBodyComponent`" and route the edit through `physics.setBodyPosition()`, but that turns the editor into an authoring-during-simulation tool, which is a separate UX question. Deferred until there's a concrete need.
+
+**Caveat — `TransformInspector` keyboard editing not yet gated:** `TransformInspector` has its own in-place keyboard editing path (Tab/Arrow/+/-) that bypasses the PropertiesPanel native callbacks, so it isn't covered by the play-state gate. The practical impact is small (the gizmo and the AppKit-style callbacks are blocked), but if it becomes a real footgun the cleanest fix is to thread `EditorState&` into `IComponentInspector::inspect()`. Tracked in the editor TODO list below.
+
+**Why `destroyAllBodies()` is on the interface, not editor-private:**
+- The editor lives outside `engine::physics` and only sees `IPhysicsEngine`. Adding the method as a Jolt-only helper would require a `dynamic_cast` from the editor — fragile and would violate the interface boundary.
+- The method is also useful outside the editor: scene unload, level transitions, and any "reset to initial state" feature would want it. It's a small enough surface to belong on the base interface.
 
 ### TODO
 
@@ -574,6 +595,7 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 - [ ] Material editor: changing a field in the material inspector doesn't apply to the selected entity's `MaterialComponent`. The UI binds, but the write-back path is missing — likely needs a `MaterialInspector::commit()` hook in the same place rotation/scale edits got fixed (`b76908d`). *Why:* the inspector exists but is non-functional, so the panel is misleading.
 - [ ] Selection outline: viewport-clicked entities have no visible highlight — the gizmo appears but the mesh itself is not stenciled. Spec calls for a single-pass stencil outline (§ 18.7 Rendering checklist). *Why:* hard to tell what's selected when the gizmo is occluded by geometry.
 - [ ] Viewport dirty-flagging: editor re-renders every frame even when nothing has changed. Trivial fix once camera/selection/transform changes are observable. *Why:* idle GPU/battery drain on laptops.
+- [ ] `TransformInspector` keyboard editing path (Tab/Arrow/+/-) bypasses the play-state gate added in Phase 12 — the gizmo and PropertiesPanel callbacks are blocked during Play, but typing into the inspector still mutates `TransformComponent` and races `PhysicsSystem::syncDynamicBodies`. Cleanest fix: thread `EditorState&` into `IComponentInspector::inspect()`. *Why:* a user inspecting numbers during Play could accidentally fight the simulation and not understand why nothing happens.
 
 **Editor features still pending (post-MVP, no concrete game blocked yet)**
 - [ ] Material editor (proper): node graph or at least a typed multi-channel inspector — texture pickers, sliders, color wells per PBR channel. *Trigger:* first time we want to author a material that isn't a glTF import.
