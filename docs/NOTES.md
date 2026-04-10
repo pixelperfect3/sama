@@ -596,6 +596,7 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 - [ ] Selection outline: viewport-clicked entities have no visible highlight — the gizmo appears but the mesh itself is not stenciled. Spec calls for a single-pass stencil outline (§ 18.7 Rendering checklist). *Why:* hard to tell what's selected when the gizmo is occluded by geometry.
 - [ ] Viewport dirty-flagging: editor re-renders every frame even when nothing has changed. Trivial fix once camera/selection/transform changes are observable. *Why:* idle GPU/battery drain on laptops.
 - [ ] `TransformInspector` keyboard editing path (Tab/Arrow/+/-) bypasses the play-state gate added in Phase 12 — the gizmo and PropertiesPanel callbacks are blocked during Play, but typing into the inspector still mutates `TransformComponent` and races `PhysicsSystem::syncDynamicBodies`. Cleanest fix: thread `EditorState&` into `IComponentInspector::inspect()`. *Why:* a user inspecting numbers during Play could accidentally fight the simulation and not understand why nothing happens.
+- [ ] Editor HUD still uses `bgfx::dbgTextPrintf` for FPS, mode label, "PLAYING" indicator, status messages, and the Add Component overlay. The bitmap font path (`engine::ui::defaultFont()` + `UiDrawList::drawText`) is now proven end-to-end in `apps/ui_test/UiTestApp.cpp`, so the swap is bounded — replace the dbgText calls with a UiDrawList + UiRenderer pass on a dedicated HUD view. *Why:* the HUD currently looks like a 1990s terminal, and the font path that fixes this already ships in the engine. Tracked under "Font Backends → Follow-ups" but listed here too because the editor is the user-visible blocker.
 
 **Editor features still pending (post-MVP, no concrete game blocked yet)**
 - [ ] Material editor (proper): node graph or at least a typed multi-channel inspector — texture pickers, sliders, color wells per PBR channel. *Trigger:* first time we want to author a material that isn't a glTF import.
@@ -974,15 +975,43 @@ Retained-mode UI tree for game UIs (menus, HUD, inventory). Not ECS entities —
 - **Not ECS:** UI nodes form deep variable-depth trees with parent-relative coordinates. SparseSet iteration (flat, unordered) doesn't map well to recursive tree traversal. Dedicated tree with pointer-based links is simpler and faster for layout.
 - **Pool allocation:** UiCanvas owns all nodes. No per-node `new`/`delete`. Canvas destructor frees everything.
 - **`InlinedVector<UiNode*, 4>` children:** 4 inline pointers, heap only for 5+ children. Zero heap allocs for typical UI trees.
-- **Text rendering:** Phase 1 bitmap fonts, Phase 2 Slug (GPU bezier curves, patent now public domain) or MSDF. Runtime-selectable per device tier.
+- **Text rendering:** Three swappable backends behind `IFont` — BitmapFont (default, zero-dependency 8×8 ASCII fallback), MsdfFont (sharp at any size, single shader swap from bitmap), SlugFont (vector-perfect via per-pixel Bézier evaluation, patent-free since March 2026). Runtime-selectable per device tier; see Font Backends → Design subsection below.
 
 ### Status
 - [x] Phase 1: UiNode tree, UiCanvas, 6 widgets, UiDrawList — 26 tests (77 assertions)
 - [x] Phase 2: Layout system (anchor+offset) + event dispatch — 35 tests (107 assertions)
 - [x] Phase 3: UiRenderer (orthographic quad batching, sprite shader reuse) + screenshot test — committed
-- [ ] Phase 4: Text rendering (bitmap fonts)
+- [x] Phase 4: Text rendering with `IFont` interface + three swappable backends (BitmapFont, MsdfFont, SlugFont). Bitmap path is end-to-end (default font, UiRenderer text pass, widget integration, UiTestApp swap). MSDF and Slug compile, load, and have unit tests; final on-screen rendering pending the items in the Font Backends → Follow-ups subsection below. Commits `646b37b` (foundation), `9835668` (bitmap merge), `aa480f6` (MSDF), `69d8452` (slug merge).
 - [ ] Phase 5: JSON style sheets
-- [ ] Phase 6: Slug/MSDF font rendering
+- [ ] Phase 6 (was Slug/MSDF): merged into Phase 4. Removed.
+
+### Font Backends — Design
+
+**Decision:** ship three IFont backends behind a single interface (`engine/ui/IFont.h`) so the rendering backend can be selected at startup based on GPU tier without touching widget or game code. Per `docs/GAME_LAYER_ARCHITECTURE.md` §5 the per-platform recommendation is Slug for desktop / VR / high-end mobile, MSDF for mid-range mobile, Bitmap for low-end / development.
+
+**Why three backends instead of one:**
+- **Bitmap** is the only one that ships *zero-dependency* on day one — the default font is a 96-glyph 8×8 ASCII atlas baked into C++ via `font8x8_basic` (public domain). No filesystem assets, no offline tools, no FreeType, no msdf-atlas-gen. This is what the editor and ui_test currently use.
+- **MSDF** is the smallest swap from bitmap — same vertex pipeline, same atlas-based glyph metrics, only the fragment shader differs (median-of-3 + smoothstep on a multi-channel SDF atlas). Adds sharp scaling at any UI size for ~10 lines of shader and one new uniform. The default MSDF atlas needs `brew install msdf-atlas-gen` to generate; documented in `assets/fonts/default/README.md`.
+- **Slug** (Eric Lengyel's GPU Centered Glyph Rendering) is vector-perfect at any scale, rotation, or perspective angle by evaluating glyph Bézier curves directly in the fragment shader. The patent expired March 2026 (we shipped in April 2026), and the reference shaders are MIT-licensed at https://github.com/EricLengyel/Slug. Critical for VR text and for any content that needs to look right at extreme zooms.
+
+**Why a common `IFont` interface instead of three separate widgets:**
+- Widgets (`UiText`, `UiButton`) hold `const IFont*` and never know which backend produced it. Game code and the layout system are renderer-agnostic.
+- `UiRenderer` queries the font for its program + atlas texture and submits accordingly. Per-font batching means a single string is one draw call, and switching fonts only adds a draw-call boundary.
+- Per-backend resource binding (e.g. Slug's curve buffer texture and dimension uniform) is hidden behind `IFont::bindResources()`, default no-op.
+
+**Why ship Slug as a partial v1:** the realistic estimate (per the doc) was 2-3 weeks even with reference code. One session reasonably shipped: loader, curve extraction via FreeType, shader port, unit test. The remaining pieces (band table, dynamic dilation, proper AA, full UiRenderer integration) are tracked in `docs/SLUG_NEXT_STEPS.md`. This is by design — a self-contained backend that other agents can integrate at their pace is strictly better than a half-working integrated renderer that has to be undone later.
+
+**Why the editor HUD wasn't swapped:** the bitmap agent left the editor's `dbgTextPrintf` HUD calls alone (per the "skip if entangled" clause in the task brief). The bitmap font path is now proven end-to-end in `UiTestApp`, so the swap is a follow-up — see below.
+
+### Font Backends — Follow-ups
+
+- [ ] **Slug end-to-end rendering.** Requires a small UiRenderer change: add a `TEXCOORD1` vertex attribute carrying `vec2(curveOffset, curveCount)` so the slug fragment shader can read per-glyph data. Bitmap and MSDF backends ignore the attribute. Tracked in detail in `docs/SLUG_NEXT_STEPS.md` §7. *Why:* without this, SlugFont compiles and loads but cannot actually draw a glyph on screen.
+- [ ] **Default MSDF atlas.** Run `brew install msdf-atlas-gen` then the command in `assets/fonts/default/README.md` to generate `JetBrainsMono-Regular-msdf.{png,json}`. Until this is done, `MsdfFont::loadFromFile` returns false and the bitmap default is used. *Why:* the MSDF code path is untested against a real atlas; we want to verify the metric layout and shader scaling before promoting MSDF as the default.
+- [ ] **Editor HUD swap.** Replace `bgfx::dbgTextPrintf` calls in `editor/EditorApp.cpp` with `drawList.drawText()` + a UiRenderer pass on a dedicated HUD view. Now that the bitmap font path is proven in UiTestApp, this is bounded — the FPS counter, mode label, "PLAYING" indicator, and status messages are the user-visible wins. *Why:* the editor's HUD currently looks like a 1990s terminal and the bitmap font is ready to replace it.
+- [ ] **Slug band table + AA + dynamic dilation.** Listed in `docs/SLUG_NEXT_STEPS.md` §1-3. Required before Slug becomes the default backend on any platform.
+- [ ] **Cubic Bézier subdivision in SlugFont.** v1 collapses cubic curves to a single quadratic — fine for TrueType (which is natively quadratic) but produces visible artifacts for PostScript/CFF/OTF fonts. Use de Casteljau subdivision. Tracked in SLUG_NEXT_STEPS §4.
+- [ ] **Slug kerning + Unicode.** v1 stubs `getKerning()` to 0 and only loads ASCII 32-126. Wire `FT_Get_Kerning` and add lazy glyph loading or a configurable range table. SLUG_NEXT_STEPS §5-6.
+- [ ] **FreeType as FetchContent dep.** Today's `find_package(Freetype)` works on dev machines with Homebrew but will fail in sandboxed CI. Swap to `FetchContent_Declare(VER-2-13-2)` or document the install requirement. SLUG_NEXT_STEPS §10.
 
 ---
 

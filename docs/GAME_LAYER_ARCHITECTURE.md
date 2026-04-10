@@ -1110,6 +1110,8 @@ else                                   // Low-end / older Android
 
 MSDF is deferred because bitmap fonts are simpler to implement and sufficient for fixed-resolution desktop games. The trigger to implement MSDF is the first game targeting HiDPI displays (Retina, 4K) or VR headsets where text is viewed at varying distances.
 
+**Implementation status (April 2026):** all three backends now exist behind a common `IFont` interface (`engine/ui/IFont.h`) with `BitmapFont`, `MsdfFont`, and `SlugFont` implementations. Bitmap is end-to-end (default font + UiRenderer text pass + widget integration); MSDF and Slug compile, load, and have unit tests but the final UiRenderer integration for Slug is pending — see `docs/SLUG_NEXT_STEPS.md` and the "Font Backends — Follow-ups" subsection in `docs/NOTES.md`. The runtime selection table above remains the design target; today the engine defaults to BitmapFont everywhere via `engine::ui::defaultFont()`.
+
 #### HiDPI
 
 All UI coordinates are in **logical pixels**. The content scale factors from `Engine::contentScaleX()` / `contentScaleY()` are applied once when building the orthographic projection matrix for the UI view:
