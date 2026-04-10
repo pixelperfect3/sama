@@ -51,8 +51,16 @@ private:
     EditorState& state_;
     const IEditorWindow& window_;
 
+    // One row in the browser list. Computed once in refresh() so render()
+    // doesn't have to re-parse extensions every frame.
+    struct AssetEntry
+    {
+        std::string filename;
+        const char* icon = "[?]";  // pointer to a static literal — no alloc
+    };
+
     std::string assetDir_;
-    std::vector<std::string> assetFiles_;
+    std::vector<AssetEntry> assetFiles_;
 
     // Scroll offset for the file list.
     int scrollOffset_ = 0;

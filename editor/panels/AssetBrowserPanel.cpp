@@ -43,6 +43,7 @@ void AssetBrowserPanel::setAssetDirectory(const char* path)
 void AssetBrowserPanel::refresh()
 {
     assetFiles_.clear();
+    assetFiles_.reserve(64);
 
     if (!fs::exists(assetDir_))
         return;
@@ -57,15 +58,23 @@ void AssetBrowserPanel::refresh()
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](unsigned char c) { return std::tolower(c); });
 
-        if (ext == ".glb" || ext == ".gltf" || ext == ".obj" || ext == ".png" || ext == ".jpg" ||
-            ext == ".jpeg" || ext == ".hdr" || ext == ".wav" || ext == ".ogg" || ext == ".mp3")
+        const char* icon = nullptr;
+        if (ext == ".glb" || ext == ".gltf" || ext == ".obj")
+            icon = "[3D]";
+        else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".hdr")
+            icon = "[Tx]";
+        else if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
+            icon = "[Au]";
+
+        if (icon != nullptr)
         {
-            assetFiles_.push_back(entry.path().filename().string());
+            assetFiles_.push_back({entry.path().filename().string(), icon});
         }
     }
 
-    // Sort alphabetically.
-    std::sort(assetFiles_.begin(), assetFiles_.end());
+    // Sort alphabetically by filename.
+    std::sort(assetFiles_.begin(), assetFiles_.end(),
+              [](const AssetEntry& a, const AssetEntry& b) { return a.filename < b.filename; });
     scrollOffset_ = 0;
 }
 
@@ -116,28 +125,10 @@ void AssetBrowserPanel::render()
 
     for (int i = scrollOffset_; i < endIdx; ++i)
     {
-        const auto& file = assetFiles_[i];
-
-        // Determine file type icon based on extension.
-        const char* icon = "[?]";
-        auto ext = fs::path(file).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-
-        if (ext == ".glb" || ext == ".gltf" || ext == ".obj")
-        {
-            icon = "[3D]";
-        }
-        else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".hdr")
-        {
-            icon = "[Tx]";
-        }
-        else if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
-        {
-            icon = "[Au]";
-        }
-
-        bgfx::dbgTextPrintf(kStartX, row, 0x07, " %s %-30s", icon, file.c_str());
+        const auto& entry = assetFiles_[i];
+        // Icon was cached in refresh() — no per-frame parse / lowercase /
+        // string allocation here.
+        bgfx::dbgTextPrintf(kStartX, row, 0x07, " %s %-30s", entry.icon, entry.filename.c_str());
         ++row;
     }
 
