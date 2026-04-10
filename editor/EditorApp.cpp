@@ -42,6 +42,8 @@
 #include "engine/assets/GltfSceneSpawner.h"
 #include "engine/assets/ObjLoader.h"
 #include "engine/assets/StdFileSystem.h"
+#include "engine/assets/Texture.h"
+#include "engine/assets/TextureLoader.h"
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/memory/FrameArena.h"
@@ -193,6 +195,31 @@ struct EditorApp::Impl
     // Menu action pending from native menu click (set by static callback).
     std::string pendingMenuAction;
 
+    // Editor-loaded textures (separate from glTF-imported textures, which
+    // are owned by the GltfSceneSpawner). When the user picks a new image
+    // for a material slot via the Properties panel, we load it through the
+    // asset manager, register the resulting bgfx handle in RenderResources,
+    // and remember (resourceId, asset handle, source path) here so we can
+    // (a) decrement the asset ref count on shutdown, (b) re-use the same
+    // resource id when the same path is picked twice in one session,
+    // (c) display the source filename in the Properties panel.
+    struct EditorTexture
+    {
+        std::string path;
+        engine::assets::AssetHandle<engine::assets::Texture> handle{};
+        uint32_t resourceId = 0;  // index in RenderResources::textures_
+    };
+    std::vector<EditorTexture> editorTextures;
+
+    // Resolve `absolutePath` to a RenderResources texture id, loading it
+    // synchronously if it isn't already cached. Returns 0 on failure.
+    uint32_t loadTextureForMaterial(const std::string& absolutePath);
+
+    // Look up a previously-loaded texture by its RenderResources id and
+    // return its source path (empty if the id is unknown). Used by the
+    // Properties panel to display the filename next to a texture slot.
+    const std::string& textureSourcePath(uint32_t resourceId) const;
+
     // Build entity info list for the hierarchy panel.
     void refreshHierarchyView();
 
@@ -334,6 +361,79 @@ bool EditorApp::Impl::addComponentToSelection(const std::string& type)
     propertiesDirty = true;
     hierarchyDirty = true;
     return true;
+}
+
+uint32_t EditorApp::Impl::loadTextureForMaterial(const std::string& absolutePath)
+{
+    if (absolutePath.empty())
+        return 0;
+
+    // De-dupe: if we already loaded this exact path in this session, return
+    // the existing resource id so material slots can share textures.
+    for (const auto& t : editorTextures)
+    {
+        if (t.path == absolutePath)
+            return t.resourceId;
+    }
+
+    // Convert to a path the asset manager can resolve. We constructed the
+    // StdFileSystem with root ".", so an absolute path needs to be either
+    // made relative to cwd or passed as-is. The std file system accepts
+    // absolute paths via fopen, so we just hand it over.
+    auto handle = assetManager->load<engine::assets::Texture>(absolutePath);
+    if (!handle.isValid())
+    {
+        snprintf(statusMsg, sizeof(statusMsg), "Texture load failed: bad handle");
+        statusTimer = 3.0f;
+        return 0;
+    }
+
+    // Synchronous wait. Texture loads are typically fast (decode + upload),
+    // and the editor is interactive — blocking is acceptable for v1.
+    while (assetManager->state(handle) == engine::assets::AssetState::Loading ||
+           assetManager->state(handle) == engine::assets::AssetState::Pending)
+    {
+        assetManager->processUploads();
+    }
+
+    if (assetManager->state(handle) != engine::assets::AssetState::Ready)
+    {
+        const std::string& err = assetManager->error(handle);
+        snprintf(statusMsg, sizeof(statusMsg), "Texture load failed: %.80s",
+                 err.empty() ? "unknown error" : err.c_str());
+        statusTimer = 3.0f;
+        assetManager->release(handle);
+        return 0;
+    }
+
+    const engine::assets::Texture* tex = assetManager->get<engine::assets::Texture>(handle);
+    if (!tex || !tex->isValid())
+    {
+        snprintf(statusMsg, sizeof(statusMsg), "Texture load failed: invalid handle");
+        statusTimer = 3.0f;
+        assetManager->release(handle);
+        return 0;
+    }
+
+    const uint32_t resId = resources.addTexture(tex->handle);
+    editorTextures.push_back({absolutePath, handle, resId});
+
+    snprintf(statusMsg, sizeof(statusMsg), "Loaded texture (id=%u)", resId);
+    statusTimer = 2.0f;
+    return resId;
+}
+
+const std::string& EditorApp::Impl::textureSourcePath(uint32_t resourceId) const
+{
+    static const std::string kEmpty;
+    if (resourceId == 0)
+        return kEmpty;
+    for (const auto& t : editorTextures)
+    {
+        if (t.resourceId == resourceId)
+            return t.path;
+    }
+    return kEmpty;
 }
 
 void EditorApp::Impl::refreshHierarchyView()
@@ -565,6 +665,30 @@ void EditorApp::Impl::refreshPropertiesView()
                 f.label = "Emiss";
                 f.value = mat->emissiveScale;
                 f.fieldId = 203;
+                fields.push_back(f);
+            }
+
+            // Texture slots — five rows, one per Material texture id field.
+            // Field IDs 210..214 are reserved for these (see the texture-
+            // changed callback wiring in init()).
+            struct TexSlot
+            {
+                const char* label;
+                int fieldId;
+                uint32_t texId;
+            };
+            const TexSlot slots[] = {
+                {"Albedo Map", 210, mat->albedoMapId}, {"Normal Map", 211, mat->normalMapId},
+                {"ORM Map", 212, mat->ormMapId},       {"Emiss Map", 213, mat->emissiveMapId},
+                {"AO Map", 214, mat->occlusionMapId},
+            };
+            for (const auto& s : slots)
+            {
+                CocoaPropertiesView::PropertyField f;
+                f.type = CocoaPropertiesView::PropertyField::Type::TextureField;
+                f.label = s.label;
+                f.fieldId = s.fieldId;
+                f.texturePath = textureSourcePath(s.texId);
                 fields.push_back(f);
             }
         }
@@ -1305,6 +1429,50 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             // component's display block.
         });
 
+    // Wire native properties view texture-picker callback.
+    // fieldId encodes which slot of the material was clicked:
+    //   210 = albedo, 211 = normal, 212 = ORM, 213 = emissive, 214 = occlusion
+    impl_->window->propertiesView()->setTextureChangedCallback(
+        [this](int fieldId, const std::string& path)
+        {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
+            EntityID entity = impl_->editorState.primarySelection();
+            if (entity == INVALID_ENTITY)
+                return;
+            auto* mc = impl_->registry.get<MaterialComponent>(entity);
+            if (!mc)
+                return;
+            Material* mat = impl_->resources.getMaterialMut(mc->material);
+            if (!mat)
+                return;
+
+            const uint32_t newId = impl_->loadTextureForMaterial(path);
+            if (newId == 0)
+                return;
+            switch (fieldId)
+            {
+                case 210:
+                    mat->albedoMapId = newId;
+                    break;
+                case 211:
+                    mat->normalMapId = newId;
+                    break;
+                case 212:
+                    mat->ormMapId = newId;
+                    break;
+                case 213:
+                    mat->emissiveMapId = newId;
+                    break;
+                case 214:
+                    mat->occlusionMapId = newId;
+                    break;
+                default:
+                    break;
+            }
+            impl_->propertiesDirty = true;
+        });
+
     impl_->hierarchyPanel =
         std::make_unique<HierarchyPanel>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->hierarchyPanel->init();
@@ -1347,6 +1515,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         std::make_unique<engine::assets::AssetManager>(*impl_->threadPool, *impl_->fileSystem);
     impl_->assetManager->registerLoader(std::make_unique<engine::assets::GltfLoader>());
     impl_->assetManager->registerLoader(std::make_unique<engine::assets::ObjLoader>());
+    impl_->assetManager->registerLoader(std::make_unique<engine::assets::TextureLoader>());
 
     // -- Scene serializer -----------------------------------------------------
     impl_->sceneSerializer.registerEngineComponents();
@@ -2416,6 +2585,14 @@ void EditorApp::shutdown()
     }
 
     impl_->gizmoRenderer.shutdown();
+
+    // Release editor-loaded textures (decrements asset ref counts; the
+    // RenderResources entries are cleaned up via destroyAll below).
+    for (auto& t : impl_->editorTextures)
+    {
+        impl_->assetManager->release(t.handle);
+    }
+    impl_->editorTextures.clear();
 
     // Tear down HUD font + UI renderer.
     impl_->hudFont.shutdown();

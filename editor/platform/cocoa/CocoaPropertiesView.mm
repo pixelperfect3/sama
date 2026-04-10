@@ -1,6 +1,7 @@
 #include "editor/platform/cocoa/CocoaPropertiesView.h"
 
 #import <Cocoa/Cocoa.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 // ---------------------------------------------------------------------------
 // PropertyFieldView -- a single property row (label + control).
@@ -23,11 +24,13 @@
 @property(nonatomic, copy) void (^onValueChanged)(int fieldId, float newValue);
 @property(nonatomic, copy) void (^onColorChanged)(int fieldId, float r, float g, float b);
 @property(nonatomic, copy) void (^onIntChanged)(int fieldId, int newIndex);
+@property(nonatomic, copy) void (^onTextureChanged)(int fieldId, NSString* path);
 @property(nonatomic, copy) void (^onAddComponent)(NSString* componentType);
 @property(nonatomic, assign) BOOL suppressCallbacks;  // set during rebuild to prevent stale events
 - (void)addComponentClicked:(NSButton*)sender;
 - (void)addComponentMenuItemPicked:(NSMenuItem*)sender;
 - (void)popupChanged:(NSPopUpButton*)sender;
+- (void)textureBrowseClicked:(NSButton*)sender;
 @end
 
 @implementation PropertiesFieldDelegate
@@ -130,6 +133,44 @@
     }
 }
 
+- (void)textureBrowseClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.message = @"Choose a texture image";
+    if (@available(macOS 11.0, *))
+    {
+        // Modern API: filter by Uniform Type Identifiers.
+        NSMutableArray<UTType*>* types = [NSMutableArray array];
+        for (NSString* ext in @[ @"png", @"jpg", @"jpeg", @"tga", @"bmp", @"hdr", @"ktx", @"dds" ])
+        {
+            UTType* t = [UTType typeWithFilenameExtension:ext];
+            if (t)
+                [types addObject:t];
+        }
+        panel.allowedContentTypes = types;
+    }
+    else
+    {
+        // Pre-Big Sur fallback (deprecated in 12.0 but still works).
+        panel.allowedFileTypes =
+            @[ @"png", @"jpg", @"jpeg", @"tga", @"bmp", @"hdr", @"ktx", @"dds" ];
+    }
+    if ([panel runModal] != NSModalResponseOK || panel.URLs.count == 0)
+    {
+        return;
+    }
+    NSString* path = [panel.URLs.firstObject path];
+    if (_onTextureChanged && path)
+    {
+        _onTextureChanged((int)sender.tag, path);
+    }
+}
+
 @end
 
 // ---------------------------------------------------------------------------
@@ -194,6 +235,7 @@ struct CocoaPropertiesView::Impl
     ValueChangedCallback valueChangedCallback;
     ColorChangedCallback colorChangedCallback;
     IntChangedCallback intChangedCallback;
+    TextureChangedCallback textureChangedCallback;
     AddComponentCallback addComponentCallback;
     std::vector<NSView*> fieldViews;  // Retains views for tag lookup
 };
@@ -281,6 +323,16 @@ void CocoaPropertiesView::setIntChangedCallback(IntChangedCallback cb)
     impl_->delegate.onIntChanged = ^(int fieldId, int newIndex) {
       if (storedCb)
           storedCb(fieldId, newIndex);
+    };
+}
+
+void CocoaPropertiesView::setTextureChangedCallback(TextureChangedCallback cb)
+{
+    impl_->textureChangedCallback = std::move(cb);
+    auto& storedCb = impl_->textureChangedCallback;
+    impl_->delegate.onTextureChanged = ^(int fieldId, NSString* path) {
+      if (storedCb && path)
+          storedCb(fieldId, std::string([path UTF8String]));
     };
 }
 
@@ -469,6 +521,52 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:colorWell];
                     [row addArrangedSubview:colorLabel];
+                    [impl_->stackView addArrangedSubview:row];
+                    impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
+                    break;
+                }
+                case PropertyField::Type::TextureField:
+                {
+                    NSStackView* row = [NSStackView stackViewWithViews:@[]];
+                    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                    row.spacing = 6.0;
+                    row.translatesAutoresizingMaskIntoConstraints = NO;
+
+                    NSString* labelStr = [NSString stringWithUTF8String:field.label.c_str()];
+                    NSTextField* label = makeLabel(labelStr, 11.0);
+                    [label.widthAnchor constraintEqualToConstant:60].active = YES;
+
+                    // Display the basename of the current texture path, or
+                    // "(none)" if the slot is empty. Truncate long names so
+                    // the row stays a fixed width.
+                    std::string display = "(none)";
+                    if (!field.texturePath.empty())
+                    {
+                        const auto slash = field.texturePath.find_last_of('/');
+                        display = (slash == std::string::npos)
+                                      ? field.texturePath
+                                      : field.texturePath.substr(slash + 1);
+                        if (display.size() > 22)
+                            display = display.substr(0, 19) + "...";
+                    }
+                    NSTextField* nameLabel =
+                        makeLabel([NSString stringWithUTF8String:display.c_str()], 10.0);
+                    nameLabel.textColor = field.texturePath.empty() ? [NSColor secondaryLabelColor]
+                                                                    : [NSColor labelColor];
+                    [nameLabel.widthAnchor constraintEqualToConstant:140].active = YES;
+
+                    NSButton* browseBtn =
+                        [NSButton buttonWithTitle:@"..."
+                                           target:impl_->delegate
+                                           action:@selector(textureBrowseClicked:)];
+                    browseBtn.bezelStyle = NSBezelStyleRounded;
+                    browseBtn.tag = field.fieldId;
+                    browseBtn.translatesAutoresizingMaskIntoConstraints = NO;
+                    [browseBtn.widthAnchor constraintEqualToConstant:32].active = YES;
+
+                    [row addArrangedSubview:label];
+                    [row addArrangedSubview:nameLabel];
+                    [row addArrangedSubview:browseBtn];
                     [impl_->stackView addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;

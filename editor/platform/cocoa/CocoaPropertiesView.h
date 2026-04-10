@@ -23,12 +23,13 @@ public:
     {
         enum class Type : uint8_t
         {
-            Label,         // Read-only label
-            FloatField,    // Editable float
-            ColorField,    // Color display (R,G,B)
-            SliderField,   // 0..1 slider
-            Header,        // Section header
-            DropdownField  // NSPopUpButton with a list of options + current index
+            Label,          // Read-only label
+            FloatField,     // Editable float
+            ColorField,     // Color display (R,G,B)
+            SliderField,    // 0..1 slider
+            Header,         // Section header
+            DropdownField,  // NSPopUpButton with a list of options + current index
+            TextureField    // Texture slot: shows filename + a Browse button
         };
 
         Type type = Type::Label;
@@ -42,11 +43,18 @@ public:
         // DropdownField only:
         std::vector<std::string> options;
         int currentIndex = 0;
+
+        // TextureField only: filename of the currently bound texture (empty
+        // if none). The Browse button opens an NSOpenPanel filtered to image
+        // files; the resulting absolute path is sent through
+        // TextureChangedCallback. An empty `texturePath` displays as "(none)".
+        std::string texturePath;
     };
 
     using ValueChangedCallback = std::function<void(int fieldId, float newValue)>;
     using ColorChangedCallback = std::function<void(int fieldId, float r, float g, float b)>;
     using IntChangedCallback = std::function<void(int fieldId, int newIndex)>;
+    using TextureChangedCallback = std::function<void(int fieldId, const std::string& path)>;
     using AddComponentCallback = std::function<void(const std::string& componentType)>;
 
     CocoaPropertiesView();
@@ -62,6 +70,7 @@ public:
     void setValueChangedCallback(ValueChangedCallback cb);
     void setColorChangedCallback(ColorChangedCallback cb);
     void setIntChangedCallback(IntChangedCallback cb);
+    void setTextureChangedCallback(TextureChangedCallback cb);
     // Fires when the user picks a component from the "+ Add Component" menu.
     // The componentType string is one of: "directional_light", "point_light",
     // "mesh", "rigid_body", "box_collider".
