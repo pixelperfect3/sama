@@ -24,13 +24,13 @@ namespace
 // Keep the TTF path relative to the repo root — tests are launched from
 // the build dir, so walk up until we find the assets directory. This is
 // cheaper than threading a runtime path through CMake configure-time.
-std::filesystem::path findJetBrainsMono()
+std::filesystem::path findDefaultTtf()
 {
     namespace fs = std::filesystem;
     fs::path cwd = fs::current_path();
     for (int i = 0; i < 6; ++i)
     {
-        fs::path candidate = cwd / "assets" / "fonts" / "default" / "JetBrainsMono-Regular.ttf";
+        fs::path candidate = cwd / "assets" / "fonts" / "ChunkFive-Regular.ttf";
         if (fs::exists(candidate))
             return candidate;
         if (!cwd.has_parent_path())
@@ -56,12 +56,12 @@ TEST_CASE("SlugFont: atlasTexture is always invalid (no atlas)", "[ui][slug]")
 
 #if SAMA_HAS_FREETYPE
 
-TEST_CASE("SlugFont: loads JetBrains Mono and builds curve buffer", "[ui][slug]")
+TEST_CASE("SlugFont: loads ChunkFive and builds curve buffer", "[ui][slug]")
 {
-    const auto ttf = findJetBrainsMono();
+    const auto ttf = findDefaultTtf();
     if (ttf.empty())
     {
-        WARN("JetBrainsMono-Regular.ttf not found — skipping Slug load test");
+        WARN("ChunkFive-Regular.ttf not found — skipping Slug load test");
         return;
     }
 
@@ -94,10 +94,10 @@ TEST_CASE("SlugFont: loads JetBrains Mono and builds curve buffer", "[ui][slug]"
 
 TEST_CASE("SlugFont: missing glyphs return nullptr cleanly", "[ui][slug]")
 {
-    const auto ttf = findJetBrainsMono();
+    const auto ttf = findDefaultTtf();
     if (ttf.empty())
     {
-        WARN("JetBrainsMono-Regular.ttf not found — skipping Slug load test");
+        WARN("ChunkFive-Regular.ttf not found — skipping Slug load test");
         return;
     }
 

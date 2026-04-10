@@ -117,9 +117,10 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
 
     // Try to load all three font backends. The bitmap path uses the same
     // embedded debug atlas as engine::ui::defaultFont() and always succeeds.
-    // MSDF needs JetBrainsMono-Regular-msdf.{json,png} which only exist if
-    // someone ran msdf-atlas-gen — gracefully skipped otherwise. Slug needs
-    // FreeType + JetBrainsMono-Regular.ttf (which IS checked in).
+    // MSDF needs ChunkFive-msdf.{json,png} which only exist if someone ran
+    // msdf-atlas-gen on the bundled ChunkFive TTF — gracefully skipped
+    // otherwise. Slug needs FreeType + the ChunkFive TTF (which IS checked
+    // in under assets/fonts/, SIL OFL licensed).
     // Resolve asset paths against the executable's location AND several
     // relative candidates so the app works no matter what the user's cwd
     // is when they launch ui_test. We use _NSGetExecutablePath on macOS to
@@ -169,9 +170,9 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
         return relPath;  // give up; loadFromFile will fail with the original
     };
 
-    std::string ttfPath = findAsset("assets/fonts/default/JetBrainsMono-Regular.ttf");
-    std::string msdfJson = findAsset("assets/fonts/default/JetBrainsMono-Regular-msdf.json");
-    std::string msdfPng = findAsset("assets/fonts/default/JetBrainsMono-Regular-msdf.png");
+    std::string ttfPath = findAsset("assets/fonts/ChunkFive-Regular.ttf");
+    std::string msdfJson = findAsset("assets/fonts/ChunkFive-msdf.json");
+    std::string msdfPng = findAsset("assets/fonts/ChunkFive-msdf.png");
 
     fontLoaded_[0] = bitmapFont_.createDebugFont();
     fontLoaded_[1] = msdfFont_.loadFromFile(msdfJson.c_str(), msdfPng.c_str());

@@ -24,9 +24,8 @@
 namespace
 {
 
-const char* kMetricsPath =
-    ENGINE_SOURCE_DIR "/assets/fonts/default/JetBrainsMono-Regular-msdf.json";
-const char* kAtlasPath = ENGINE_SOURCE_DIR "/assets/fonts/default/JetBrainsMono-Regular-msdf.png";
+const char* kMetricsPath = ENGINE_SOURCE_DIR "/assets/fonts/ChunkFive-msdf.json";
+const char* kAtlasPath = ENGINE_SOURCE_DIR "/assets/fonts/ChunkFive-msdf.png";
 
 bool fileExists(const char* path)
 {

@@ -19,9 +19,10 @@ code, and the commit history of this branch for the full delivery.
   AA, no dilation.
 - `loadSlugProgram()` in `ShaderLoader.{h,cpp}` (Metal / SPIRV / GLSL /
   ESSL variants compiled by `shaderc`).
-- `tests/ui/TestSlugFont.cpp` (4 test cases, 19 assertions). Loads
-  JetBrains Mono, verifies glyph metrics + per-glyph curve data.
-- `assets/fonts/default/JetBrainsMono-Regular.ttf` checked in.
+- `tests/ui/TestSlugFont.cpp` (4 test cases, 19 assertions). Loads the
+  bundled ChunkFive TTF, verifies glyph metrics + per-glyph curve data.
+- `assets/fonts/ChunkFive-Regular.ttf` (SIL OFL, The League of Movable
+  Type) checked in as the default TTF source.
 
 ## What's left
 
