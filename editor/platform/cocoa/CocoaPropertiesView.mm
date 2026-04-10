@@ -25,12 +25,14 @@
 @property(nonatomic, copy) void (^onColorChanged)(int fieldId, float r, float g, float b);
 @property(nonatomic, copy) void (^onIntChanged)(int fieldId, int newIndex);
 @property(nonatomic, copy) void (^onTextureChanged)(int fieldId, NSString* path);
+@property(nonatomic, copy) void (^onTextureCleared)(int fieldId);
 @property(nonatomic, copy) void (^onAddComponent)(NSString* componentType);
 @property(nonatomic, assign) BOOL suppressCallbacks;  // set during rebuild to prevent stale events
 - (void)addComponentClicked:(NSButton*)sender;
 - (void)addComponentMenuItemPicked:(NSMenuItem*)sender;
 - (void)popupChanged:(NSPopUpButton*)sender;
 - (void)textureBrowseClicked:(NSButton*)sender;
+- (void)textureClearClicked:(NSButton*)sender;
 @end
 
 @implementation PropertiesFieldDelegate
@@ -171,6 +173,16 @@
     }
 }
 
+- (void)textureClearClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTextureCleared)
+    {
+        _onTextureCleared((int)sender.tag);
+    }
+}
+
 @end
 
 // ---------------------------------------------------------------------------
@@ -236,6 +248,7 @@ struct CocoaPropertiesView::Impl
     ColorChangedCallback colorChangedCallback;
     IntChangedCallback intChangedCallback;
     TextureChangedCallback textureChangedCallback;
+    TextureClearedCallback textureClearedCallback;
     AddComponentCallback addComponentCallback;
     std::vector<NSView*> fieldViews;  // Retains views for tag lookup
 };
@@ -333,6 +346,16 @@ void CocoaPropertiesView::setTextureChangedCallback(TextureChangedCallback cb)
     impl_->delegate.onTextureChanged = ^(int fieldId, NSString* path) {
       if (storedCb && path)
           storedCb(fieldId, std::string([path UTF8String]));
+    };
+}
+
+void CocoaPropertiesView::setTextureClearedCallback(TextureClearedCallback cb)
+{
+    impl_->textureClearedCallback = std::move(cb);
+    auto& storedCb = impl_->textureClearedCallback;
+    impl_->delegate.onTextureCleared = ^(int fieldId) {
+      if (storedCb)
+          storedCb(fieldId);
     };
 }
 
@@ -567,6 +590,25 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:nameLabel];
                     [row addArrangedSubview:browseBtn];
+
+                    // Only show the clear button when there is a texture
+                    // bound to the slot. A small borderless "X" matching the
+                    // visual weight of the browse button next to it.
+                    if (!field.texturePath.empty())
+                    {
+                        NSButton* clearBtn =
+                            [NSButton buttonWithTitle:@"X"
+                                               target:impl_->delegate
+                                               action:@selector(textureClearClicked:)];
+                        clearBtn.bezelStyle = NSBezelStyleInline;
+                        clearBtn.bordered = NO;
+                        clearBtn.tag = field.fieldId;
+                        clearBtn.translatesAutoresizingMaskIntoConstraints = NO;
+                        clearBtn.toolTip = @"Clear texture slot";
+                        [clearBtn.widthAnchor constraintEqualToConstant:20].active = YES;
+                        [row addArrangedSubview:clearBtn];
+                    }
+
                     [impl_->stackView addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;

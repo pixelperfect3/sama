@@ -55,6 +55,7 @@ public:
     using ColorChangedCallback = std::function<void(int fieldId, float r, float g, float b)>;
     using IntChangedCallback = std::function<void(int fieldId, int newIndex)>;
     using TextureChangedCallback = std::function<void(int fieldId, const std::string& path)>;
+    using TextureClearedCallback = std::function<void(int fieldId)>;
     using AddComponentCallback = std::function<void(const std::string& componentType)>;
 
     CocoaPropertiesView();
@@ -71,6 +72,7 @@ public:
     void setColorChangedCallback(ColorChangedCallback cb);
     void setIntChangedCallback(IntChangedCallback cb);
     void setTextureChangedCallback(TextureChangedCallback cb);
+    void setTextureClearedCallback(TextureClearedCallback cb);
     // Fires when the user picks a component from the "+ Add Component" menu.
     // The componentType string is one of: "directional_light", "point_light",
     // "mesh", "rigid_body", "box_collider".
