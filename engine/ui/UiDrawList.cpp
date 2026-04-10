@@ -27,7 +27,8 @@ void UiDrawList::drawTexturedRect(math::Vec2 pos, math::Vec2 size, bgfx::Texture
     commands_.push_back(cmd);
 }
 
-void UiDrawList::drawText(math::Vec2 pos, const char* text, math::Vec4 color)
+void UiDrawList::drawText(math::Vec2 pos, const char* text, math::Vec4 color, const IFont* font,
+                          float fontSize)
 {
     UiDrawCmd cmd{};
     cmd.type = UiDrawCmd::Text;
@@ -35,6 +36,8 @@ void UiDrawList::drawText(math::Vec2 pos, const char* text, math::Vec4 color)
     cmd.size = {0.f, 0.f};
     cmd.color = color;
     cmd.text = text;
+    cmd.font = font;
+    cmd.fontSize = fontSize;
     commands_.push_back(cmd);
 }
 
