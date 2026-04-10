@@ -817,6 +817,149 @@ glm::mat4 proj = glm::perspective(glm::radians(45.f),
 
 ---
 
+### UI / 2D Text
+
+The retained-mode UI system lives in `engine::ui`. A `UiCanvas` owns a tree
+of `UiNode` widgets (panels, text, buttons, sliders, progress bars). Every
+frame you call `canvas.update()` to recompute layout, then submit the
+resulting `UiDrawList` through a `UiRenderer` on a dedicated bgfx view.
+
+#### Minimal text rendering
+
+```cpp
+#include "engine/ui/UiCanvas.h"
+#include "engine/ui/UiDrawList.h"
+#include "engine/ui/UiRenderer.h"
+#include "engine/ui/MsdfFont.h"
+
+// Once at startup:
+engine::ui::MsdfFont font;
+font.loadFromFile("assets/fonts/JetBrainsMono-msdf.json",
+                  "assets/fonts/JetBrainsMono-msdf.png");
+
+engine::ui::UiRenderer ui;
+ui.init();
+
+// Per frame:
+engine::ui::UiDrawList dl;
+dl.drawText({12.f, 12.f}, "Hello, world",
+            {1.f, 1.f, 1.f, 1.f}, &font, 18.f);
+
+bgfx::setViewName(viewId, "HUD");
+bgfx::setViewRect(viewId, 0, 0, fbW, fbH);
+bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+bgfx::touch(viewId);
+ui.render(dl, viewId, fbW, fbH);
+
+// At shutdown:
+font.shutdown();
+ui.shutdown();
+```
+
+`drawText`'s `position` is the **top-left of the line in y-down screen
+pixels**. `fontSize` is in pixels; the renderer scales each glyph quad by
+`fontSize / font.nominalSize()`. Pass `nullptr` for the font argument to
+use `engine::ui::defaultFont()` (a 96-glyph 8×8 ASCII bitmap baked into the
+binary — useful as a no-asset fallback).
+
+#### Picking a font backend
+
+All three backends implement `engine::ui::IFont` and are interchangeable
+from the renderer's POV. Pick by GPU tier or by what you need:
+
+| Backend | Asset | Looks like | Use when |
+|---|---|---|---|
+| `BitmapFont::createDebugFont()` | none (embedded) | 8×8 fixed-size, low quality | Bootstrapping, no asset toolchain |
+| `BitmapFont::loadFromFile(.fnt, .png)` | BMFont pair | Sharp at the size it was generated | Single fixed UI scale |
+| `MsdfFont::loadFromFile(.json, .png)` | msdf-atlas-gen output | Sharp at any draw size | Default for UI; recommended |
+| `SlugFont::loadFromFile(.ttf, sizePx)` | TTF | Vector-perfect at any size, rotation, perspective | Desktop / VR / hi-DPI text |
+
+`engine::ui::SlugFont` requires FreeType at build time (`SAMA_HAS_FREETYPE`).
+The Slug end-to-end rendering path through `UiRenderer` is incomplete as of
+this writing — see `docs/SLUG_NEXT_STEPS.md` §7.
+
+#### Generating an MSDF atlas
+
+The default `JetBrainsMono-msdf.{png,json}` is committed under
+`assets/fonts/`. To generate one for a different font:
+
+```sh
+# Build msdf-atlas-gen v1.3 from source — there's no Homebrew formula.
+git clone --recursive https://github.com/Chlumsky/msdf-atlas-gen.git /tmp/m
+cd /tmp/m && git checkout v1.3 && git submodule update --init --recursive
+cmake -B build -DMSDF_ATLAS_BUILD_STANDALONE=ON -DMSDF_ATLAS_USE_SKIA=OFF \
+    -DMSDFGEN_USE_VCPKG=OFF -DMSDFGEN_USE_SKIA=OFF -DMSDFGEN_INSTALL=OFF
+cmake --build build -j$(sysctl -n hw.ncpu)
+
+# From the engine repo root:
+/tmp/m/build/bin/msdf-atlas-gen \
+    -font assets/fonts/MyFont-Regular.ttf \
+    -size 32 -pxrange 4 \
+    -format png -type msdf \
+    -imageout assets/fonts/MyFont-msdf.png \
+    -json     assets/fonts/MyFont-msdf.json
+```
+
+Match `pxRange` between this command and the shader (`u_msdfParams.x` is set
+from `MsdfFont::distanceRange_`, which is read from the JSON's `atlas.distanceRange`
+field). 32 px nominal size + 4 px range gives sharp edges from ~10 to ~80 px on screen.
+
+#### Widgets
+
+Widgets live under `engine/ui/widgets/`. They subclass `UiNode`, hold their
+own style data, and emit draw commands via `onDraw(UiDrawList&)`.
+
+```cpp
+#include "engine/ui/widgets/UiPanel.h"
+#include "engine/ui/widgets/UiText.h"
+#include "engine/ui/widgets/UiButton.h"
+
+engine::ui::UiCanvas canvas(fbW, fbH);
+
+auto* bg = canvas.createNode<engine::ui::UiPanel>("bg");
+bg->anchor = {{0.f, 0.f}, {1.f, 1.f}};       // stretch to fill canvas
+bg->offsetMin = {16.f, 16.f};
+bg->offsetMax = {-16.f, -16.f};
+bg->color = {0.1f, 0.1f, 0.15f, 1.f};
+
+auto* title = canvas.createNode<engine::ui::UiText>("title");
+title->anchor = {{0.f, 0.f}, {1.f, 0.f}};    // stretch top edge
+title->offsetMin = {0.f, 8.f};
+title->offsetMax = {0.f, 36.f};
+title->text = "MENU";
+title->fontSize = 24.f;
+title->font = &font;                          // optional; null = default font
+title->align = engine::ui::TextAlign::Center;
+
+auto* play = canvas.createNode<engine::ui::UiButton>("play");
+play->anchor = {{0.5f, 0.5f}, {0.5f, 0.5f}};  // pinned to canvas center
+play->offsetMin = {-60.f, -16.f};
+play->offsetMax = {60.f, 16.f};
+play->label = "Play";
+play->fontSize = 16.f;
+play->onClick = [](engine::ui::UiNode&) { /* start the game */ };
+
+canvas.root()->addChild(bg);
+bg->addChild(title);
+bg->addChild(play);
+
+canvas.update();   // recomputes layout from anchors+offsets
+ui.render(canvas.drawList(), viewId, fbW, fbH);
+```
+
+The `anchor` field is a Unity-style `RectTransform`: each corner is a
+fraction of the parent (0 = parent's left/top, 1 = parent's right/bottom).
+`offsetMin` and `offsetMax` are pixel offsets added on top of those anchor
+points. `{{0,0},{1,1}} + {16,16}/{-16,-16}` gives "fill parent with a 16-px
+margin"; `{{0.5,0.5},{0.5,0.5}}` gives "centered on parent".
+
+For mouse hit-testing and click events, dispatch synthesized `UiEvent`s
+into `canvas.dispatchEvent(...)` or call `node->onEvent(...)` directly.
+The button widget already handles `MouseEnter` / `MouseDown` / `MouseUp` to
+flip its `state_` between Normal / Hovered / Pressed.
+
+---
+
 ## 3. Common Patterns
 
 ### Component struct pattern
@@ -1234,6 +1377,18 @@ unit cube mesh (+-0.5), set `halfExtents = {1.0, 1.0, 1.0}` to match.
 
 Always call `assets.release(handle)` on shutdown. The handle is ref-counted; release
 decrements it and schedules GPU handle destruction when it reaches zero.
+
+### UI font asset paths are cwd-relative
+
+**Symptom:** `MsdfFont::loadFromFile()` returns false when the binary is launched from outside the repo root, even though the asset exists.
+
+`loadFromFile` takes a plain path and resolves it against the current working directory, not the executable's location. If your app might be launched from anywhere (`./build/myapp` from `/tmp`, double-clicked from Finder, etc.), wrap the path in a small helper that walks upward from `_NSGetExecutablePath` until it finds the `assets/` directory. See the `findAsset` lambda in `apps/ui_test/UiTestApp.cpp::onInit` and `editor/EditorApp.cpp::init` for the canonical implementation.
+
+### MSDF text appears at the wrong vertical position
+
+**Symptom:** Lowercase letters float above the cap-height line, glyphs don't share a baseline.
+
+`UiRenderer` interprets `cmd.position.y` as the **top of the line in y-down screen space**, and `GlyphMetrics::offset.y` as a y-down delta from there to the top of the glyph quad. `BitmapFont` matches this convention because BMFont's `yoffset` is exactly that. `MsdfFont` parses `planeBounds` from msdf-atlas-gen JSON which is **y-up baseline-relative** — `MsdfFont::loadFromFile` converts via `(ascender - planeBounds.top) * nominalSize`. If you write a new IFont backend, store offsets in the y-down line-relative convention or every glyph will be in the wrong place.
 
 ---
 
