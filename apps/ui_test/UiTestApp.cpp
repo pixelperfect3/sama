@@ -184,10 +184,24 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
                  fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
                  fontLoaded_[2] ? "yes" : "no");
 
-    // Default to bitmap (always loads). cycleFontBackend will skip slots
-    // that didn't load when the user presses F.
-    currentFontIndex_ = 0;
-    currentFont_ = fontLoaded_[0] ? static_cast<engine::ui::IFont*>(&bitmapFont_) : nullptr;
+    // Prefer MSDF as the initial backend (sharp at any size, real font),
+    // fall back to Bitmap (always loads via the embedded debug atlas), then
+    // Slug. cycleFontBackend follows the same MSDF → Bitmap → Slug order.
+    if (fontLoaded_[1])
+    {
+        currentFontIndex_ = 1;
+        currentFont_ = &msdfFont_;
+    }
+    else if (fontLoaded_[0])
+    {
+        currentFontIndex_ = 0;
+        currentFont_ = &bitmapFont_;
+    }
+    else if (fontLoaded_[2])
+    {
+        currentFontIndex_ = 2;
+        currentFont_ = &slugFont_;
+    }
 
     buildMainMenu();
     applyFontToCanvas();
@@ -225,7 +239,7 @@ void UiTestApp::onUpdate(Engine& engine, engine::ecs::Registry& /*registry*/, fl
         switchScreen(Screen::Inventory);
     }
 
-    // F = cycle font backend (Bitmap → MSDF → Slug → ...).
+    // F = cycle font backend (MSDF → Bitmap → Slug → ...).
     if (input.isKeyPressed(Key::F))
     {
         std::fprintf(stderr, "[ui_test] F pressed: cycling from %s\n", fontBackendLabel());
@@ -453,16 +467,29 @@ void UiTestApp::applyFontToCanvas()
 void UiTestApp::cycleFontBackend()
 {
     static const char* names[] = {"Bitmap", "MSDF", "Slug"};
+    // Display order: MSDF first (most useful), then Bitmap (always works),
+    // then Slug. The cycle wraps back to MSDF.
+    static constexpr int kCycleOrder[3] = {1, 0, 2};
+
     std::fprintf(stderr, "[ui_test] cycleFontBackend: current=%d loaded=[%s,%s,%s]\n",
                  currentFontIndex_, fontLoaded_[0] ? "Y" : "N", fontLoaded_[1] ? "Y" : "N",
                  fontLoaded_[2] ? "Y" : "N");
 
-    // Step through the three slots, skipping any that didn't load. If none
-    // loaded (shouldn't happen — bitmap always works), leave currentFont_
-    // as it was.
+    // Find current position in the cycle order, then advance until we land
+    // on a slot that loaded successfully.
+    int orderPos = 0;
+    for (int i = 0; i < 3; ++i)
+    {
+        if (kCycleOrder[i] == currentFontIndex_)
+        {
+            orderPos = i;
+            break;
+        }
+    }
+
     for (int step = 1; step <= 3; ++step)
     {
-        int next = (currentFontIndex_ + step) % 3;
+        int next = kCycleOrder[(orderPos + step) % 3];
         std::fprintf(stderr, "[ui_test]   step=%d next=%d (%s) loaded=%s\n", step, next,
                      names[next], fontLoaded_[next] ? "Y" : "N");
         if (fontLoaded_[next] && next != currentFontIndex_)
