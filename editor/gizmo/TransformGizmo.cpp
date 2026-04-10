@@ -164,6 +164,18 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
     if (window_.isKeyPressed('R'))
         mode_ = GizmoMode::Scale;
 
+    // Gizmo writes to TransformComponent, which would fight
+    // PhysicsSystem::syncDynamicBodies while the simulation is running.
+    // Disable interaction outside of Editing mode.
+    if (state_.playState() != EditorPlayState::Editing)
+    {
+        hoveredAxis_ = GizmoAxis::None;
+        activeAxis_ = GizmoAxis::None;
+        dragging_ = false;
+        wasLeftDown_ = window_.isLeftMouseDown();
+        return;
+    }
+
     EntityID selE = state_.primarySelection();
     if (selE == INVALID_ENTITY)
     {
