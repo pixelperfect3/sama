@@ -923,7 +923,7 @@ Retained-mode UI tree for game UIs (menus, HUD, inventory). Not ECS entities —
 
 ### Status
 - [x] Phase 1: UiNode tree, UiCanvas, 6 widgets, UiDrawList — 26 tests (77 assertions)
-- [ ] Phase 2: Layout system (anchor+offset) + event dispatch — in progress
+- [x] Phase 2: Layout system (anchor+offset) + event dispatch — 35 tests (107 assertions)
 - [ ] Phase 3: UiRenderer (orthographic quad batching) + screenshot test — in progress
 - [ ] Phase 4: Text rendering (bitmap fonts)
 - [ ] Phase 5: JSON style sheets
