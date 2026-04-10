@@ -173,9 +173,26 @@ void UiTestApp::onUpdate(Engine& engine, engine::ecs::Registry& /*registry*/, fl
     if (input.isKeyPressed(Key::F))
     {
         std::fprintf(stderr, "[ui_test] F pressed: cycling from %s\n", fontBackendLabel());
+        ++fontCycleCount_;
         cycleFontBackend();
         std::fprintf(stderr, "[ui_test] now active: %s\n", fontBackendLabel());
         applyFontToCanvas();
+    }
+    // Mouse click in the top status strip (rows 1-3 of dbgText, ~48 px tall)
+    // also cycles. Gives the user a no-keyboard fallback in case F is being
+    // eaten by something on their system.
+    if (input.isMouseButtonPressed(engine::input::MouseButton::Left))
+    {
+        double mx = input.mouseX();
+        double my = input.mouseY();
+        if (mx >= 0 && mx < 600 && my >= 0 && my < 56)
+        {
+            std::fprintf(stderr, "[ui_test] status strip clicked: cycling from %s\n",
+                         fontBackendLabel());
+            ++fontCycleCount_;
+            cycleFontBackend();
+            applyFontToCanvas();
+        }
     }
 
     // HUD-specific input.
@@ -1272,11 +1289,13 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
     // wired up its UiRenderer integration yet.
     bgfx::dbgTextClear();
     static const char* screenNames[] = {"Main Menu", "HUD", "Settings", "Inventory"};
-    bgfx::dbgTextPrintf(1, 1, 0x0f, "UI Test - %s   [Font: %s]   (F=cycle, 1-4=screens)",
+    bgfx::dbgTextPrintf(1, 1, 0x0f, "UI Test - %s   [Font: %s]",
                         screenNames[static_cast<int>(currentScreen_)], fontBackendLabel());
-    bgfx::dbgTextPrintf(1, 2, 0x07, "Loaded: Bitmap=%s  MSDF=%s  Slug=%s",
+    bgfx::dbgTextPrintf(1, 2, 0x07, "Loaded: Bitmap=%s  MSDF=%s  Slug=%s    F or click here=cycle",
                         fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
                         fontLoaded_[2] ? "yes" : "no");
+    bgfx::dbgTextPrintf(1, 3, 0x0a, "Cycle counter: %d (increments on every F press)",
+                        fontCycleCount_);
 
     // Sample line — rendered via drawText with the currently selected font.
     // If the backend can render text properly, this line appears. If it

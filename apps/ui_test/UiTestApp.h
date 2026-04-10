@@ -105,6 +105,7 @@ private:
     engine::ui::SlugFont slugFont_;
     bool fontLoaded_[3] = {false, false, false};  // [Bitmap, MSDF, Slug]
     int currentFontIndex_ = 0;                    // 0=Bitmap, 1=MSDF, 2=Slug
+    int fontCycleCount_ = 0;                      // diagnostic: # of F presses
     engine::ui::IFont* currentFont_ = nullptr;
 
     // HUD state
