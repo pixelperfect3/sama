@@ -1190,6 +1190,19 @@ void EditorApp::run()
         if (impl_->gizmo->isDragging())
         {
             impl_->propertiesDirty = true;
+
+            // Sync directional light direction from rotation when rotating a light entity.
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                auto* dl = impl_->registry.get<DirectionalLightComponent>(selE);
+                auto* tc = impl_->registry.get<TransformComponent>(selE);
+                if (dl && tc)
+                {
+                    // Light direction = entity's forward vector (default -Z rotated by quat).
+                    dl->direction = tc->rotation * glm::vec3(0.0f, 0.0f, -1.0f);
+                }
+            }
         }
 
         // -- Gizmo undo command on drag-end ----------------------------------
@@ -1735,16 +1748,28 @@ void EditorApp::run()
         bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
         bgfx::setViewTransform(kViewOpaque, glm::value_ptr(viewMtx), glm::value_ptr(projMtx));
 
-        // Directional light (fixed sun direction).
-        const glm::vec3 lightDir = glm::normalize(glm::vec3(0.4f, 0.7f, 0.5f));
-        const float lightIntensity = 6.0f;
+        // Directional light — read from the first DirectionalLightComponent entity.
+        // Falls back to a default sun direction if no light entity exists.
+        glm::vec3 lightDir = glm::normalize(glm::vec3(0.4f, 0.7f, 0.5f));
+        glm::vec3 lightColor = {1.0f, 0.95f, 0.85f};
+        float lightIntensity = 6.0f;
+        {
+            auto dlView = impl_->registry.view<DirectionalLightComponent>();
+            dlView.each(
+                [&](EntityID /*e*/, const DirectionalLightComponent& dl)
+                {
+                    lightDir = glm::normalize(dl.direction);
+                    lightColor = dl.color;
+                    lightIntensity = dl.intensity;
+                });
+        }
         const float lightData[8] = {lightDir.x,
                                     lightDir.y,
                                     lightDir.z,
                                     0.0f,
-                                    1.0f * lightIntensity,
-                                    0.95f * lightIntensity,
-                                    0.85f * lightIntensity,
+                                    lightColor.x * lightIntensity,
+                                    lightColor.y * lightIntensity,
+                                    lightColor.z * lightIntensity,
                                     0.0f};
 
         // Dummy shadow matrix (identity -- no shadows in Phase 1).
