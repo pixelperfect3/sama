@@ -874,9 +874,13 @@ from the renderer's POV. Pick by GPU tier or by what you need:
 | `MsdfFont::loadFromFile(.json, .png)` | msdf-atlas-gen output | Sharp at any draw size | Default for UI; recommended |
 | `SlugFont::loadFromFile(.ttf, sizePx)` | TTF | Vector-perfect at any size, rotation, perspective | Desktop / VR / hi-DPI text |
 
-`engine::ui::SlugFont` requires FreeType at build time (`SAMA_HAS_FREETYPE`).
-The Slug end-to-end rendering path through `UiRenderer` is incomplete as of
-this writing — see `docs/SLUG_NEXT_STEPS.md` §7.
+`engine::ui::SlugFont` requires FreeType at build time (`SAMA_HAS_FREETYPE`)
+and ships with `assets/fonts/JetBrainsMono-Regular.ttf` as the default
+source font. UiRenderer dispatches to a Slug-aware code path
+(`renderSlugText`) that submits one draw per glyph and writes per-vertex
+font-space corners into TEXCOORD0 so the slug fragment shader can do its
+ray-casting. v1 has hard-edged coverage (no AA yet); see
+`docs/SLUG_NEXT_STEPS.md` for the polish backlog.
 
 #### Generating an MSDF atlas
 
@@ -958,6 +962,95 @@ into `canvas.dispatchEvent(...)` or call `node->onEvent(...)` directly.
 The button widget already handles `MouseEnter` / `MouseDown` / `MouseUp` to
 flip its `state_` between Normal / Hovered / Pressed.
 
+#### HUD overlay on top of a 3D scene
+
+The standard pattern for game HUDs and the editor's own status overlay:
+allocate a dedicated bgfx view past the post-process range, set its clear
+to `BGFX_CLEAR_NONE` so it composites over whatever the scene pass drew,
+and submit a `UiDrawList` from `UiRenderer::render`. The `kViewImGui`
+view (id 15) is reserved for editor overlays; use `kViewGameUi` (id 48)
+for in-game HUDs. Both run after all post-processing so text isn't
+affected by bloom / FXAA / tonemapping.
+
+```cpp
+// Once at startup:
+engine::ui::MsdfFont hudFont;
+hudFont.loadFromFile("assets/fonts/JetBrainsMono-msdf.json",
+                     "assets/fonts/JetBrainsMono-msdf.png");
+engine::ui::UiDrawList hudDrawList;
+engine::ui::UiRenderer ui;
+ui.init();
+
+// Per frame, after the 3D scene pass and any post-processing:
+hudDrawList.clear();
+
+// Build the HUD as a flat list of text commands. drawText takes the
+// top-left position in y-down screen pixels.
+char fpsBuf[64];
+std::snprintf(fpsBuf, sizeof(fpsBuf), "%.1f fps  |  %.2f ms",
+              1.f / dt, dt * 1000.f);
+hudDrawList.drawText({12.f, 8.f},  fpsBuf,    {1.f, 1.f, 1.f, 1.f},
+                     &hudFont, 16.f);
+hudDrawList.drawText({12.f, 28.f}, "WASD=move  Space=jump",
+                     {0.75f, 0.75f, 0.75f, 1.f}, &hudFont, 13.f);
+
+// Set up the view: same framebuffer as the scene pass, no clear, so
+// the HUD composites on top of whatever was rendered there.
+const bgfx::ViewId hudView = engine::rendering::kViewGameUi;
+bgfx::setViewName(hudView, "HUD");
+bgfx::setViewRect(hudView, 0, 0, fbW, fbH);
+bgfx::setViewClear(hudView, BGFX_CLEAR_NONE);
+bgfx::touch(hudView);
+ui.render(hudDrawList, hudView, fbW, fbH);
+
+// At shutdown:
+hudFont.shutdown();
+ui.shutdown();
+```
+
+The rectangle pass and the text pass inside `UiRenderer::render` both
+disable depth test and write — the HUD always sits on top of the scene
+regardless of where the camera is looking. `editor/EditorApp.cpp` uses
+this exact pattern to render its FPS / mode label / "PLAYING" status
+strip in JetBrains Mono MSDF, with a fallback to `bgfx::dbgTextPrintf`
+if the HUD font fails to load.
+
+#### Swapping font backends at runtime
+
+`UiText`/`UiButton` widgets and `drawText` calls hold an `IFont*` so
+you can swap the active font at any time without rebuilding the canvas.
+The `apps/ui_test` app uses this to cycle MSDF → Bitmap → Slug on the F
+key:
+
+```cpp
+engine::ui::BitmapFont bitmap;  bitmap.createDebugFont();
+engine::ui::MsdfFont   msdf;    msdf.loadFromFile(jsonPath, pngPath);
+engine::ui::SlugFont   slug;    slug.loadFromFile(ttfPath, 24.f);
+
+engine::ui::IFont* current = &msdf;  // start with MSDF
+
+// On F press: cycle and re-apply to every text widget in the canvas.
+if (input.isKeyPressed(engine::input::Key::F))
+{
+    current = (current == &msdf)    ? static_cast<engine::ui::IFont*>(&bitmap)
+            : (current == &bitmap)  ? static_cast<engine::ui::IFont*>(&slug)
+                                    : static_cast<engine::ui::IFont*>(&msdf);
+
+    // Walk the canvas and rewrite every text widget's font pointer.
+    auto walk = [&](auto& self, engine::ui::UiNode* node) -> void
+    {
+        if (auto* t = dynamic_cast<engine::ui::UiText*>(node))   t->font = current;
+        if (auto* b = dynamic_cast<engine::ui::UiButton*>(node)) b->font = current;
+        for (auto* c : node->children()) self(self, c);
+    };
+    walk(walk, canvas.root());
+}
+```
+
+Standalone `drawText` commands take the font as a parameter, so you
+just pass `current` directly and pick up the new backend on the next
+frame.
+
 ---
 
 ## 3. Common Patterns
@@ -1035,6 +1128,47 @@ while (eng.beginFrame(dt))
 
 // Release assets, shutdown subsystems
 ```
+
+### HUD overlay pattern
+
+Every game needs an in-game HUD eventually. The minimal recipe is:
+
+```cpp
+// Members on your IGame impl:
+engine::ui::MsdfFont   hudFont_;
+engine::ui::UiDrawList hudDrawList_;
+engine::ui::UiRenderer ui_;
+
+// onInit:
+hudFont_.loadFromFile("assets/fonts/JetBrainsMono-msdf.json",
+                      "assets/fonts/JetBrainsMono-msdf.png");
+ui_.init();
+
+// onRender, after the 3D scene pass:
+hudDrawList_.clear();
+hudDrawList_.drawText({12.f, 8.f}, "Score: 1000",
+                      {1.f, 1.f, 1.f, 1.f}, &hudFont_, 18.f);
+
+bgfx::setViewName(engine::rendering::kViewGameUi, "HUD");
+bgfx::setViewRect(engine::rendering::kViewGameUi, 0, 0, fbW, fbH);
+bgfx::setViewClear(engine::rendering::kViewGameUi, BGFX_CLEAR_NONE);
+bgfx::touch(engine::rendering::kViewGameUi);
+ui_.render(hudDrawList_, engine::rendering::kViewGameUi, fbW, fbH);
+
+// onShutdown:
+hudFont_.shutdown();
+ui_.shutdown();
+```
+
+The HUD view runs after all post-processing so text isn't blurred by
+bloom/FXAA. `BGFX_CLEAR_NONE` means it composites on top of the scene.
+`UiRenderer::render` writes one rect-pass draw call plus one draw call
+per unique font program (typically just one). Zero per-frame heap
+allocations after init.
+
+For a richer HUD with widgets (panels, buttons, progress bars, sliders)
+see the "UI / 2D Text" section above and `apps/ui_test/UiTestApp.cpp`
+for a worked example.
 
 ### IGame pattern (recommended for new games)
 
