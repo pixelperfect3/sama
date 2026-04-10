@@ -1154,48 +1154,18 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
     bgfx::touch(viewId);
 
+    // Emit the screen title as a real UI text command so the BitmapFont
+    // path is exercised end-to-end (was previously drawn via dbgTextPrintf).
+    static const char* screenNames[] = {"Main Menu", "HUD", "Settings", "Inventory"};
+    char titleBuf[64];
+    std::snprintf(titleBuf, sizeof(titleBuf), "UI Test - %s",
+                  screenNames[static_cast<int>(currentScreen_)]);
+    canvas_->drawList().drawText({12.f, 6.f}, titleBuf, {1.f, 1.f, 1.f, 1.f});
+
+    // UiRenderer walks rect + text commands and submits batched draw calls
+    // using the engine's default bitmap font for any Text command whose
+    // `font` pointer is null.
     uiRenderer_.render(canvas_->drawList(), viewId, fbW, fbH);
 
-    // Render text commands via bgfx debug text overlay.
     bgfx::dbgTextClear();
-
-    // Screen title in debug text.
-    const char* screenNames[] = {"Main Menu", "HUD", "Settings", "Inventory"};
-    bgfx::dbgTextPrintf(1, 0, 0x0f, "UI Test - %s", screenNames[static_cast<int>(currentScreen_)]);
-
-    // Render UiDrawCmd::Text commands using dbgTextPrintf.
-    const auto& cmds = canvas_->drawList().commands();
-    for (const auto& cmd : cmds)
-    {
-        if (cmd.type != UiDrawCmd::Text || !cmd.text)
-        {
-            continue;
-        }
-
-        // Convert pixel position to debug text grid coords.
-        // Debug text is 8x16 pixels per character.
-        uint16_t col = static_cast<uint16_t>(cmd.position.x / 8.f);
-        uint16_t row = static_cast<uint16_t>(cmd.position.y / 16.f);
-
-        // Pick a color attribute based on the draw command color.
-        uint8_t attr = 0x0f;  // default: white on black
-        if (cmd.color.x > 0.8f && cmd.color.y < 0.3f)
-        {
-            attr = 0x0c;  // red
-        }
-        else if (cmd.color.z > 0.7f && cmd.color.x < 0.3f)
-        {
-            attr = 0x09;  // blue
-        }
-        else if (cmd.color.x > 0.7f && cmd.color.y > 0.7f && cmd.color.z < 0.4f)
-        {
-            attr = 0x0e;  // yellow
-        }
-        else if (cmd.color.x < 0.6f && cmd.color.y < 0.6f && cmd.color.z < 0.6f)
-        {
-            attr = 0x07;  // gray
-        }
-
-        bgfx::dbgTextPrintf(col, row, attr, "%s", cmd.text);
-    }
 }

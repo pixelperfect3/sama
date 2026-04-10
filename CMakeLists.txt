@@ -742,6 +742,7 @@ add_executable(engine_tests
     tests/game/TestProjectConfig.cpp
     tests/ui/TestUiNode.cpp
     tests/ui/TestUiLayout.cpp
+    tests/ui/TestBitmapFont.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui Catch2::Catch2WithMain)
@@ -932,6 +933,9 @@ add_library(engine_ui STATIC
     engine/ui/UiDrawList.cpp
     engine/ui/UiCanvas.cpp
     engine/ui/UiRenderer.cpp
+    engine/ui/BitmapFont.cpp
+    engine/ui/DefaultFont.cpp
+    engine/ui/Measure.cpp
     engine/ui/widgets/UiPanel.cpp
     engine/ui/widgets/UiImage.cpp
     engine/ui/widgets/UiText.cpp
@@ -939,7 +943,10 @@ add_library(engine_ui STATIC
     engine/ui/widgets/UiSlider.cpp
     engine/ui/widgets/UiProgressBar.cpp
 )
-target_include_directories(engine_ui PUBLIC ${SAMA_ROOT_DIR})
+target_include_directories(engine_ui PUBLIC ${SAMA_ROOT_DIR} ${SAMA_ROOT_DIR}/third_party)
+# stb_image is compiled privately inside BitmapFont.cpp with STB_IMAGE_STATIC
+# so the symbols don't clash with engine_assets/TextureLoader.cpp.
+target_include_directories(engine_ui PRIVATE ${stb_SOURCE_DIR})
 target_link_libraries(engine_ui PUBLIC engine_rendering)
 
 # ===========================================================================
