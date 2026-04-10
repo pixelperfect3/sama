@@ -114,11 +114,10 @@ public:
     {
         for (uint32_t i = 0; i < generations_.size(); ++i)
         {
+            if (!alive_[i])
+                continue;
             EntityID id = makeEntityID(i, generations_[i]);
-            if (isValid(id))
-            {
-                fn(id);
-            }
+            fn(id);
         }
     }
 
@@ -167,6 +166,10 @@ private:
     // INVALID_ENTITY). After destroy, generation is incremented so stale IDs
     // become invalid.
     std::vector<uint32_t> generations_;
+
+    // Tracks which entity slots are currently alive (not destroyed).
+    // forEachEntity checks this rather than relying on generation matching alone.
+    std::vector<bool> alive_;
 
     // Recycled entity indices waiting to be reused.
     std::vector<uint32_t> freeList_;

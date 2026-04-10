@@ -18,8 +18,10 @@ EntityID Registry::createEntity()
     {
         index = static_cast<uint32_t>(generations_.size());
         generations_.push_back(1u);  // Generation 1 — generation 0 is reserved for INVALID_ENTITY
+        alive_.push_back(false);
     }
 
+    alive_[index] = true;
     return makeEntityID(index, generations_[index]);
 }
 
@@ -29,6 +31,8 @@ void Registry::destroyEntity(EntityID entity)
         return;
 
     const uint32_t index = entityIndex(entity);
+
+    alive_[index] = false;
 
     // Remove all components for this entity from every store
     for (auto& [typeKey, store] : componentStores_)
