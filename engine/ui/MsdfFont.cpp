@@ -84,6 +84,8 @@ bool MsdfFont::loadFromFile(const char* metricsPath, const char* atlasPath)
     const float atlasHeight = atlas["height"].getFloat(0.f);
     if (atlasWidth <= 0.f || atlasHeight <= 0.f)
         return false;
+    atlasWidth_ = atlasWidth;
+    atlasHeight_ = atlasHeight;
 
     nominalSize_ = atlas["size"].getFloat(0.f);
     distanceRange_ = atlas["distanceRange"].getFloat(4.f);
@@ -248,6 +250,8 @@ void MsdfFont::shutdown()
     lineHeight_ = 0.f;
     nominalSize_ = 0.f;
     distanceRange_ = 4.f;
+    atlasWidth_ = 0.f;
+    atlasHeight_ = 0.f;
 
     if (bgfx::isValid(atlas_))
     {
@@ -296,7 +300,11 @@ void MsdfFont::bindResources() const
     if (!bgfx::isValid(u_msdfParams_))
         return;
 
-    const float params[4] = {distanceRange_, 0.f, 0.f, 0.f};
+    // u_msdfParams: .x = atlas pixel range (distanceRange)
+    //               .yz = atlas texture dimensions in pixels
+    // The fragment shader uses yz together with fwidth(v_texcoord0) to compute
+    // a per-fragment screen-pixel range, so edges stay crisp at any draw size.
+    const float params[4] = {distanceRange_, atlasWidth_, atlasHeight_, 0.f};
     bgfx::setUniform(u_msdfParams_, params);
 }
 

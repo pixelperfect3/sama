@@ -103,6 +103,8 @@ private:
     float lineHeight_ = 0.f;
     float nominalSize_ = 0.f;
     float distanceRange_ = 4.f;  // pixels — baked into the atlas by msdf-atlas-gen
+    float atlasWidth_ = 0.f;     // atlas texture width in pixels
+    float atlasHeight_ = 0.f;    // atlas texture height in pixels
 
     bgfx::TextureHandle atlas_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
