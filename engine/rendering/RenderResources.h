@@ -100,12 +100,21 @@ public:
     // -----------------------------------------------------------------------
 
     // Register a texture handle and return its stable ID (1-based).
+    // Reuses previously-freed slots before growing the vector.
     uint32_t addTexture(bgfx::TextureHandle h);
 
     // Return the texture with the given ID, or BGFX_INVALID_HANDLE if not found.
     [[nodiscard]] bgfx::TextureHandle getTexture(uint32_t id) const;
 
-    // Number of textures currently registered.  Valid IDs are 1..textureCount().
+    // Mark a previously addTexture()'d slot as free.  Does NOT call
+    // bgfx::destroy on the stored handle — the asset manager (or whatever
+    // else uploaded the texture) still owns the underlying GPU resource.
+    // Subsequent addTexture() calls may reuse the freed slot id.
+    // No-op if the id is 0 or already free.
+    void removeTexture(uint32_t id);
+
+    // Number of texture slots currently allocated (including freed slots).
+    // Valid ids are 1..textureCount() but some may be empty.
     [[nodiscard]] uint32_t textureCount() const
     {
         return static_cast<uint32_t>(textures_.size());
