@@ -740,9 +740,10 @@ add_executable(engine_tests
     tests/animation/TestPoseBlend.cpp
     tests/animation/TestIkSolvers.cpp
     tests/game/TestProjectConfig.cpp
+    tests/ui/TestUiNode.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
@@ -920,6 +921,22 @@ add_library(engine_game STATIC
 )
 target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_game PUBLIC engine_core)
+
+# --- engine_ui static library ---
+# Retained-mode UI system: UiNode tree, UiCanvas, UiDrawList, widget types.
+add_library(engine_ui STATIC
+    engine/ui/UiNode.cpp
+    engine/ui/UiDrawList.cpp
+    engine/ui/UiCanvas.cpp
+    engine/ui/widgets/UiPanel.cpp
+    engine/ui/widgets/UiImage.cpp
+    engine/ui/widgets/UiText.cpp
+    engine/ui/widgets/UiButton.cpp
+    engine/ui/widgets/UiSlider.cpp
+    engine/ui/widgets/UiProgressBar.cpp
+)
+target_include_directories(engine_ui PUBLIC ${SAMA_ROOT_DIR})
+target_link_libraries(engine_ui PUBLIC engine_rendering)
 
 # ===========================================================================
 # Umbrella targets — convenience aggregates for game developers.
