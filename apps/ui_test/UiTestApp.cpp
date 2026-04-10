@@ -124,6 +124,10 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
                                             "assets/fonts/default/JetBrainsMono-Regular-msdf.png");
     fontLoaded_[2] = slugFont_.loadFromFile("assets/fonts/default/JetBrainsMono-Regular.ttf", 24.f);
 
+    std::fprintf(stderr, "[ui_test] font backends loaded: Bitmap=%s MSDF=%s Slug=%s\n",
+                 fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
+                 fontLoaded_[2] ? "yes" : "no");
+
     // Default to bitmap (always loads). cycleFontBackend will skip slots
     // that didn't load when the user presses F.
     currentFontIndex_ = 0;
@@ -168,7 +172,9 @@ void UiTestApp::onUpdate(Engine& engine, engine::ecs::Registry& /*registry*/, fl
     // F = cycle font backend (Bitmap → MSDF → Slug → ...).
     if (input.isKeyPressed(Key::F))
     {
+        std::fprintf(stderr, "[ui_test] F pressed: cycling from %s\n", fontBackendLabel());
         cycleFontBackend();
+        std::fprintf(stderr, "[ui_test] now active: %s\n", fontBackendLabel());
         applyFontToCanvas();
     }
 
@@ -1258,26 +1264,31 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
     bgfx::touch(viewId);
 
-    // Emit the screen title + active font backend label as a real UI text
-    // command so whichever backend the user picked is exercised end-to-end.
+    // Status header — always rendered via bgfx debug text so it's visible
+    // regardless of which font backend is currently active. The dbgText
+    // overlay is owned by bgfx itself; its readability does NOT depend on
+    // the IFont path working. This lets the user verify that F cycling is
+    // actually happening even when the selected backend (e.g. Slug) hasn't
+    // wired up its UiRenderer integration yet.
+    bgfx::dbgTextClear();
     static const char* screenNames[] = {"Main Menu", "HUD", "Settings", "Inventory"};
-    char titleBuf[96];
-    std::snprintf(titleBuf, sizeof(titleBuf), "UI Test - %s   [Font: %s]   (F=cycle)",
-                  screenNames[static_cast<int>(currentScreen_)], fontBackendLabel());
-    canvas_->drawList().drawText({12.f, 6.f}, titleBuf, {1.f, 1.f, 1.f, 1.f}, currentFont_, 18.f);
+    bgfx::dbgTextPrintf(1, 1, 0x0f, "UI Test - %s   [Font: %s]   (F=cycle, 1-4=screens)",
+                        screenNames[static_cast<int>(currentScreen_)], fontBackendLabel());
+    bgfx::dbgTextPrintf(1, 2, 0x07, "Loaded: Bitmap=%s  MSDF=%s  Slug=%s",
+                        fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
+                        fontLoaded_[2] ? "yes" : "no");
 
-    // Show which backends loaded successfully (small line below the title).
-    char loadedBuf[128];
-    std::snprintf(loadedBuf, sizeof(loadedBuf), "Loaded: Bitmap=%s  MSDF=%s  Slug=%s",
-                  fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
-                  fontLoaded_[2] ? "yes" : "no");
-    canvas_->drawList().drawText({12.f, 30.f}, loadedBuf, {0.7f, 0.7f, 0.85f, 1.f}, currentFont_,
-                                 12.f);
+    // Sample line — rendered via drawText with the currently selected font.
+    // If the backend can render text properly, this line appears. If it
+    // can't (e.g. Slug pre-integration), the dbgText status above still
+    // tells the user which backend is active.
+    char sampleBuf[128];
+    std::snprintf(sampleBuf, sizeof(sampleBuf), "Sample (%s): The quick brown fox jumps 0123",
+                  fontBackendLabel());
+    canvas_->drawList().drawText({12.f, 50.f}, sampleBuf, {1.f, 1.f, 1.f, 1.f}, currentFont_, 18.f);
 
     // UiRenderer walks rect + text commands and submits batched draw calls
     // using the engine's default bitmap font for any Text command whose
     // `font` pointer is null.
     uiRenderer_.render(canvas_->drawList(), viewId, fbW, fbH);
-
-    bgfx::dbgTextClear();
 }
