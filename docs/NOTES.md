@@ -566,6 +566,39 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 - [x] Phase 10: Resource usage inspector — live stats panel (FPS, frame time, draw calls, triangles, texture memory, entity count, arena usage) in a tabbed bottom panel alongside Console. Rolling ring buffer history (120 samples). Native NSTabView with CocoaResourceView labels.
 - [x] Phase 11: Play/pause/stop — EditorPlayState enum, Space=play/pause, Escape=stop. Transform snapshot on play, full restore on stop to prevent scene corruption. HUD indicator shows current state.
 
+### TODO
+
+Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, never enforced post-MVP), the Deferred subsection above, and outstanding bug reports surfaced while dogfooding the editor. Items grouped by trigger / dependency.
+
+**Known bugs / UX gaps (dogfooding backlog)**
+- [ ] Material editor: changing a field in the material inspector doesn't apply to the selected entity's `MaterialComponent`. The UI binds, but the write-back path is missing — likely needs a `MaterialInspector::commit()` hook in the same place rotation/scale edits got fixed (`b76908d`). *Why:* the inspector exists but is non-functional, so the panel is misleading.
+- [ ] Selection outline: viewport-clicked entities have no visible highlight — the gizmo appears but the mesh itself is not stenciled. Spec calls for a single-pass stencil outline (§ 18.7 Rendering checklist). *Why:* hard to tell what's selected when the gizmo is occluded by geometry.
+- [ ] Viewport dirty-flagging: editor re-renders every frame even when nothing has changed. Trivial fix once camera/selection/transform changes are observable. *Why:* idle GPU/battery drain on laptops.
+
+**Editor features still pending (post-MVP, no concrete game blocked yet)**
+- [ ] Material editor (proper): node graph or at least a typed multi-channel inspector — texture pickers, sliders, color wells per PBR channel. *Trigger:* first time we want to author a material that isn't a glTF import.
+- [ ] Animation timeline: scrubber + keyframe view for `AnimationComponent`. *Trigger:* first authored animation that isn't imported from glTF.
+- [ ] Node graph: shader / behavior graph editor. *Trigger:* a designer-authored shader or visual scripting requirement (currently neither exists).
+- [ ] Lua / scripting host: deferred until non-programmer authoring or hot-reload-without-recompile is a real ask (NOTES.md → Editor → Deferred).
+
+**Implementation hygiene (§ 18.7 checklist — apply incrementally as code is touched)**
+- [ ] Header hygiene sweep: confirm no `.h` under `editor/` includes `AppKit`, `windows.h`, or `commctrl.h`; Pimpl all platform types; `IEditorPanel`/`IEditorWindow`/`IComponentInspector` headers contain only `<cstdint>` + forward decls.
+- [ ] Replace ad-hoc `std::vector` scratch buffers in editor per-frame paths with `engine::memory::FrameArena` (entity lists, formatted strings, intersection results).
+- [ ] Replace small bounded collections with `InlinedVector<T, N>` (panel list, selection set, gizmo axis hit results).
+- [ ] Switch undo command storage to `PoolAllocator<T, MaxCount>` sized to `maxDepth_` (default 100) — recycle the oldest slot when full.
+- [ ] Audit `std::shared_ptr` usage in editor code; convert to `unique_ptr` unless ownership is documented and proven acyclic.
+- [ ] Async file I/O: scene save/load, asset import, auto-save must not call `fread`/`fwrite`/`ifstream::read` on the main thread for files >4KB. Use `mmap` for baked binary assets.
+- [ ] Gizmo + grid render time budget: enforce <2ms total via the resource inspector.
+- [ ] Profiling: add `SAMA_PROFILE_SCOPE("name")` markers (macro TBD) at the top of every per-frame editor function so future Tracy/Instruments runs are drop-in.
+
+**CI / regression coverage**
+- [ ] ASAN/LSAN-enabled editor build in CI.
+- [ ] Memory benchmark: load reference scene, assert RSS against § 18.5 targets.
+- [ ] Startup-time benchmark: process launch → first frame, asserted against § 18.2 target.
+- [ ] Periodic Instruments "Leaks" + "Allocations" runs at each phase milestone (manual, document in NOTES).
+
+*Why this list lives here and not in `EDITOR_ARCHITECTURE.md`:* the architecture doc captures the binding contract (the *should*); this list is the rolling work queue (the *will-do, in this order*). When an item is completed, move it to the Status checklist above and link the commit, then delete it here.
+
 ---
 
 ## 2D Support
