@@ -22,7 +22,10 @@
 @interface PropertiesFieldDelegate : NSObject <NSTextFieldDelegate>
 @property(nonatomic, copy) void (^onValueChanged)(int fieldId, float newValue);
 @property(nonatomic, copy) void (^onColorChanged)(int fieldId, float r, float g, float b);
+@property(nonatomic, copy) void (^onAddComponent)(NSString* componentType);
 @property(nonatomic, assign) BOOL suppressCallbacks;  // set during rebuild to prevent stale events
+- (void)addComponentClicked:(NSButton*)sender;
+- (void)addComponentMenuItemPicked:(NSMenuItem*)sender;
 @end
 
 @implementation PropertiesFieldDelegate
@@ -75,6 +78,43 @@
     if (_onColorChanged)
     {
         _onColorChanged(fieldId, (float)r, (float)g, (float)b);
+    }
+}
+
+- (void)addComponentClicked:(NSButton*)sender
+{
+    // Build a popup menu of addable components and show it under the button.
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Add Component"];
+    menu.autoenablesItems = NO;
+
+    auto add = ^(NSString* title, NSString* type) {
+      NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
+                                                    action:@selector(addComponentMenuItemPicked:)
+                                             keyEquivalent:@""];
+      item.target = self;
+      item.representedObject = type;
+      item.enabled = YES;
+      [menu addItem:item];
+    };
+
+    add(@"Directional Light", @"directional_light");
+    add(@"Point Light", @"point_light");
+    add(@"Mesh (Cube)", @"mesh");
+    [menu addItem:[NSMenuItem separatorItem]];
+    add(@"Rigid Body", @"rigid_body");
+    add(@"Box Collider", @"box_collider");
+
+    // Show the menu just below the button.
+    NSPoint origin = NSMakePoint(0, sender.bounds.size.height + 4);
+    [menu popUpMenuPositioningItem:nil atLocation:origin inView:sender];
+}
+
+- (void)addComponentMenuItemPicked:(NSMenuItem*)sender
+{
+    NSString* type = (NSString*)sender.representedObject;
+    if (_onAddComponent && type)
+    {
+        _onAddComponent(type);
     }
 }
 
@@ -141,6 +181,7 @@ struct CocoaPropertiesView::Impl
     PropertiesFieldDelegate* delegate = nil;
     ValueChangedCallback valueChangedCallback;
     ColorChangedCallback colorChangedCallback;
+    AddComponentCallback addComponentCallback;
     std::vector<NSView*> fieldViews;  // Retains views for tag lookup
 };
 
@@ -217,6 +258,18 @@ void CocoaPropertiesView::setColorChangedCallback(ColorChangedCallback cb)
     impl_->delegate.onColorChanged = ^(int fieldId, float r, float g, float b) {
       if (storedCb)
           storedCb(fieldId, r, g, b);
+    };
+}
+
+void CocoaPropertiesView::setAddComponentCallback(AddComponentCallback cb)
+{
+    impl_->addComponentCallback = std::move(cb);
+    auto& storedCb = impl_->addComponentCallback;
+    impl_->delegate.onAddComponent = ^(NSString* type) {
+      if (storedCb && type)
+      {
+          storedCb(std::string([type UTF8String]));
+      }
     };
 }
 
@@ -365,6 +418,25 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     break;
                 }
             }
+        }
+
+        // "+ Add Component" footer button — always visible while an entity is
+        // selected, opens a popup menu of addable components.
+        {
+            NSBox* sep = [[NSBox alloc] init];
+            sep.boxType = NSBoxSeparator;
+            sep.translatesAutoresizingMaskIntoConstraints = NO;
+            [impl_->stackView addArrangedSubview:sep];
+            [sep.widthAnchor constraintGreaterThanOrEqualToConstant:200].active = YES;
+            impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)sep);
+
+            NSButton* addButton = [NSButton buttonWithTitle:@"+ Add Component"
+                                                     target:impl_->delegate
+                                                     action:@selector(addComponentClicked:)];
+            addButton.bezelStyle = NSBezelStyleRounded;
+            addButton.translatesAutoresizingMaskIntoConstraints = NO;
+            [impl_->stackView addArrangedSubview:addButton];
+            impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)addButton);
         }
 
         // Force layout update on the document view.

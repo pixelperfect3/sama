@@ -351,6 +351,21 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 11:
             s_menuActionCallback("import_asset");
             break;
+        case 20:
+            s_menuActionCallback("add_component:directional_light");
+            break;
+        case 21:
+            s_menuActionCallback("add_component:point_light");
+            break;
+        case 22:
+            s_menuActionCallback("add_component:mesh");
+            break;
+        case 23:
+            s_menuActionCallback("add_component:rigid_body");
+            break;
+        case 24:
+            s_menuActionCallback("add_component:box_collider");
+            break;
         default:
             break;
     }
@@ -572,6 +587,18 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             addItem(entityMenu, @"Create Light", @"", 10);
             entityMenuItem.submenu = entityMenu;
             [menuBar addItem:entityMenuItem];
+
+            // Component menu — adds components to the primary-selected entity.
+            NSMenuItem* componentMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* componentMenu = [[NSMenu alloc] initWithTitle:@"Component"];
+            addItem(componentMenu, @"Add Directional Light", @"", 20);
+            addItem(componentMenu, @"Add Point Light", @"", 21);
+            addItem(componentMenu, @"Add Mesh (Cube)", @"", 22);
+            [componentMenu addItem:[NSMenuItem separatorItem]];
+            addItem(componentMenu, @"Add Rigid Body", @"", 23);
+            addItem(componentMenu, @"Add Box Collider", @"", 24);
+            componentMenuItem.submenu = componentMenu;
+            [menuBar addItem:componentMenuItem];
 
             // View menu
             NSMenuItem* viewMenuItem = [[NSMenuItem alloc] init];

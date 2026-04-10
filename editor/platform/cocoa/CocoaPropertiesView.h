@@ -41,6 +41,7 @@ public:
 
     using ValueChangedCallback = std::function<void(int fieldId, float newValue)>;
     using ColorChangedCallback = std::function<void(int fieldId, float r, float g, float b)>;
+    using AddComponentCallback = std::function<void(const std::string& componentType)>;
 
     CocoaPropertiesView();
     ~CocoaPropertiesView();
@@ -54,6 +55,10 @@ public:
     // Set callbacks.
     void setValueChangedCallback(ValueChangedCallback cb);
     void setColorChangedCallback(ColorChangedCallback cb);
+    // Fires when the user picks a component from the "+ Add Component" menu.
+    // The componentType string is one of: "directional_light", "point_light",
+    // "mesh", "rigid_body", "box_collider".
+    void setAddComponentCallback(AddComponentCallback cb);
 
     // Rebuild all property fields. Only call when selection changes or values dirty.
     void setProperties(const std::vector<PropertyField>& fields);

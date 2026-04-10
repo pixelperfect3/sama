@@ -190,6 +190,14 @@ struct EditorApp::Impl
 
     // Sync console log to the native console view.
     void syncConsoleView();
+
+    // Add a component to the currently primary-selected entity. Single source
+    // of truth shared by the keyboard 'A' menu, the macOS Component menu, and
+    // the AppKit Properties panel "+ Add Component" button. Returns true if a
+    // component was actually added (selection valid + component not already
+    // present). `type` is one of: "directional_light", "point_light", "mesh",
+    // "rigid_body", "box_collider".
+    bool addComponentToSelection(const std::string& type);
 };
 
 void EditorApp::Impl::resetPhysicsBodies()
@@ -209,6 +217,98 @@ void EditorApp::Impl::resetPhysicsBodies()
                 registry.remove<engine::physics::PhysicsBodyCreatedTag>(e);
             }
         });
+}
+
+bool EditorApp::Impl::addComponentToSelection(const std::string& type)
+{
+    EntityID selE = editorState.primarySelection();
+    if (selE == INVALID_ENTITY)
+    {
+        snprintf(statusMsg, sizeof(statusMsg), "No entity selected");
+        statusTimer = 2.0f;
+        return false;
+    }
+
+    auto setStatus = [&](const char* msg)
+    {
+        snprintf(statusMsg, sizeof(statusMsg), "%s", msg);
+        statusTimer = 2.0f;
+    };
+
+    if (type == "directional_light")
+    {
+        if (registry.has<DirectionalLightComponent>(selE))
+        {
+            setStatus("DirectionalLight already present");
+            return false;
+        }
+        DirectionalLightComponent dl{};
+        dl.direction = {0.0f, -1.0f, 0.0f};
+        dl.color = {1.0f, 1.0f, 1.0f};
+        dl.intensity = 1.0f;
+        dl.flags = 0;
+        registry.emplace<DirectionalLightComponent>(selE, dl);
+        setStatus("Added DirectionalLight");
+    }
+    else if (type == "point_light")
+    {
+        if (registry.has<PointLightComponent>(selE))
+        {
+            setStatus("PointLight already present");
+            return false;
+        }
+        PointLightComponent pl{};
+        pl.color = {1.0f, 1.0f, 1.0f};
+        pl.intensity = 1.0f;
+        pl.radius = 10.0f;
+        registry.emplace<PointLightComponent>(selE, pl);
+        setStatus("Added PointLight");
+    }
+    else if (type == "mesh")
+    {
+        if (registry.has<MeshComponent>(selE))
+        {
+            setStatus("MeshComponent already present");
+            return false;
+        }
+        registry.emplace<MeshComponent>(selE, MeshComponent{cubeMeshId});
+        setStatus("Added MeshComponent (cube)");
+    }
+    else if (type == "rigid_body")
+    {
+        if (registry.has<engine::physics::RigidBodyComponent>(selE))
+        {
+            setStatus("RigidBody already present");
+            return false;
+        }
+        registry.emplace<engine::physics::RigidBodyComponent>(
+            selE, engine::physics::RigidBodyComponent{});
+        setStatus("Added RigidBody");
+    }
+    else if (type == "box_collider")
+    {
+        if (registry.has<engine::physics::ColliderComponent>(selE))
+        {
+            setStatus("Collider already present");
+            return false;
+        }
+        engine::physics::ColliderComponent cc{};
+        cc.shape = engine::physics::ColliderShape::Box;
+        cc.halfExtents = {0.5f, 0.5f, 0.5f};
+        registry.emplace<engine::physics::ColliderComponent>(selE, cc);
+        setStatus("Added Box Collider");
+    }
+    else
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Unknown component type: %s", type.c_str());
+        setStatus(buf);
+        return false;
+    }
+
+    propertiesDirty = true;
+    hierarchyDirty = true;
+    return true;
 }
 
 void EditorApp::Impl::refreshHierarchyView()
@@ -497,6 +597,140 @@ void EditorApp::Impl::refreshPropertiesView()
             f.label = "Radius";
             f.value = pl->radius;
             f.fieldId = 401;
+            fields.push_back(f);
+        }
+    }
+
+    // Rigid body.
+    auto* rb = registry.get<engine::physics::RigidBodyComponent>(entity);
+    if (rb)
+    {
+        {
+            CocoaPropertiesView::PropertyField hdr;
+            hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+            hdr.label = "Rigid Body";
+            fields.push_back(hdr);
+        }
+        {
+            const char* typeStr = "Dynamic";
+            switch (rb->type)
+            {
+                case engine::physics::BodyType::Static:
+                    typeStr = "Static";
+                    break;
+                case engine::physics::BodyType::Dynamic:
+                    typeStr = "Dynamic";
+                    break;
+                case engine::physics::BodyType::Kinematic:
+                    typeStr = "Kinematic";
+                    break;
+            }
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::Label;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Type: %s", typeStr);
+            f.label = buf;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Mass";
+            f.value = rb->mass;
+            f.fieldId = 500;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "LinDamp";
+            f.value = rb->linearDamping;
+            f.fieldId = 501;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "AngDamp";
+            f.value = rb->angularDamping;
+            f.fieldId = 502;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Friction";
+            f.value = rb->friction;
+            f.fieldId = 503;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Restit";
+            f.value = rb->restitution;
+            f.fieldId = 504;
+            fields.push_back(f);
+        }
+    }
+
+    // Collider.
+    auto* cc = registry.get<engine::physics::ColliderComponent>(entity);
+    if (cc)
+    {
+        {
+            CocoaPropertiesView::PropertyField hdr;
+            hdr.type = CocoaPropertiesView::PropertyField::Type::Header;
+            hdr.label = "Collider";
+            fields.push_back(hdr);
+        }
+        {
+            const char* shapeStr = "Box";
+            switch (cc->shape)
+            {
+                case engine::physics::ColliderShape::Box:
+                    shapeStr = "Box";
+                    break;
+                case engine::physics::ColliderShape::Sphere:
+                    shapeStr = "Sphere";
+                    break;
+                case engine::physics::ColliderShape::Capsule:
+                    shapeStr = "Capsule";
+                    break;
+                case engine::physics::ColliderShape::Mesh:
+                    shapeStr = "Mesh";
+                    break;
+            }
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::Label;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Shape: %s", shapeStr);
+            f.label = buf;
+            fields.push_back(f);
+        }
+        const char* extLabels[] = {"HalfX", "HalfY", "HalfZ"};
+        float extVals[] = {cc->halfExtents.x, cc->halfExtents.y, cc->halfExtents.z};
+        for (int i = 0; i < 3; ++i)
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = extLabels[i];
+            f.value = extVals[i];
+            f.fieldId = 510 + i;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::FloatField;
+            f.label = "Radius";
+            f.value = cc->radius;
+            f.fieldId = 513;
+            fields.push_back(f);
+        }
+        {
+            CocoaPropertiesView::PropertyField f;
+            f.type = CocoaPropertiesView::PropertyField::Type::Label;
+            f.label = cc->isSensor ? "Sensor: yes" : "Sensor: no";
             fields.push_back(f);
         }
     }
@@ -962,6 +1196,53 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         pl->radius = value;
                     break;
                 }
+                // Rigid body fields
+                case 500:
+                case 501:
+                case 502:
+                case 503:
+                case 504:
+                {
+                    auto* rb = impl_->registry.get<engine::physics::RigidBodyComponent>(entity);
+                    if (rb)
+                    {
+                        switch (fieldId)
+                        {
+                            case 500:
+                                rb->mass = value;
+                                break;
+                            case 501:
+                                rb->linearDamping = value;
+                                break;
+                            case 502:
+                                rb->angularDamping = value;
+                                break;
+                            case 503:
+                                rb->friction = value;
+                                break;
+                            case 504:
+                                rb->restitution = value;
+                                break;
+                        }
+                    }
+                    break;
+                }
+                // Collider half-extents X/Y/Z, radius
+                case 510:
+                case 511:
+                case 512:
+                case 513:
+                {
+                    auto* cc = impl_->registry.get<engine::physics::ColliderComponent>(entity);
+                    if (cc)
+                    {
+                        if (fieldId == 513)
+                            cc->radius = value;
+                        else
+                            (&cc->halfExtents.x)[fieldId - 510] = value;
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -992,6 +1273,18 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 }
             }
             // Don't set propertiesDirty — same re-entrancy issue as above.
+        });
+
+    // Wire native properties view "+ Add Component" button.
+    impl_->window->propertiesView()->setAddComponentCallback(
+        [this](const std::string& type)
+        {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
+            impl_->addComponentToSelection(type);
+            // The add will set propertiesDirty; refreshPropertiesView() will
+            // run on the next frame and rebuild the panel including the new
+            // component's display block.
         });
 
     impl_->hierarchyPanel =
@@ -1424,6 +1717,10 @@ void EditorApp::run()
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
             }
+            else if (action.rfind("add_component:", 0) == 0)
+            {
+                impl_->addComponentToSelection(action.substr(14));
+            }
             else if (action == "import_asset")
             {
                 std::string path = impl_->window->showImportDialog();
@@ -1646,7 +1943,9 @@ void EditorApp::run()
             }
         }
 
-        // Add component menu: number keys select component type.
+        // Add component menu: number keys select component type. All branches
+        // route through Impl::addComponentToSelection to keep behavior in sync
+        // with the macOS Component menu and the AppKit "+ Add Component" button.
         if (impl_->addComponentMenuOpen)
         {
             EntityID selE = impl_->editorState.primarySelection();
@@ -1654,78 +1953,27 @@ void EditorApp::run()
             {
                 if (impl_->window->isKeyPressed('1'))
                 {
-                    if (!impl_->registry.has<DirectionalLightComponent>(selE))
-                    {
-                        DirectionalLightComponent dl{};
-                        dl.direction = {0.0f, -1.0f, 0.0f};
-                        dl.color = {1.0f, 1.0f, 1.0f};
-                        dl.intensity = 1.0f;
-                        dl.flags = 0;
-                        impl_->registry.emplace<DirectionalLightComponent>(selE, dl);
-                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
-                                 "Added DirectionalLight");
-                        impl_->statusTimer = 2.0f;
-                        impl_->propertiesDirty = true;
-                        impl_->hierarchyDirty = true;
-                    }
+                    impl_->addComponentToSelection("directional_light");
                     impl_->addComponentMenuOpen = false;
                 }
                 if (impl_->window->isKeyPressed('2'))
                 {
-                    if (!impl_->registry.has<PointLightComponent>(selE))
-                    {
-                        PointLightComponent pl{};
-                        pl.color = {1.0f, 1.0f, 1.0f};
-                        pl.intensity = 1.0f;
-                        pl.radius = 10.0f;
-                        impl_->registry.emplace<PointLightComponent>(selE, pl);
-                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added PointLight");
-                        impl_->statusTimer = 2.0f;
-                        impl_->propertiesDirty = true;
-                        impl_->hierarchyDirty = true;
-                    }
+                    impl_->addComponentToSelection("point_light");
                     impl_->addComponentMenuOpen = false;
                 }
                 if (impl_->window->isKeyPressed('3'))
                 {
-                    if (!impl_->registry.has<MeshComponent>(selE))
-                    {
-                        impl_->registry.emplace<MeshComponent>(selE,
-                                                               MeshComponent{impl_->cubeMeshId});
-                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
-                                 "Added MeshComponent (cube)");
-                        impl_->statusTimer = 2.0f;
-                        impl_->propertiesDirty = true;
-                        impl_->hierarchyDirty = true;
-                    }
+                    impl_->addComponentToSelection("mesh");
                     impl_->addComponentMenuOpen = false;
                 }
                 if (impl_->window->isKeyPressed('4'))
                 {
-                    if (!impl_->registry.has<physics::RigidBodyComponent>(selE))
-                    {
-                        impl_->registry.emplace<physics::RigidBodyComponent>(
-                            selE, physics::RigidBodyComponent{});
-                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added RigidBody");
-                        impl_->statusTimer = 2.0f;
-                        impl_->propertiesDirty = true;
-                        impl_->hierarchyDirty = true;
-                    }
+                    impl_->addComponentToSelection("rigid_body");
                     impl_->addComponentMenuOpen = false;
                 }
                 if (impl_->window->isKeyPressed('5'))
                 {
-                    if (!impl_->registry.has<physics::ColliderComponent>(selE))
-                    {
-                        physics::ColliderComponent cc{};
-                        cc.shape = physics::ColliderShape::Box;
-                        cc.halfExtents = {0.5f, 0.5f, 0.5f};
-                        impl_->registry.emplace<physics::ColliderComponent>(selE, cc);
-                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Added Box Collider");
-                        impl_->statusTimer = 2.0f;
-                        impl_->propertiesDirty = true;
-                        impl_->hierarchyDirty = true;
-                    }
+                    impl_->addComponentToSelection("box_collider");
                     impl_->addComponentMenuOpen = false;
                 }
                 if (impl_->window->isKeyPressed(0x1B))  // Escape
