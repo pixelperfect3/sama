@@ -49,4 +49,11 @@ namespace engine::rendering
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadGizmoProgram();
 
+// Slug program — position + texcoord0 + color0 streams (same layout as
+// sprite). Fragment shader evaluates packed quadratic Bezier curves from
+// a buffer texture to produce vector-perfect glyph coverage at any scale.
+// Used by SlugFont. Returns BGFX_INVALID_HANDLE on failure or in headless
+// (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadSlugProgram();
+
 }  // namespace engine::rendering
