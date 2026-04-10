@@ -9,6 +9,7 @@
 
 #include <GLFW/glfw3.h>
 #include <bgfx/bgfx.h>
+#include <mach-o/dyld.h>  // _NSGetExecutablePath
 
 #include <algorithm>
 #include <cmath>
@@ -119,10 +120,64 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
     // MSDF needs JetBrainsMono-Regular-msdf.{json,png} which only exist if
     // someone ran msdf-atlas-gen — gracefully skipped otherwise. Slug needs
     // FreeType + JetBrainsMono-Regular.ttf (which IS checked in).
+    // Resolve asset paths against the executable's location AND several
+    // relative candidates so the app works no matter what the user's cwd
+    // is when they launch ui_test. We use _NSGetExecutablePath on macOS to
+    // get the binary's directory, then walk upward looking for an
+    // `assets/` sibling.
+    auto findAsset = [](const char* relPath) -> std::string
+    {
+        // 1. Cwd-relative candidates (cheap and common when running from
+        //    the repo root or `cd build && ./ui_test`).
+        const char* prefixes[] = {"", "../", "../../", "../../../"};
+        for (const char* p : prefixes)
+        {
+            std::string candidate = std::string(p) + relPath;
+            if (FILE* f = std::fopen(candidate.c_str(), "rb"))
+            {
+                std::fclose(f);
+                return candidate;
+            }
+        }
+
+        // 2. Walk up from the executable's directory (handles `./build/ui_test`
+        //    invoked from /tmp, from $HOME, from anywhere).
+        char execPath[4096] = {};
+        uint32_t execPathSize = sizeof(execPath);
+        if (_NSGetExecutablePath(execPath, &execPathSize) == 0)
+        {
+            // Strip the executable name to get the directory.
+            std::string base(execPath);
+            auto slash = base.find_last_of('/');
+            if (slash != std::string::npos)
+            {
+                base.resize(slash);
+            }
+            // Try base/, base/.., base/../.., ... up to 5 levels.
+            std::string prefix = base + "/";
+            for (int depth = 0; depth < 6; ++depth)
+            {
+                std::string candidate = prefix + relPath;
+                if (FILE* f = std::fopen(candidate.c_str(), "rb"))
+                {
+                    std::fclose(f);
+                    return candidate;
+                }
+                prefix += "../";
+            }
+        }
+        return relPath;  // give up; loadFromFile will fail with the original
+    };
+
+    std::string ttfPath = findAsset("assets/fonts/default/JetBrainsMono-Regular.ttf");
+    std::string msdfJson = findAsset("assets/fonts/default/JetBrainsMono-Regular-msdf.json");
+    std::string msdfPng = findAsset("assets/fonts/default/JetBrainsMono-Regular-msdf.png");
+
     fontLoaded_[0] = bitmapFont_.createDebugFont();
-    fontLoaded_[1] = msdfFont_.loadFromFile("assets/fonts/default/JetBrainsMono-Regular-msdf.json",
-                                            "assets/fonts/default/JetBrainsMono-Regular-msdf.png");
-    fontLoaded_[2] = slugFont_.loadFromFile("assets/fonts/default/JetBrainsMono-Regular.ttf", 24.f);
+    fontLoaded_[1] = msdfFont_.loadFromFile(msdfJson.c_str(), msdfPng.c_str());
+    fontLoaded_[2] = slugFont_.loadFromFile(ttfPath.c_str(), 24.f);
+
+    std::fprintf(stderr, "[ui_test] resolved TTF path: %s\n", ttfPath.c_str());
 
     std::fprintf(stderr, "[ui_test] font backends loaded: Bitmap=%s MSDF=%s Slug=%s\n",
                  fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
@@ -396,13 +451,20 @@ void UiTestApp::applyFontToCanvas()
 
 void UiTestApp::cycleFontBackend()
 {
+    static const char* names[] = {"Bitmap", "MSDF", "Slug"};
+    std::fprintf(stderr, "[ui_test] cycleFontBackend: current=%d loaded=[%s,%s,%s]\n",
+                 currentFontIndex_, fontLoaded_[0] ? "Y" : "N", fontLoaded_[1] ? "Y" : "N",
+                 fontLoaded_[2] ? "Y" : "N");
+
     // Step through the three slots, skipping any that didn't load. If none
     // loaded (shouldn't happen — bitmap always works), leave currentFont_
     // as it was.
     for (int step = 1; step <= 3; ++step)
     {
         int next = (currentFontIndex_ + step) % 3;
-        if (fontLoaded_[next])
+        std::fprintf(stderr, "[ui_test]   step=%d next=%d (%s) loaded=%s\n", step, next,
+                     names[next], fontLoaded_[next] ? "Y" : "N");
+        if (fontLoaded_[next] && next != currentFontIndex_)
         {
             currentFontIndex_ = next;
             switch (next)
@@ -417,9 +479,12 @@ void UiTestApp::cycleFontBackend()
                     currentFont_ = &slugFont_;
                     break;
             }
+            std::fprintf(stderr, "[ui_test]   -> switched to %s\n", names[next]);
             return;
         }
     }
+    std::fprintf(stderr, "[ui_test]   -> no other backend loaded; staying on %s\n",
+                 names[currentFontIndex_]);
 }
 
 const char* UiTestApp::fontBackendLabel() const
