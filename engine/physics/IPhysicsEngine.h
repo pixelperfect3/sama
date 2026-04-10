@@ -31,7 +31,7 @@ struct BodyDesc
     float angularDamping = 0.05f;
     BodyType type = BodyType::Dynamic;
     uint8_t layer = 0;
-    bool isSensor = false;  // sensor: overlap-only, no physical response
+    bool isSensor = false;                       // sensor: overlap-only, no physical response
     ecs::EntityID entity = ecs::INVALID_ENTITY;  // back-reference for callbacks
 };
 
@@ -50,6 +50,11 @@ public:
     // Body management
     virtual uint32_t addBody(const BodyDesc& desc) = 0;
     virtual void removeBody(uint32_t bodyID) = 0;
+
+    // Destroy every body currently owned by the engine.  Used by the editor
+    // to reset physics state on Play/Stop transitions, where per-body velocity
+    // and sleep state cannot be cleanly snapshotted.
+    virtual void destroyAllBodies() = 0;
 
     // Transform queries (world-space)
     virtual void getBodyTransform(uint32_t bodyID, math::Vec3& outPos,

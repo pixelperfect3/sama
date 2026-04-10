@@ -42,6 +42,9 @@
 #include "engine/core/OrbitCamera.h"
 #include "engine/ecs/Registry.h"
 #include "engine/memory/FrameArena.h"
+#include "engine/physics/JoltPhysicsEngine.h"
+#include "engine/physics/PhysicsComponents.h"
+#include "engine/physics/PhysicsSystem.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
@@ -97,6 +100,16 @@ struct EditorApp::Impl
     Registry registry;
     DrawCallBuildSystem drawCallSys;
     engine::scene::TransformSystem transformSys;
+
+    // Physics (stepped only in Play mode).
+    engine::physics::JoltPhysicsEngine physics;
+    engine::physics::PhysicsSystem physicsSys;
+
+    // Reset all Jolt bodies and clear ECS body state so PhysicsSystem will
+    // recreate fresh bodies from authored components on the next update().
+    // Used on Editing<->Play transitions because Jolt's internal state
+    // (velocities, sleep, contacts) cannot be cleanly snapshotted.
+    void resetPhysicsBodies();
 
     // Scene entities
     EntityID cubeEntity = 0;
@@ -176,6 +189,25 @@ struct EditorApp::Impl
     // Sync console log to the native console view.
     void syncConsoleView();
 };
+
+void EditorApp::Impl::resetPhysicsBodies()
+{
+    // Destroy all Jolt-side bodies in one pass.
+    physics.destroyAllBodies();
+
+    // Clear ECS-side body state: reset bodyID sentinels and strip the
+    // PhysicsBodyCreatedTag so PhysicsSystem::registerNewBodies re-creates
+    // bodies from scratch on the next update().
+    registry.view<engine::physics::RigidBodyComponent>().each(
+        [&](EntityID e, engine::physics::RigidBodyComponent& rb)
+        {
+            rb.bodyID = ~0u;
+            if (registry.has<engine::physics::PhysicsBodyCreatedTag>(e))
+            {
+                registry.remove<engine::physics::PhysicsBodyCreatedTag>(e);
+            }
+        });
+}
 
 void EditorApp::Impl::refreshHierarchyView()
 {
@@ -678,6 +710,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->window->hierarchyView()->setNameChangedCallback(
         [this](uint64_t entityId, const char* newName)
         {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
             auto eid = static_cast<EntityID>(entityId);
             auto* nc = impl_->registry.get<engine::scene::NameComponent>(eid);
             if (nc)
@@ -698,6 +732,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->window->hierarchyView()->setReparentCallback(
         [this](uint64_t childId, uint64_t parentId)
         {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
             auto child = static_cast<EntityID>(childId);
             auto parent = static_cast<EntityID>(parentId);
 
@@ -780,6 +816,11 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->window->propertiesView()->setValueChangedCallback(
         [this](int fieldId, float value)
         {
+            // Disallow user-initiated writes while the simulation is running;
+            // PhysicsSystem::syncDynamicBodies would otherwise fight them.
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
+
             EntityID entity = impl_->editorState.primarySelection();
             if (entity == INVALID_ENTITY)
                 return;
@@ -931,6 +972,9 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->window->propertiesView()->setColorChangedCallback(
         [this](int fieldId, float r, float g, float b)
         {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
+
             EntityID entity = impl_->editorState.primarySelection();
             if (entity == INVALID_ENTITY)
                 return;
@@ -994,6 +1038,16 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     // -- Frame arena ----------------------------------------------------------
     impl_->frameArena = std::make_unique<engine::memory::FrameArena>(2 * 1024 * 1024);
+
+    // -- Physics --------------------------------------------------------------
+    // Initialized once and shared across Play sessions.  The simulation is
+    // only stepped while editorState.playState() == Playing; on Play/Stop
+    // transitions we wipe all bodies so PhysicsSystem re-creates them fresh
+    // from the authored components.
+    if (!impl_->physics.init())
+    {
+        fprintf(stderr, "EditorApp: physics.init() failed\n");
+    }
 
     // -- Timing ---------------------------------------------------------------
     impl_->prevTime =
@@ -1676,6 +1730,9 @@ void EditorApp::run()
                     });
                 impl_->editorState.saveSnapshot(snapshot);
                 impl_->editorState.play();
+                // Reset Jolt bodies so PhysicsSystem recreates them fresh
+                // from the authored components with zeroed velocities.
+                impl_->resetPhysicsBodies();
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Play mode");
                 impl_->statusTimer = 2.0f;
                 EditorLog::instance().info("Entered play mode");
@@ -1711,6 +1768,9 @@ void EditorApp::run()
                     }
                 }
                 impl_->editorState.stop();
+                // Wipe physics bodies so editing the scene doesn't fight
+                // leftover Jolt state; they'll be recreated fresh next Play.
+                impl_->resetPhysicsBodies();
                 snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Stopped - state restored");
                 impl_->statusTimer = 2.0f;
                 EditorLog::instance().info("Stopped play mode, transforms restored");
@@ -1723,6 +1783,12 @@ void EditorApp::run()
         if (impl_->statusTimer > 0.0f)
         {
             impl_->statusTimer -= dt;
+        }
+
+        // -- Physics simulation (Play mode only) ------------------------------
+        if (impl_->editorState.playState() == EditorPlayState::Playing)
+        {
+            impl_->physicsSys.update(impl_->registry, impl_->physics, dt);
         }
 
         // -- Transform system -------------------------------------------------
@@ -1944,6 +2010,9 @@ void EditorApp::shutdown()
     }
 
     impl_->gizmoRenderer.shutdown();
+
+    // Shut down physics (destroys all remaining bodies internally).
+    impl_->physics.shutdown();
 
     // Destroy shader programs.
     if (bgfx::isValid(impl_->pbrProgram))

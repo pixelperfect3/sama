@@ -31,6 +31,7 @@ public:
 
     uint32_t addBody(const BodyDesc& desc) override;
     void removeBody(uint32_t bodyID) override;
+    void destroyAllBodies() override;
 
     void getBodyTransform(uint32_t bodyID, math::Vec3& outPos, math::Quat& outRot) const override;
     void moveKinematic(uint32_t bodyID, const math::Vec3& targetPos, const math::Quat& targetRot,

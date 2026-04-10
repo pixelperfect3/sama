@@ -210,6 +210,23 @@ void JoltPhysicsEngine::removeBody(uint32_t bodyID)
     bodyToEntity_.erase(bodyID);
 }
 
+void JoltPhysicsEngine::destroyAllBodies()
+{
+    if (!initialized_)
+    {
+        return;
+    }
+
+    JPH::BodyInterface& bodyInterface = physicsSystem_->GetBodyInterface();
+    for (auto& [bodyIDVal, entityID] : bodyToEntity_)
+    {
+        JPH::BodyID jphBodyID(bodyIDVal);
+        bodyInterface.RemoveBody(jphBodyID);
+        bodyInterface.DestroyBody(jphBodyID);
+    }
+    bodyToEntity_.clear();
+}
+
 void JoltPhysicsEngine::getBodyTransform(uint32_t bodyID, math::Vec3& outPos,
                                          math::Quat& outRot) const
 {
