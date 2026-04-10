@@ -342,7 +342,9 @@ void EditorApp::Impl::refreshHierarchyView()
     if (!hView)
         return;
 
+    // Pre-reserve so the typical 8-32 entity scenes don't reallocate.
     std::vector<CocoaHierarchyView::EntityInfo> entities;
+    entities.reserve(64);
 
     // Helper to build an EntityInfo for a single entity.
     auto buildInfo = [&](EntityID e, uint32_t depth) -> CocoaHierarchyView::EntityInfo
@@ -429,7 +431,12 @@ void EditorApp::Impl::refreshPropertiesView()
         return;
     }
 
+    // Reserve enough for the worst case: a fully-loaded entity with all
+    // supported component blocks. Each block contributes a header + a
+    // handful of fields. 48 covers Transform (10) + Material (5) + two
+    // lights (8) + RigidBody (7) + Collider (8) + headers + a few labels.
     std::vector<CocoaPropertiesView::PropertyField> fields;
+    fields.reserve(48);
 
     // Entity name / ID header.
     {
@@ -748,47 +755,32 @@ void EditorApp::Impl::syncConsoleView()
     if (currentCount <= lastLogCount)
         return;
 
-    // We need to send only new entries. Since EditorLog is a ring buffer,
-    // collect all and send those beyond what we've already synced.
-    struct LogEntry
-    {
-        LogLevel level;
-        char message[256];
-    };
-    std::vector<LogEntry> allEntries;
+    // Stream new entries directly to the view. The ring buffer's `forEach`
+    // walks in chronological order; we count how many entries we've already
+    // sent and skip those. No intermediate vector, no per-frame heap
+    // allocation.
+    const size_t startIdx = lastLogCount;
+    size_t i = 0;
     EditorLog::instance().forEach(
         [&](const EditorLog::Entry& entry)
         {
-            LogEntry le;
-            le.level = entry.level;
-            memcpy(le.message, entry.message, sizeof(le.message));
-            allEntries.push_back(le);
+            if (i++ < startIdx)
+                return;
+            CocoaConsoleView::MessageLevel mlevel;
+            switch (entry.level)
+            {
+                case LogLevel::Warning:
+                    mlevel = CocoaConsoleView::MessageLevel::Warning;
+                    break;
+                case LogLevel::Error:
+                    mlevel = CocoaConsoleView::MessageLevel::Error;
+                    break;
+                default:
+                    mlevel = CocoaConsoleView::MessageLevel::Info;
+                    break;
+            }
+            cView->appendMessage(mlevel, entry.message);
         });
-
-    // If total count is small enough, we know exactly which are new.
-    size_t startIdx = 0;
-    if (lastLogCount < allEntries.size())
-    {
-        startIdx = lastLogCount;
-    }
-
-    for (size_t i = startIdx; i < allEntries.size(); ++i)
-    {
-        CocoaConsoleView::MessageLevel mlevel;
-        switch (allEntries[i].level)
-        {
-            case LogLevel::Warning:
-                mlevel = CocoaConsoleView::MessageLevel::Warning;
-                break;
-            case LogLevel::Error:
-                mlevel = CocoaConsoleView::MessageLevel::Error;
-                break;
-            default:
-                mlevel = CocoaConsoleView::MessageLevel::Info;
-                break;
-        }
-        cView->appendMessage(mlevel, allEntries[i].message);
-    }
 
     lastLogCount = currentCount;
 }

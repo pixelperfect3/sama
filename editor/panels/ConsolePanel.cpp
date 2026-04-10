@@ -4,9 +4,9 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <vector>
 
 #include "editor/EditorLog.h"
+#include "engine/memory/InlinedVector.h"
 
 namespace engine::editor
 {
@@ -33,31 +33,40 @@ void ConsolePanel::render()
 
     bgfx::dbgTextPrintf(kStartCol, headerRow, 0x0f, "--- Console (~=toggle) ---");
 
-    // Collect entries.
+    // Collect the last kMaxVisibleRows entries into a stack-allocated ring
+    // (no per-frame heap allocation). The lambda overwrites at writeIdx %
+    // capacity so we naturally keep only the most recent kMaxVisibleRows.
     struct DisplayEntry
     {
         LogLevel level;
         const char* message;
     };
 
-    std::vector<DisplayEntry> entries;
-    EditorLog::instance().forEach([&](const EditorLog::Entry& entry)
-                                  { entries.push_back({entry.level, entry.message}); });
+    DisplayEntry buf[kMaxVisibleRows]{};
+    size_t writeIdx = 0;
+    size_t total = 0;
+    EditorLog::instance().forEach(
+        [&](const EditorLog::Entry& entry)
+        {
+            buf[writeIdx % kMaxVisibleRows] = {entry.level, entry.message};
+            ++writeIdx;
+            ++total;
+        });
 
-    // Show the last kMaxVisibleRows entries.
-    size_t startIdx = 0;
-    if (entries.size() > kMaxVisibleRows)
-    {
-        startIdx = entries.size() - kMaxVisibleRows;
-    }
+    // Replay the ring in chronological order. If total < capacity, replay
+    // [0, total). Otherwise the oldest entry is at writeIdx % capacity.
+    const size_t shown = std::min<size_t>(total, kMaxVisibleRows);
+    const size_t startInRing = (total <= kMaxVisibleRows) ? 0 : (writeIdx % kMaxVisibleRows);
 
     uint16_t row = headerRow + 1;
-    for (size_t i = startIdx; i < entries.size(); ++i)
+    for (size_t k = 0; k < shown; ++k)
     {
+        const DisplayEntry& e = buf[(startInRing + k) % kMaxVisibleRows];
+
         // Color based on log level.
         uint8_t color = 0x07;  // grey (Info)
         const char* prefix = "[I]";
-        switch (entries[i].level)
+        switch (e.level)
         {
             case LogLevel::Warning:
                 color = 0x0e;  // yellow
@@ -71,7 +80,7 @@ void ConsolePanel::render()
                 break;
         }
 
-        bgfx::dbgTextPrintf(kStartCol, row++, color, "%s %s", prefix, entries[i].message);
+        bgfx::dbgTextPrintf(kStartCol, row++, color, "%s %s", prefix, e.message);
     }
 }
 

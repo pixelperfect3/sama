@@ -285,12 +285,20 @@ void TransformGizmo::update(float /*dt*/, const glm::mat4& view, const glm::mat4
                 dragStartTransform_ = *tc;
             }
 
-            // For rotation mode, capture the starting angle.
+            // For rotation mode, capture the starting angle. The bounds
+            // check guards against a corrupted enum value reaching this
+            // path; in practice the outer hit-test only sets hoveredAxis_
+            // to X/Y/Z (1, 2, 3) before we get here, but the gizmo state
+            // is mutated from several places and skipping the check would
+            // be a one-byte read past the end of axes[3].
             if (mode_ == GizmoMode::Rotate)
             {
-                int axisIdx = static_cast<int>(hoveredAxis_) - 1;
-                dragStartAngle_ = computeRotationAngle(axes[axisIdx], view, proj);
-                dragPrevAngle_ = dragStartAngle_;
+                const int axisIdx = static_cast<int>(hoveredAxis_) - 1;
+                if (axisIdx >= 0 && axisIdx < 3)
+                {
+                    dragStartAngle_ = computeRotationAngle(axes[axisIdx], view, proj);
+                    dragPrevAngle_ = dragStartAngle_;
+                }
             }
         }
     }
