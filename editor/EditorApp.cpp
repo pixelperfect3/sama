@@ -51,7 +51,9 @@
 #include "engine/rendering/ShaderUniforms.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/scene/HierarchyComponents.h"
 #include "engine/scene/NameComponent.h"
+#include "engine/scene/SceneGraph.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
@@ -182,42 +184,71 @@ void EditorApp::Impl::refreshHierarchyView()
         return;
 
     std::vector<CocoaHierarchyView::EntityInfo> entities;
+
+    // Helper to build an EntityInfo for a single entity.
+    auto buildInfo = [&](EntityID e, uint32_t depth) -> CocoaHierarchyView::EntityInfo
+    {
+        CocoaHierarchyView::EntityInfo info;
+        info.entityId = e;
+        info.depth = depth;
+
+        const auto* name = registry.get<engine::scene::NameComponent>(e);
+        if (name && !name->name.empty())
+        {
+            info.name = name->name;
+        }
+        else
+        {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Entity #%u", entityIndex(e));
+            info.name = buf;
+        }
+
+        // Build tags string.
+        std::string tags;
+        if (registry.has<TransformComponent>(e))
+            tags += "[T]";
+        if (registry.has<MeshComponent>(e))
+            tags += "[M]";
+        if (registry.has<MaterialComponent>(e))
+            tags += "[Mat]";
+        if (registry.has<DirectionalLightComponent>(e))
+            tags += "[DL]";
+        if (registry.has<PointLightComponent>(e))
+            tags += "[PL]";
+        if (registry.has<CameraComponent>(e))
+            tags += "[Cam]";
+        info.tags = tags;
+
+        return info;
+    };
+
+    // Collect root entities (those without a HierarchyComponent / no parent).
+    std::vector<EntityID> roots;
     registry.forEachEntity(
         [&](EntityID e)
         {
-            CocoaHierarchyView::EntityInfo info;
-            info.entityId = e;
-
-            const auto* name = registry.get<engine::scene::NameComponent>(e);
-            if (name && !name->name.empty())
-            {
-                info.name = name->name;
-            }
-            else
-            {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "Entity #%u", entityIndex(e));
-                info.name = buf;
-            }
-
-            // Build tags string.
-            std::string tags;
-            if (registry.has<TransformComponent>(e))
-                tags += "[T]";
-            if (registry.has<MeshComponent>(e))
-                tags += "[M]";
-            if (registry.has<MaterialComponent>(e))
-                tags += "[Mat]";
-            if (registry.has<DirectionalLightComponent>(e))
-                tags += "[DL]";
-            if (registry.has<PointLightComponent>(e))
-                tags += "[PL]";
-            if (registry.has<CameraComponent>(e))
-                tags += "[Cam]";
-            info.tags = tags;
-
-            entities.push_back(std::move(info));
+            if (!registry.has<engine::scene::HierarchyComponent>(e))
+                roots.push_back(e);
         });
+
+    // DFS walk to build hierarchy-ordered list with depth.
+    std::function<void(EntityID, uint32_t)> walk = [&](EntityID e, uint32_t depth)
+    {
+        entities.push_back(buildInfo(e, depth));
+
+        const auto* cc = registry.get<engine::scene::ChildrenComponent>(e);
+        if (cc)
+        {
+            for (EntityID child : cc->children)
+            {
+                walk(child, depth + 1);
+            }
+        }
+    };
+
+    for (EntityID root : roots)
+        walk(root, 0);
 
     hView->setEntities(entities);
     hView->setSelectedEntity(editorState.primarySelection());
@@ -661,6 +692,75 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
             EditorLog::instance().info((std::string("Renamed entity to: ") + newName).c_str());
+        });
+
+    // Wire drag-and-drop reparenting in the hierarchy panel.
+    impl_->window->hierarchyView()->setReparentCallback(
+        [this](uint64_t childId, uint64_t parentId)
+        {
+            auto child = static_cast<EntityID>(childId);
+            auto parent = static_cast<EntityID>(parentId);
+
+            if (parent == INVALID_ENTITY)
+            {
+                engine::scene::detach(impl_->registry, child);
+                EditorLog::instance().info("Detached entity from parent");
+            }
+            else
+            {
+                if (engine::scene::setParent(impl_->registry, child, parent))
+                {
+                    EditorLog::instance().info("Reparented entity");
+                }
+                else
+                {
+                    EditorLog::instance().error("Cannot reparent: would create a cycle");
+                }
+            }
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
+        });
+
+    // Wire context menu: create child entity.
+    impl_->window->hierarchyView()->setCreateChildCallback(
+        [this](uint64_t parentId)
+        {
+            auto parent = static_cast<EntityID>(parentId);
+            EntityID child = impl_->registry.createEntity();
+            impl_->registry.emplace<engine::scene::NameComponent>(
+                child, engine::scene::NameComponent{"New Child"});
+            impl_->registry.emplace<TransformComponent>(child);
+            engine::scene::setParent(impl_->registry, child, parent);
+            impl_->editorState.select(child);
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
+            EditorLog::instance().info("Created child entity");
+        });
+
+    // Wire context menu: detach from parent.
+    impl_->window->hierarchyView()->setDetachCallback(
+        [this](uint64_t entityId)
+        {
+            auto eid = static_cast<EntityID>(entityId);
+            engine::scene::detach(impl_->registry, eid);
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
+            EditorLog::instance().info("Detached entity from parent");
+        });
+
+    // Wire context menu: delete entity.
+    impl_->window->hierarchyView()->setDeleteCallback(
+        [this](uint64_t entityId)
+        {
+            auto eid = static_cast<EntityID>(entityId);
+            engine::scene::destroyHierarchy(impl_->registry, eid);
+            if (impl_->editorState.primarySelection() == eid)
+            {
+                impl_->editorState.select(INVALID_ENTITY);
+            }
+            impl_->hierarchyDirty = true;
+            impl_->propertiesDirty = true;
+            EditorLog::instance().info("Deleted entity and its children");
         });
 
     // Wire selection change to mark properties dirty.
@@ -1716,6 +1816,9 @@ void EditorApp::run()
                 impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
             }
         }
+
+        // -- Light gizmo rendering --------------------------------------------
+        impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
 
         // -- Native panel updates (dirty-flag guarded) ------------------------
         if (impl_->hierarchyDirty)

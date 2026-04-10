@@ -23,10 +23,16 @@ public:
         uint64_t entityId = 0;
         std::string name;
         std::string tags;  // e.g. "[T][M][Mat]"
+        uint32_t depth = 0;
     };
 
     using SelectionCallback = std::function<void(uint64_t entityId)>;
     using NameChangedCallback = std::function<void(uint64_t entityId, const char* newName)>;
+    using ReparentCallback =
+        std::function<void(uint64_t childEntityId, uint64_t newParentEntityId)>;
+    using CreateChildCallback = std::function<void(uint64_t parentEntityId)>;
+    using DetachCallback = std::function<void(uint64_t entityId)>;
+    using DeleteCallback = std::function<void(uint64_t entityId)>;
 
     CocoaHierarchyView();
     ~CocoaHierarchyView();
@@ -42,6 +48,18 @@ public:
 
     // Set the callback for when the user edits an entity name (double-click to edit).
     void setNameChangedCallback(NameChangedCallback cb);
+
+    // Set the callback for drag-and-drop reparenting.
+    void setReparentCallback(ReparentCallback cb);
+
+    // Set the callback for creating a child entity via context menu.
+    void setCreateChildCallback(CreateChildCallback cb);
+
+    // Set the callback for detaching an entity from its parent via context menu.
+    void setDetachCallback(DetachCallback cb);
+
+    // Set the callback for deleting an entity via context menu.
+    void setDeleteCallback(DeleteCallback cb);
 
     // Rebuild the table data from the given entity list.
     // Only call when entities actually changed (dirty flag).
