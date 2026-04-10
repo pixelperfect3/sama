@@ -100,16 +100,23 @@ bool MsdfFont::loadFromFile(const char* metricsPath, const char* atlasPath)
 
     // metrics { emSize, lineHeight, ascender, descender, ... }
     // lineHeight is reported in em units; convert to pixels using nominalSize.
+    // We also need ascender to convert per-glyph plane bounds from
+    // baseline-relative y-up coordinates into the y-down "distance from top
+    // of line" convention that BitmapFont uses (and that UiRenderer expects
+    // when it positions glyph quads relative to cmd.position).
+    float ascenderEm = 0.95f;  // sane default if metrics block is missing
     const io::JsonValue metrics = root["metrics"];
     if (metrics.isObject())
     {
         const float emLineHeight = metrics["lineHeight"].getFloat(1.2f);
         lineHeight_ = emLineHeight * nominalSize_;
+        ascenderEm = metrics["ascender"].getFloat(0.95f);
     }
     else
     {
         lineHeight_ = 1.2f * nominalSize_;
     }
+    const float ascenderPx = ascenderEm * nominalSize_;
 
     // glyphs[] — each entry has advance + planeBounds (em units) + atlasBounds
     // (atlas pixels). Missing planeBounds means a whitespace glyph with no
@@ -135,14 +142,16 @@ bool MsdfFont::loadFromFile(const char* metricsPath, const char* atlasPath)
             const float pt = pb["top"].getFloat(0.f);
             const float pb_ = pb["bottom"].getFloat(0.f);
 
-            // Plane bounds are given in em units with Y-up (baseline origin,
-            // positive = above baseline). Convert to pixels; the quad size is
-            // (right - left, top - bottom). For the offset we store the top
-            // bearing as distance from the baseline (positive = above).
+            // Plane bounds are em units with Y-up (baseline origin, positive =
+            // above baseline). UiRenderer interprets cmd.position as the TOP
+            // OF THE LINE in y-down screen space, and uses GlyphMetrics::offset
+            // as a y-down delta from that point to the top-left corner of the
+            // glyph quad. Convert: the top of the glyph in y-down line-space
+            // is (ascender - planeBounds.top), the left is planeBounds.left.
             const float widthPx = (pr - pl) * nominalSize_;
             const float heightPx = (pt - pb_) * nominalSize_;
             m.size = math::Vec2{widthPx, heightPx};
-            m.offset = math::Vec2{pl * nominalSize_, pt * nominalSize_};
+            m.offset = math::Vec2{pl * nominalSize_, ascenderPx - pt * nominalSize_};
         }
 
         if (gv.hasMember("atlasBounds") && gv["atlasBounds"].isObject())
