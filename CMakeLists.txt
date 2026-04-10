@@ -1237,6 +1237,31 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif()
 
+# --- ui_test app (macOS only) ---
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(ui_test
+        apps/ui_test/main.mm
+        apps/ui_test/UiTestApp.cpp
+    )
+
+    target_include_directories(ui_test PRIVATE ${SAMA_ROOT_DIR})
+    target_link_libraries(ui_test PRIVATE
+        sama_minimal
+        engine_ui
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(ui_test PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+endif()
+
 endif()  # SAMA_BUILD_DEMOS
 
 if(SAMA_BUILD_EDITOR)
