@@ -118,6 +118,48 @@ void UiCanvas::computeLayout(UiNode* node, const ComputedRect& parentRect)
     }
 }
 
+bool UiCanvas::dispatchEvent(const UiEvent& event)
+{
+    return dispatchEventToNode(root_, event);
+}
+
+bool UiCanvas::dispatchEventToNode(UiNode* node, const UiEvent& event)
+{
+    if (!node || !node->visible)
+    {
+        return false;
+    }
+
+    // Reverse child order: later children are drawn on top, so they get
+    // first chance at the event (front-to-back hit testing).
+    auto kids = node->children();
+    for (auto it = kids.rbegin(); it != kids.rend(); ++it)
+    {
+        if (dispatchEventToNode(*it, event))
+        {
+            return true;
+        }
+    }
+
+    // Check if this node is interactable and the event position is inside.
+    if (node->interactable)
+    {
+        const auto& r = node->rect();
+        float px = event.position.x;
+        float py = event.position.y;
+        if (px >= r.position.x && px <= r.position.x + r.size.x && py >= r.position.y &&
+            py <= r.position.y + r.size.y)
+        {
+            if (node->onEvent(event))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 void UiCanvas::buildDrawList(UiNode* node)
 {
     if (!node || !node->visible)

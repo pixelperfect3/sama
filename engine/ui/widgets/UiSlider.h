@@ -2,6 +2,7 @@
 
 #include <functional>
 
+#include "engine/ui/UiEvent.h"
 #include "engine/ui/UiNode.h"
 
 namespace engine::ui
@@ -22,6 +23,8 @@ public:
     math::Vec4 trackColor{0.3f, 0.3f, 0.3f, 1.0f};
     math::Vec4 fillColor{0.2f, 0.6f, 1.0f, 1.0f};
     math::Vec4 thumbColor{1.f, 1.f, 1.f, 1.0f};
+
+    bool onEvent(const UiEvent& event) override;
 
 protected:
     void onDraw(UiDrawList& drawList) const override;

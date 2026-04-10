@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "engine/ui/UiDrawList.h"
+#include "engine/ui/UiEvent.h"
 #include "engine/ui/UiNode.h"
 
 namespace engine::ui
@@ -38,7 +39,11 @@ public:
 
     void setScreenSize(uint32_t w, uint32_t h);
 
+    // Dispatch an event through the tree. Returns true if any node consumed it.
+    bool dispatchEvent(const UiEvent& event);
+
 private:
+    bool dispatchEventToNode(UiNode* node, const UiEvent& event);
     void computeLayout(UiNode* node, const ComputedRect& parentRect);
     void buildDrawList(UiNode* node);
 

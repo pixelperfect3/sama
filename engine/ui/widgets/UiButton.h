@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 
+#include "engine/ui/UiEvent.h"
 #include "engine/ui/UiNode.h"
 
 namespace engine::ui
@@ -25,6 +26,8 @@ public:
     math::Vec4 pressedColor{0.1f, 0.1f, 0.15f, 1.0f};
     math::Vec4 textColor{1.f, 1.f, 1.f, 1.f};
     float cornerRadius = 4.f;
+
+    bool onEvent(const UiEvent& event) override;
 
 protected:
     void onDraw(UiDrawList& drawList) const override;

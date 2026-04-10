@@ -13,7 +13,7 @@ namespace engine::ui
 
 // Forward declarations
 class UiDrawList;
-class UiEvent;
+struct UiEvent;
 
 using UiCallback = std::function<void(class UiNode& sender)>;
 
@@ -73,6 +73,13 @@ public:
     bool visible = true;
     bool interactable = true;
     float opacity = 1.0f;
+
+    // Event handling -- returns true if the event was consumed.
+    virtual bool onEvent(const UiEvent& event)
+    {
+        (void)event;
+        return false;
+    }
 
 protected:
     virtual void onDraw(UiDrawList& drawList) const = 0;

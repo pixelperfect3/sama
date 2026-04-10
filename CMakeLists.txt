@@ -741,6 +741,7 @@ add_executable(engine_tests
     tests/animation/TestIkSolvers.cpp
     tests/game/TestProjectConfig.cpp
     tests/ui/TestUiNode.cpp
+    tests/ui/TestUiLayout.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui Catch2::Catch2WithMain)
