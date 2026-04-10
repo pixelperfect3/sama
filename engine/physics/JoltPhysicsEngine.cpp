@@ -11,6 +11,7 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <cstdio>
 
 #include "engine/physics/PhysicsConversions.h"
 
@@ -127,23 +128,56 @@ uint32_t JoltPhysicsEngine::addBody(const BodyDesc& desc)
         return ~0u;
     }
 
-    // Create shape based on collider type
+    // Create shape based on collider type. Sanitize half-extents and pick a
+    // matching convex radius so Jolt's `inHalfExtent.ReduceMin() >= convex
+    // radius` assert never trips on thin boxes (e.g. a 20x0.01x20 ground
+    // slab). Default convex radius is 0.05, which would crash anything
+    // thinner than 5cm — instead we shrink the convex radius to fit.
+    constexpr float kMinHalfExtent = 1e-4f;  // hard floor; below this we refuse
+    auto sanitizeHalf = [&](math::Vec3 in)
+    {
+        return math::Vec3{std::max(in.x, kMinHalfExtent), std::max(in.y, kMinHalfExtent),
+                          std::max(in.z, kMinHalfExtent)};
+    };
+
     JPH::ShapeRefC shape;
     switch (desc.shape)
     {
         case ColliderShape::Box:
-            shape = new JPH::BoxShape(toJolt(desc.halfExtents));
+        case ColliderShape::Mesh:  // mesh not yet supported, fall back to box
+        {
+            math::Vec3 half = sanitizeHalf(desc.halfExtents);
+            float minHalf = std::min({half.x, half.y, half.z});
+            // Convex radius must be <= every half-extent. Clamp to a small
+            // fraction of the smallest extent (Jolt also requires it >= 0).
+            float convexRadius = std::min(0.05f, minHalf * 0.5f);
+            if (convexRadius < 0.0f)
+                convexRadius = 0.0f;
+            if (half.x < kMinHalfExtent || half.y < kMinHalfExtent || half.z < kMinHalfExtent)
+            {
+                fprintf(stderr,
+                        "[physics] addBody: invalid half-extents (%.4f, %.4f, %.4f) for "
+                        "entity %u — refusing to create body\n",
+                        desc.halfExtents.x, desc.halfExtents.y, desc.halfExtents.z,
+                        static_cast<uint32_t>(desc.entity));
+                return ~0u;
+            }
+            shape = new JPH::BoxShape(toJolt(half), convexRadius);
             break;
+        }
         case ColliderShape::Sphere:
-            shape = new JPH::SphereShape(desc.radius);
+        {
+            float r = std::max(desc.radius, kMinHalfExtent);
+            shape = new JPH::SphereShape(r);
             break;
+        }
         case ColliderShape::Capsule:
-            shape = new JPH::CapsuleShape(desc.halfExtents.y, desc.radius);
+        {
+            float halfH = std::max(desc.halfExtents.y, kMinHalfExtent);
+            float r = std::max(desc.radius, kMinHalfExtent);
+            shape = new JPH::CapsuleShape(halfH, r);
             break;
-        case ColliderShape::Mesh:
-            // Mesh colliders are not yet supported; fall back to box.
-            shape = new JPH::BoxShape(toJolt(desc.halfExtents));
-            break;
+        }
     }
 
     // Determine motion type and layer

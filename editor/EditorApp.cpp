@@ -294,7 +294,21 @@ bool EditorApp::Impl::addComponentToSelection(const std::string& type)
         }
         engine::physics::ColliderComponent cc{};
         cc.shape = engine::physics::ColliderShape::Box;
-        cc.halfExtents = {0.5f, 0.5f, 0.5f};
+        // Auto-fit half-extents to the entity's local scale: a unit cube
+        // mesh covers the box [-0.5, 0.5]^3, so half-extents = 0.5 * scale
+        // produces a collider that visually matches a non-uniformly scaled
+        // mesh (e.g. the default Ground entity at scale {20, 0.01, 20}
+        // becomes a 10 x 0.005 x 10 collider, exactly matching the slab).
+        if (auto* tc = registry.get<TransformComponent>(selE))
+        {
+            cc.halfExtents = {std::max(std::abs(tc->scale.x) * 0.5f, 1e-4f),
+                              std::max(std::abs(tc->scale.y) * 0.5f, 1e-4f),
+                              std::max(std::abs(tc->scale.z) * 0.5f, 1e-4f)};
+        }
+        else
+        {
+            cc.halfExtents = {0.5f, 0.5f, 0.5f};
+        }
         registry.emplace<engine::physics::ColliderComponent>(selE, cc);
         setStatus("Added Box Collider");
     }
