@@ -109,9 +109,23 @@ public:
     {
         uint32_t curveOffset = 0;  // first curve index in curveBuffer_
         uint32_t curveCount = 0;   // number of curves belonging to this glyph
+        // Glyph bounding box in y-up font space (the same coordinate system
+        // the curve buffer uses). UiRenderer writes these as per-vertex
+        // TEXCOORD0 corners so the slug fragment shader can compute its
+        // position within the glyph at every fragment.
+        float fontLeft = 0.f;    // bearingX
+        float fontTop = 0.f;     // bearingY (y-up: top of glyph above baseline)
+        float fontWidth = 0.f;   // glyph bounding-box width
+        float fontHeight = 0.f;  // glyph bounding-box height
     };
 
     const GlyphSlugData* getGlyphSlugData(uint32_t codepoint) const;
+
+    // Set the per-glyph (curveOffset, curveCount) uniform that the slug
+    // fragment shader reads. Called by a Slug-aware UiRenderer text pass
+    // exactly once per glyph submission. No-op when the slug program isn't
+    // valid (headless tests).
+    void setCurrentGlyph(uint32_t curveOffset, uint32_t curveCount) const;
     uint32_t totalCurveCount() const noexcept
     {
         return totalCurveCount_;
@@ -137,7 +151,11 @@ private:
     bgfx::TextureHandle curveBufferTexture_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_curveBuffer_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_slugParams_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_slugCurvesDim_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
+    uint32_t curveTexW_ = 0;
+    uint32_t curveTexH_ = 0;
+    float ascender_ = 0.f;
 
     float lineHeight_ = 0.f;
     float nominalSize_ = 0.f;

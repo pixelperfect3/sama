@@ -163,11 +163,19 @@ void SlugFont::shutdown()
         bgfx::destroy(u_slugParams_);
         u_slugParams_ = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(u_slugCurvesDim_))
+    {
+        bgfx::destroy(u_slugCurvesDim_);
+        u_slugCurvesDim_ = BGFX_INVALID_HANDLE;
+    }
     glyphs_.clear();
     slugData_.clear();
     curveBuffer_.clear();
     lineHeight_ = 0.f;
     nominalSize_ = 0.f;
+    ascender_ = 0.f;
+    curveTexW_ = 0;
+    curveTexH_ = 0;
     totalCurveCount_ = 0;
     loaded_ = false;
 }
@@ -199,6 +207,21 @@ void SlugFont::bindResources() const
     {
         bgfx::setTexture(1, s_curveBuffer_, curveBufferTexture_);
     }
+    if (bgfx::isValid(u_slugCurvesDim_) && curveTexW_ > 0 && curveTexH_ > 0)
+    {
+        const float dim[4] = {static_cast<float>(curveTexW_), static_cast<float>(curveTexH_),
+                              1.f / static_cast<float>(curveTexW_),
+                              1.f / static_cast<float>(curveTexH_)};
+        bgfx::setUniform(u_slugCurvesDim_, dim);
+    }
+}
+
+void SlugFont::setCurrentGlyph(uint32_t curveOffset, uint32_t curveCount) const
+{
+    if (!bgfx::isValid(u_slugParams_))
+        return;
+    const float p[4] = {static_cast<float>(curveOffset), static_cast<float>(curveCount), 0.f, 0.f};
+    bgfx::setUniform(u_slugParams_, p);
 }
 
 bool SlugFont::loadFromFile(const char* ttfPath, float pixelSize)
@@ -233,6 +256,7 @@ bool SlugFont::loadFromFile(const char* ttfPath, float pixelSize)
 
     nominalSize_ = pixelSize;
     lineHeight_ = static_cast<float>(face->size->metrics.height >> 6);
+    ascender_ = static_cast<float>(face->size->metrics.ascender >> 6);
 
     // Pre-reserve: 256 floats per glyph is a reasonable starting guess for
     // a typical printable-ASCII font. The vector will grow as needed.
@@ -263,18 +287,31 @@ bool SlugFont::loadFromFile(const char* ttfPath, float pixelSize)
 
         FT_Outline_Decompose(&slot->outline, &funcs, &st);
 
+        const float bearingX = static_cast<float>(slot->metrics.horiBearingX >> 6);
+        const float bearingY = static_cast<float>(slot->metrics.horiBearingY >> 6);
+        const float gWidth = static_cast<float>(slot->metrics.width >> 6);
+        const float gHeight = static_cast<float>(slot->metrics.height >> 6);
+
         GlyphMetrics metrics{};
         metrics.uvRect = {0.f, 0.f, 0.f, 0.f};
-        metrics.size = {static_cast<float>(slot->metrics.width >> 6),
-                        static_cast<float>(slot->metrics.height >> 6)};
-        metrics.offset = {static_cast<float>(slot->metrics.horiBearingX >> 6),
-                          static_cast<float>(slot->metrics.horiBearingY >> 6)};
+        metrics.size = {gWidth, gHeight};
+        // y-down line-relative convention (matches BitmapFont and MsdfFont,
+        // which is what UiRenderer expects). offset.y is the distance from
+        // the top of the line down to the top of the glyph quad.
+        metrics.offset = {bearingX, ascender_ - bearingY};
         metrics.advance = static_cast<float>(slot->metrics.horiAdvance >> 6);
         glyphs_.emplace(cp, metrics);
 
         GlyphSlugData sd{};
         sd.curveOffset = startCurve;
         sd.curveCount = st.curveCount;
+        // Stash the y-up font-space bounding box so the slug renderer path
+        // can write per-vertex glyph-space corners that line up with the
+        // curve points (which live in the same coordinate system).
+        sd.fontLeft = bearingX;
+        sd.fontTop = bearingY;
+        sd.fontWidth = gWidth;
+        sd.fontHeight = gHeight;
         slugData_.emplace(cp, sd);
     }
 
@@ -306,6 +343,9 @@ bool SlugFont::loadFromFile(const char* ttfPath, float pixelSize)
     // In headless (Noop) mode, skip all bgfx resource creation. Loading
     // the font data is still useful — tests and tools can inspect curves
     // without a real GPU context.
+    curveTexW_ = texW;
+    curveTexH_ = texH;
+
     if (bgfx::getRendererType() != bgfx::RendererType::Noop)
     {
         const bgfx::Memory* mem = bgfx::copy(
@@ -319,6 +359,7 @@ bool SlugFont::loadFromFile(const char* ttfPath, float pixelSize)
 
         s_curveBuffer_ = bgfx::createUniform("s_slugCurves", bgfx::UniformType::Sampler);
         u_slugParams_ = bgfx::createUniform("u_slugParams", bgfx::UniformType::Vec4);
+        u_slugCurvesDim_ = bgfx::createUniform("u_slugCurvesDim", bgfx::UniformType::Vec4);
 
         program_ = engine::rendering::loadSlugProgram();
     }

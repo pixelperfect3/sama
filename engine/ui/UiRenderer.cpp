@@ -13,6 +13,7 @@
 #include "engine/ui/DefaultFont.h"
 #include "engine/ui/GlyphMetrics.h"
 #include "engine/ui/IFont.h"
+#include "engine/ui/SlugFont.h"
 #include "engine/ui/UiDrawList.h"
 
 namespace engine::ui
@@ -282,7 +283,36 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
         }
 
         const IFont* font = cmds[i].font ? cmds[i].font : defaultFont();
-        if (!font || !bgfx::isValid(font->program()) || !bgfx::isValid(font->atlasTexture()))
+        if (!font || !bgfx::isValid(font->program()))
+        {
+            ++i;
+            continue;
+        }
+
+        // Slug fonts take a different submission path: one draw per glyph
+        // because the per-glyph (curveOffset, curveCount) must be set as a
+        // uniform. The atlas-based check below would also reject them since
+        // SlugFont returns BGFX_INVALID_HANDLE for atlasTexture().
+        if (font->renderer() == FontRenderer::Slug)
+        {
+            const auto* slug = static_cast<const SlugFont*>(font);
+            const bgfx::ProgramHandle slugProg = font->program();
+            // Walk THIS Text command (and any consecutive Text commands
+            // sharing the same font program) emitting one draw per glyph.
+            std::size_t k = i;
+            while (k < n && cmds[k].type == UiDrawCmd::Text)
+            {
+                const IFont* f = cmds[k].font ? cmds[k].font : defaultFont();
+                if (!f || f->program().idx != slugProg.idx)
+                    break;
+                renderSlugText(cmds[k], slug, slugProg, viewId, blendState);
+                ++k;
+            }
+            i = k;
+            continue;
+        }
+
+        if (!bgfx::isValid(font->atlasTexture()))
         {
             ++i;
             continue;
@@ -401,6 +431,117 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
         }
 
         i = j;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// renderSlugText — single text command, one draw per glyph.
+//
+// SlugFont stores per-glyph (curveOffset, curveCount) which the slug fragment
+// shader reads from u_slugParams. There is no atlas — the shader instead
+// fetches Bezier control points from the SlugFont's curve buffer texture and
+// determines pixel coverage by ray-casting in glyph-local font space.
+//
+// To make the math work we write the glyph's font-space bounding-box corners
+// into the per-vertex TEXCOORD0 (instead of an atlas UV). The slug shader
+// reads v_texcoord0 as a glyph-local coordinate.
+// ---------------------------------------------------------------------------
+
+void UiRenderer::renderSlugText(const UiDrawCmd& cmd, const SlugFont* font,
+                                bgfx::ProgramHandle prog, bgfx::ViewId viewId, uint64_t blendState)
+{
+    if (!cmd.text || !font)
+        return;
+
+    const float scale = cmd.fontSize / font->nominalSize();
+    const uint32_t rgba = packColor(cmd.color);
+
+    float cursorX = cmd.position.x;
+    const float lineTopY = cmd.position.y;
+    uint32_t prev = 0;
+
+    const char* p = cmd.text;
+    while (*p)
+    {
+        const uint32_t cp = utf8Next(&p);
+        if (cp == 0)
+            continue;
+        if (cp == '\n')
+        {
+            cursorX = cmd.position.x;
+            prev = 0;
+            continue;
+        }
+
+        const GlyphMetrics* g = font->getGlyph(cp);
+        if (!g)
+            continue;
+        if (prev)
+            cursorX += font->getKerning(prev, cp) * scale;
+
+        const auto* sd = font->getGlyphSlugData(cp);
+        if (!sd || sd->curveCount == 0 || g->size.x <= 0.f || g->size.y <= 0.f)
+        {
+            cursorX += g->advance * scale;
+            prev = cp;
+            continue;
+        }
+
+        // Screen-space corners in y-down line-relative space.
+        const float x0 = cursorX + g->offset.x * scale;
+        const float y0 = lineTopY + g->offset.y * scale;
+        const float x1 = x0 + g->size.x * scale;
+        const float y1 = y0 + g->size.y * scale;
+
+        // Per-vertex TEXCOORD0 = font-space corners. The slug shader reads
+        // these as glyph-local coordinates that match the curve buffer.
+        // Top-left vertex (screen y0) → top of glyph in font space (fontTop).
+        // Bottom-left vertex (screen y1) → bottom of glyph (fontTop - fontH).
+        const float fL = sd->fontLeft;
+        const float fR = sd->fontLeft + sd->fontWidth;
+        const float fT = sd->fontTop;
+        const float fB = sd->fontTop - sd->fontHeight;
+
+        if (!bgfx::getAvailTransientVertexBuffer(4, layout_) ||
+            !bgfx::getAvailTransientIndexBuffer(6))
+        {
+            cursorX += g->advance * scale;
+            prev = cp;
+            continue;
+        }
+
+        bgfx::TransientVertexBuffer tvb{};
+        bgfx::TransientIndexBuffer tib{};
+        bgfx::allocTransientVertexBuffer(&tvb, 4, layout_);
+        bgfx::allocTransientIndexBuffer(&tib, 6);
+
+        auto* verts = reinterpret_cast<UiVertex*>(tvb.data);
+        verts[0] = {x0, y0, fL, fT, rgba};
+        verts[1] = {x1, y0, fR, fT, rgba};
+        verts[2] = {x1, y1, fR, fB, rgba};
+        verts[3] = {x0, y1, fL, fB, rgba};
+
+        auto* idx = reinterpret_cast<uint16_t*>(tib.data);
+        idx[0] = 0;
+        idx[1] = 1;
+        idx[2] = 2;
+        idx[3] = 0;
+        idx[4] = 2;
+        idx[5] = 3;
+
+        // Per-glyph uniform set + bind curve buffer + submit. Slug doesn't
+        // use sampler 0 (s_texture); we still bind whiteTex_ to silence
+        // any "no texture bound" warnings on backends that complain.
+        bgfx::setTexture(0, s_texture_, whiteTex_);
+        font->bindResources();
+        font->setCurrentGlyph(sd->curveOffset, sd->curveCount);
+        bgfx::setState(blendState);
+        bgfx::setVertexBuffer(0, &tvb);
+        bgfx::setIndexBuffer(&tib);
+        bgfx::submit(viewId, prog);
+
+        cursorX += g->advance * scale;
+        prev = cp;
     }
 }
 

@@ -24,6 +24,16 @@ code, and the commit history of this branch for the full delivery.
 - `assets/fonts/ChunkFive-Regular.ttf` (SIL OFL, The League of Movable
   Type) checked in as the default TTF source.
 
+## What's working now (post end-to-end integration)
+
+- All 95 ASCII glyphs render through UiRenderer when SlugFont is the
+  active backend (verified by `tests/golden/ui_text_slug.png`).
+- Per-glyph curve range is set as a uniform (one draw call per glyph).
+- Glyph quads land at the correct vertical position (the y-down
+  line-relative metric convention now matches BitmapFont/MsdfFont).
+- The curve buffer texture and dimensions uniform are bound through
+  `SlugFont::bindResources()` and `SlugFont::setCurrentGlyph()`.
+
 ## What's left
 
 ### Shader / rendering
@@ -49,22 +59,25 @@ code, and the commit history of this branch for the full delivery.
 
 ### Integration
 
-7. **UiRenderer vertex layout coordination.** SlugFont lives as a
-   standalone backend right now; UiRenderer has no Slug-aware submit
-   path. The cleanest fix is to add an extra vertex attribute
-   (`TEXCOORD1` carrying `vec2(curveOffset, curveCount)`) that bitmap
-   and MSDF backends simply ignore. Alternatively, keep the current
-   layout and submit one draw per glyph, setting `u_slugParams` each
-   time — slower but layout-agnostic. Decision pending on which way to
-   go; this is blocked on the bitmap agent's final vertex layout.
-8. **`u_slugCurvesDim` population.** The fragment shader expects a
-   uniform describing the curve texture dimensions. SlugFont allocates
-   the uniform handle but does not currently set it because there is
-   no Slug-aware UiRenderer path yet. Wire that up once (7) lands.
-9. **End-to-end smoke test.** No rendered screenshot exists for Slug
-   yet. Add a screenshot test once the UiRenderer integration is done,
-   preferably rendering the letter `A` at several scales / rotations to
-   prove the "vector-perfect at any angle" property.
+7. ~~**UiRenderer vertex layout coordination.**~~ **DONE** (commit on
+   2026-04-10). Picked the layout-agnostic option: UiRenderer dispatches
+   to a `renderSlugText` helper when `font->renderer() == FontRenderer::Slug`,
+   submitting one draw per glyph. The per-vertex TEXCOORD0 carries
+   font-space corners (instead of an atlas UV) so the slug fragment
+   shader can compute its glyph-local position without a vertex layout
+   change. Slower than batching but unblocks end-to-end rendering;
+   batched submission with a vertex attribute is a follow-up if perf
+   becomes an issue.
+8. ~~**`u_slugCurvesDim` population.**~~ **DONE** (same commit).
+   `SlugFont::bindResources()` now sets `u_slugCurvesDim` from the
+   stored curve texture dimensions, and the per-glyph `u_slugParams`
+   uniform is set via the new `SlugFont::setCurrentGlyph(offset, count)`
+   method called by `UiRenderer::renderSlugText` before each submit.
+9. ~~**End-to-end smoke test.**~~ **DONE** —
+   `tests/screenshot/TestSsUiText.cpp` already covers Slug; the golden
+   `tests/golden/ui_text_slug.png` was regenerated to capture the
+   working render. Vector-at-any-angle test (rotation, perspective)
+   still pending.
 
 ### Operational
 

@@ -35,6 +35,11 @@ public:
                 uint16_t screenH);
 
 private:
+    // Slug submission path — one draw call per glyph because the per-glyph
+    // curve range must be set as a uniform. Defined in UiRenderer.cpp.
+    void renderSlugText(const struct UiDrawCmd& cmd, const class SlugFont* font,
+                        bgfx::ProgramHandle prog, bgfx::ViewId viewId, uint64_t blendState);
+
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout layout_;
     bgfx::UniformHandle s_texture_ = BGFX_INVALID_HANDLE;
