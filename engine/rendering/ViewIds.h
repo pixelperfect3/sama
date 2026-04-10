@@ -43,4 +43,8 @@ inline constexpr bgfx::ViewId kViewImGui = 15;  // editor overlay
 inline constexpr bgfx::ViewId kViewPostProcessBase = 16;
 inline constexpr bgfx::ViewId kMaxPostProcessViews = 32;  // views 16-47
 
+// Game UI — rendered after all post-processing so bloom/FXAA/tonemapping
+// do not affect text and icons.  Uses orthographic projection.
+inline constexpr bgfx::ViewId kViewGameUi = 48;
+
 }  // namespace engine::rendering

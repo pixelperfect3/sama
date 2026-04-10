@@ -804,12 +804,14 @@ add_executable(engine_screenshot_tests
     tests/screenshot/TestSsSsao.cpp
     tests/screenshot/TestSsCsm.cpp
     tests/screenshot/TestSsUi.cpp
+    tests/screenshot/TestSsUiPanel.cpp
     tests/screenshot/TestSsHelmet.cpp
     tests/screenshot/TestSsIk.cpp
 )
 
 target_link_libraries(engine_screenshot_tests PRIVATE
     engine_assets
+    engine_ui
     Catch2::Catch2   # NOT Catch2WithMain — we supply our own main
 )
 
@@ -929,6 +931,7 @@ add_library(engine_ui STATIC
     engine/ui/UiNode.cpp
     engine/ui/UiDrawList.cpp
     engine/ui/UiCanvas.cpp
+    engine/ui/UiRenderer.cpp
     engine/ui/widgets/UiPanel.cpp
     engine/ui/widgets/UiImage.cpp
     engine/ui/widgets/UiText.cpp
