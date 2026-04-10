@@ -726,11 +726,28 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
 
         // Install a window-level key monitor so key events are captured
         // regardless of which view has focus (e.g., Delete when hierarchy
-        // panel's NSTableView is focused).
+        // panel's NSTableView is focused). But skip when a text field is
+        // being edited — otherwise Delete removes an entity instead of
+        // deleting a character in the text.
         EditorMetalView* metalViewRef = impl_->metalView;
+        NSWindow* winRef = impl_->window;
         impl_->keyMonitor = [NSEvent
             addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                          handler:^NSEvent*(NSEvent* event) {
+                                           // Don't capture keys when editing text.
+                                           id firstResponder = [winRef firstResponder];
+                                           if ([firstResponder isKindOfClass:[NSTextView class]] ||
+                                               [firstResponder isKindOfClass:[NSTextField class]])
+                                           {
+                                               // Only capture Cmd+key combos (shortcuts),
+                                               // not plain typing keys.
+                                               if (!([event modifierFlags] &
+                                                     NSEventModifierFlagCommand))
+                                               {
+                                                   return event;
+                                               }
+                                           }
+
                                            uint8_t code = mapKeyCode([event keyCode]);
                                            if (code != 0)
                                            {
