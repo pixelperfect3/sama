@@ -841,6 +841,8 @@ add_executable(engine_screenshot_tests
     tests/screenshot/TestSsCsm.cpp
     tests/screenshot/TestSsUi.cpp
     tests/screenshot/TestSsUiPanel.cpp
+    tests/screenshot/TestSsUiText.cpp
+    tests/screenshot/TestSsUiWidgets.cpp
     tests/screenshot/TestSsHelmet.cpp
     tests/screenshot/TestSsIk.cpp
 )
