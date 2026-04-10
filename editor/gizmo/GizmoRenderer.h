@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 
 #include "editor/gizmo/TransformGizmo.h"
+#include "engine/ecs/Registry.h"
 
 namespace engine::editor
 {
@@ -32,6 +33,10 @@ public:
     void render(const TransformGizmo& gizmo, const glm::mat4& view, const glm::mat4& proj,
                 uint16_t fbWidth, uint16_t fbHeight);
 
+    // Render light gizmos for all light entities in the registry.
+    void renderLightGizmos(engine::ecs::Registry& registry, const glm::mat4& view,
+                           const glm::mat4& proj, uint16_t fbWidth, uint16_t fbHeight);
+
 private:
     // Submit a thick line as a camera-facing quad (6 vertices, 2 triangles).
     void drawLine(const glm::vec3& from, const glm::vec3& to, uint32_t color);
@@ -54,7 +59,7 @@ private:
         uint32_t abgr;
     };
 
-    static constexpr uint32_t kMaxLineVerts = 4096;
+    static constexpr uint32_t kMaxLineVerts = 8192;
     LineVertex lineVerts_[kMaxLineVerts];
     uint32_t lineVertCount_ = 0;
 

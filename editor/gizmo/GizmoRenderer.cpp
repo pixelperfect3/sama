@@ -5,6 +5,7 @@
 #include <cmath>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/ShaderLoader.h"
 
 namespace engine::editor
@@ -253,6 +254,127 @@ void GizmoRenderer::render(const TransformGizmo& gizmo, const glm::mat4& view,
         drawCircle({1, 0, 0}, {0, 0, 1}, yColor);  // XZ plane = Y rotation
         drawCircle({1, 0, 0}, {0, 1, 0}, zColor);  // XY plane = Z rotation
     }
+
+    flush(view, proj, fbWidth, fbHeight);
+}
+
+void GizmoRenderer::renderLightGizmos(engine::ecs::Registry& registry, const glm::mat4& view,
+                                      const glm::mat4& proj, uint16_t fbWidth, uint16_t fbHeight)
+{
+    using namespace engine::rendering;
+
+    if (!initialized_)
+        return;
+
+    glm::vec3 camPos = glm::vec3(glm::inverse(view)[3]);
+    cameraPos_ = camPos;
+
+    // --- Directional lights ---
+    auto dirView = registry.view<DirectionalLightComponent, WorldTransformComponent>();
+    dirView.each(
+        [&](engine::ecs::EntityID /*entity*/, const DirectionalLightComponent& dl,
+            const WorldTransformComponent& wt)
+        {
+            glm::vec3 pos = glm::vec3(wt.matrix[3]);
+            glm::vec3 dir =
+                glm::normalize(glm::vec3(dl.direction.x, dl.direction.y, dl.direction.z));
+
+            // Convert light color to ABGR uint32_t.
+            uint32_t color =
+                0xFF000000u |
+                (static_cast<uint32_t>(glm::clamp(dl.color.z, 0.0f, 1.0f) * 255.0f) << 16) |
+                (static_cast<uint32_t>(glm::clamp(dl.color.y, 0.0f, 1.0f) * 255.0f) << 8) |
+                (static_cast<uint32_t>(glm::clamp(dl.color.x, 0.0f, 1.0f) * 255.0f));
+
+            // Scale by camera distance for consistent screen size.
+            float dist = glm::length(camPos - pos);
+            float scale = dist * 0.1f;
+
+            // Find two perpendicular vectors to dir.
+            glm::vec3 perp1;
+            if (std::abs(dir.y) < 0.99f)
+            {
+                perp1 = glm::normalize(glm::cross(dir, glm::vec3(0.0f, 1.0f, 0.0f)));
+            }
+            else
+            {
+                perp1 = glm::normalize(glm::cross(dir, glm::vec3(1.0f, 0.0f, 0.0f)));
+            }
+            glm::vec3 perp2 = glm::cross(dir, perp1);
+
+            // Draw circle perpendicular to direction (12 segments).
+            constexpr int kCircleSegments = 12;
+            constexpr float kTwoPi = 2.0f * 3.14159265f;
+            float radius = scale * 0.3f;
+            for (int i = 0; i < kCircleSegments; ++i)
+            {
+                float a0 = static_cast<float>(i) * kTwoPi / static_cast<float>(kCircleSegments);
+                float a1 = static_cast<float>(i + 1) * kTwoPi / static_cast<float>(kCircleSegments);
+                glm::vec3 p0 = pos + (perp1 * std::cos(a0) + perp2 * std::sin(a0)) * radius;
+                glm::vec3 p1 = pos + (perp1 * std::cos(a1) + perp2 * std::sin(a1)) * radius;
+                drawLine(p0, p1, color);
+            }
+
+            // Draw 6 arrows radiating outward from the circle in the light direction.
+            constexpr int kArrowCount = 6;
+            float arrowLen = scale * 0.5f;
+            for (int i = 0; i < kArrowCount; ++i)
+            {
+                float angle = static_cast<float>(i) * kTwoPi / static_cast<float>(kArrowCount);
+                glm::vec3 base = pos + (perp1 * std::cos(angle) + perp2 * std::sin(angle)) * radius;
+                glm::vec3 tip = base + dir * arrowLen;
+                drawLine(base, tip, color);
+
+                // Small arrowhead at tip.
+                float headLen = arrowLen * 0.2f;
+                float headRad = arrowLen * 0.08f;
+                glm::vec3 headBase = tip - dir * headLen;
+                for (int j = 0; j < 4; ++j)
+                {
+                    float ha = static_cast<float>(j) * 3.14159265f * 0.5f;
+                    glm::vec3 offset = (perp1 * std::cos(ha) + perp2 * std::sin(ha)) * headRad;
+                    drawLine(tip, headBase + offset, color);
+                }
+            }
+        });
+
+    // --- Point lights ---
+    auto ptView = registry.view<PointLightComponent, WorldTransformComponent>();
+    ptView.each(
+        [&](engine::ecs::EntityID /*entity*/, const PointLightComponent& pl,
+            const WorldTransformComponent& wt)
+        {
+            glm::vec3 pos = glm::vec3(wt.matrix[3]);
+
+            // Convert light color to ABGR uint32_t.
+            uint32_t color =
+                0xFF000000u |
+                (static_cast<uint32_t>(glm::clamp(pl.color.z, 0.0f, 1.0f) * 255.0f) << 16) |
+                (static_cast<uint32_t>(glm::clamp(pl.color.y, 0.0f, 1.0f) * 255.0f) << 8) |
+                (static_cast<uint32_t>(glm::clamp(pl.color.x, 0.0f, 1.0f) * 255.0f));
+
+            // Scale by camera distance for consistent screen size.
+            float dist = glm::length(camPos - pos);
+            float scale = dist * 0.08f;
+
+            // Draw a diamond / cross shape at the entity's position.
+            drawLine(pos - glm::vec3(scale, 0, 0), pos + glm::vec3(scale, 0, 0), color);
+            drawLine(pos - glm::vec3(0, scale, 0), pos + glm::vec3(0, scale, 0), color);
+            drawLine(pos - glm::vec3(0, 0, scale), pos + glm::vec3(0, 0, scale), color);
+
+            // Draw a circle showing the light's radius.
+            constexpr int kCircleSegments = 16;
+            constexpr float kTwoPi = 2.0f * 3.14159265f;
+            for (int i = 0; i < kCircleSegments; ++i)
+            {
+                float a0 = static_cast<float>(i) * kTwoPi / static_cast<float>(kCircleSegments);
+                float a1 = static_cast<float>(i + 1) * kTwoPi / static_cast<float>(kCircleSegments);
+                // XZ plane circle at the light's radius.
+                glm::vec3 p0 = pos + glm::vec3(std::cos(a0), 0, std::sin(a0)) * pl.radius;
+                glm::vec3 p1 = pos + glm::vec3(std::cos(a1), 0, std::sin(a1)) * pl.radius;
+                drawLine(p0, p1, color);
+            }
+        });
 
     flush(view, proj, fbWidth, fbHeight);
 }
