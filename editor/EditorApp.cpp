@@ -1544,6 +1544,51 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             impl_->propertiesDirty = true;
         });
 
+    // Wire native properties view texture-clear callback.
+    // Writes zero into the corresponding Material slot; the actual texture
+    // lifecycle in RenderResources is managed elsewhere.
+    impl_->window->propertiesView()->setTextureClearedCallback(
+        [this](int fieldId)
+        {
+            if (impl_->editorState.playState() != EditorPlayState::Editing)
+                return;
+            EntityID entity = impl_->editorState.primarySelection();
+            if (entity == INVALID_ENTITY)
+                return;
+            auto* mc = impl_->registry.get<MaterialComponent>(entity);
+            if (!mc)
+                return;
+            Material* mat = impl_->resources.getMaterialMut(mc->material);
+            if (!mat)
+                return;
+
+            // Route through rebindTexture so the cleared slot's previous
+            // texture has its material ref count decremented; if no other
+            // material references it, the asset handle is released and
+            // the RenderResources slot is freed.
+            switch (fieldId)
+            {
+                case 210:
+                    impl_->rebindTexture(&mat->albedoMapId, 0);
+                    break;
+                case 211:
+                    impl_->rebindTexture(&mat->normalMapId, 0);
+                    break;
+                case 212:
+                    impl_->rebindTexture(&mat->ormMapId, 0);
+                    break;
+                case 213:
+                    impl_->rebindTexture(&mat->emissiveMapId, 0);
+                    break;
+                case 214:
+                    impl_->rebindTexture(&mat->occlusionMapId, 0);
+                    break;
+                default:
+                    break;
+            }
+            impl_->propertiesDirty = true;
+        });
+
     impl_->hierarchyPanel =
         std::make_unique<HierarchyPanel>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->hierarchyPanel->init();
