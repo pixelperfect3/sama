@@ -371,6 +371,20 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_sprite.sc FRAGMENT ANDROID ""     fs_sprite_essl COMPILED_SHADERS)
 
+# MSDF text — fragment shader only; it reuses vs_sprite for the vertex stream.
+# Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_msdf.sc FRAGMENT OSX     metal  fs_msdf_mtl  COMPILED_SHADERS)
+# SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_msdf.sc FRAGMENT LINUX   spirv  fs_msdf_spv  COMPILED_SHADERS)
+# GLSL (OpenGL; required by BGFX_EMBEDDED_SHADER on macOS/Linux)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_msdf.sc FRAGMENT LINUX   120    fs_msdf_glsl COMPILED_SHADERS)
+# ESSL (OpenGLES / Android; required by BGFX_EMBEDDED_SHADER on macOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_msdf.sc FRAGMENT ANDROID ""     fs_msdf_essl COMPILED_SHADERS)
+
 # Shadow — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   OSX     metal  vs_shadow_mtl  COMPILED_SHADERS)
@@ -742,6 +756,7 @@ add_executable(engine_tests
     tests/game/TestProjectConfig.cpp
     tests/ui/TestUiNode.cpp
     tests/ui/TestUiLayout.cpp
+    tests/ui/TestMsdfFont.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui Catch2::Catch2WithMain)
@@ -932,6 +947,7 @@ add_library(engine_ui STATIC
     engine/ui/UiDrawList.cpp
     engine/ui/UiCanvas.cpp
     engine/ui/UiRenderer.cpp
+    engine/ui/MsdfFont.cpp
     engine/ui/widgets/UiPanel.cpp
     engine/ui/widgets/UiImage.cpp
     engine/ui/widgets/UiText.cpp
@@ -940,6 +956,9 @@ add_library(engine_ui STATIC
     engine/ui/widgets/UiProgressBar.cpp
 )
 target_include_directories(engine_ui PUBLIC ${SAMA_ROOT_DIR})
+# stb_image is compiled privately inside MsdfFont.cpp with STB_IMAGE_STATIC
+# so the symbols don't collide with engine_assets/TextureLoader.cpp.
+target_include_directories(engine_ui PRIVATE ${stb_SOURCE_DIR})
 target_link_libraries(engine_ui PUBLIC engine_rendering)
 
 # ===========================================================================

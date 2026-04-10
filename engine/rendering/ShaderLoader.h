@@ -29,6 +29,14 @@ namespace engine::rendering
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadSpriteProgram();
 
+// MSDF text program — reuses vs_sprite for the vertex stream, samples an
+// RGB multi-channel signed distance field atlas via s_texture, and runs
+// the MSDF reconstruction fragment shader (median + smoothstep).  Used by
+// MsdfFont.  Requires a Vec4 uniform u_msdfParams where x = distanceRange
+// in atlas pixels, set per-batch via MsdfFont::bindResources().
+// Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.
+[[nodiscard]] bgfx::ProgramHandle loadMsdfProgram();
+
 // Shadow program — depth-only, Stream 0 (position) only.
 // Used by the shadow pass to render scene geometry into the shadow atlas.
 // Returns BGFX_INVALID_HANDLE on failure or in headless (Noop) mode.

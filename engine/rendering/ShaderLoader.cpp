@@ -13,6 +13,10 @@
 #include "generated/shaders/fs_gizmo_glsl.bin.h"
 #include "generated/shaders/fs_gizmo_mtl.bin.h"
 #include "generated/shaders/fs_gizmo_spv.bin.h"
+#include "generated/shaders/fs_msdf_essl.bin.h"
+#include "generated/shaders/fs_msdf_glsl.bin.h"
+#include "generated/shaders/fs_msdf_mtl.bin.h"
+#include "generated/shaders/fs_msdf_spv.bin.h"
 #include "generated/shaders/fs_pbr_essl.bin.h"
 #include "generated/shaders/fs_pbr_glsl.bin.h"
 #include "generated/shaders/fs_pbr_mtl.bin.h"
@@ -108,6 +112,13 @@ static const bgfx::EmbeddedShader kGizmoShaders[] = {
     BGFX_EMBEDDED_SHADER_END(),
 };
 
+// MSDF text — reuses the sprite vertex shader, pairs with fs_msdf.
+static const bgfx::EmbeddedShader kMsdfShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_sprite),
+    BGFX_EMBEDDED_SHADER(fs_msdf),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
 }  // anonymous namespace
 
 bgfx::ProgramHandle loadUnlitProgram()
@@ -169,6 +180,28 @@ bgfx::ProgramHandle loadSpriteProgram()
         return BGFX_INVALID_HANDLE;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSpriteShaders, renderer, "fs_sprite");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadMsdfProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    // The Noop renderer (headless unit tests) cannot run real shaders.
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kMsdfShaders, renderer, "vs_sprite");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kMsdfShaders, renderer, "fs_msdf");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
