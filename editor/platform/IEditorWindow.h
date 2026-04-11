@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace engine::editor
 {
@@ -55,6 +56,12 @@ public:
     // Native file dialogs. Return empty string if cancelled.
     virtual std::string showSaveDialog(const char* defaultName, const char* extension) = 0;
     virtual std::string showOpenDialog(const char* extension) = 0;
+
+    // Open dialog that accepts multiple file extensions, e.g. {"ktx","ktx2","dds"}
+    // when importing cubemaps. Each entry is the extension without the dot.
+    // `title` may be null; platforms may ignore it. Returns "" if cancelled.
+    virtual std::string showOpenDialogMultiExt(const std::vector<std::string>& extensions,
+                                               const char* title) = 0;
 
     // Import dialog for 3D assets (glTF/GLB, OBJ). Returns empty string if cancelled.
     virtual std::string showImportDialog() = 0;

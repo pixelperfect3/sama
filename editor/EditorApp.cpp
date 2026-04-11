@@ -38,6 +38,7 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/assets/CubemapLoader.h"
 #include "engine/assets/EnvironmentAssetSerializer.h"
 #include "engine/assets/GltfAsset.h"
 #include "engine/assets/GltfLoader.h"
@@ -2280,6 +2281,44 @@ void EditorApp::run()
                                  "HDR load failed (stb_image could not parse)");
                         impl_->statusTimer = 3.0f;
                         EditorLog::instance().error("loadHdrEnvironment returned nullopt");
+                    }
+                }
+            }
+            else if (action == "load_environment_cubemap")
+            {
+                // Accept any container bimg knows how to parse: KTX1/KTX2/DDS.
+                std::string path = impl_->window->showOpenDialogMultiExt({"ktx", "ktx2", "dds"},
+                                                                         "Load Cubemap (DDS/KTX)");
+                if (!path.empty())
+                {
+                    auto loaded = engine::assets::loadCubemapEnvironment(path);
+                    if (loaded.has_value())
+                    {
+                        if (impl_->iblResources.upload(*loaded))
+                        {
+                            const auto slash = path.find_last_of('/');
+                            const std::string name =
+                                slash == std::string::npos ? path : path.substr(slash + 1);
+                            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                     "Loaded cubemap: %.80s", name.c_str());
+                            impl_->statusTimer = 3.0f;
+                            EditorLog::instance().info("Loaded cubemap environment");
+                        }
+                        else
+                        {
+                            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                     "Cubemap upload failed");
+                            impl_->statusTimer = 3.0f;
+                            EditorLog::instance().error(
+                                "IblResources::upload returned false for cubemap");
+                        }
+                    }
+                    else
+                    {
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                 "Cubemap load failed (bimg could not parse)");
+                        impl_->statusTimer = 3.0f;
+                        EditorLog::instance().error("loadCubemapEnvironment returned nullopt");
                     }
                 }
             }

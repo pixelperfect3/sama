@@ -372,6 +372,9 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 31:
             s_menuActionCallback("load_environment_hdr");
             break;
+        case 32:
+            s_menuActionCallback("load_environment_cubemap");
+            break;
         default:
             break;
     }
@@ -614,6 +617,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             [viewMenu addItem:[NSMenuItem separatorItem]];
             addItem(viewMenu, @"Load Environment (Skybox)...", @"", 30);
             addItem(viewMenu, @"Load HDR Environment...", @"", 31);
+            addItem(viewMenu, @"Load Cubemap (DDS/KTX)...", @"", 32);
             viewMenuItem.submenu = viewMenu;
             [menuBar addItem:viewMenuItem];
 
@@ -1090,6 +1094,38 @@ std::string CocoaEditorWindow::showOpenDialog(const char* extension)
     {
         NSOpenPanel* panel = [NSOpenPanel openPanel];
         panel.allowedContentTypes = @[ [UTType typeWithFilenameExtension:@(extension)] ];
+        panel.allowsMultipleSelection = NO;
+        if ([panel runModal] == NSModalResponseOK)
+        {
+            return std::string([[panel.URLs[0] path] UTF8String]);
+        }
+        return {};
+    }
+}
+
+std::string CocoaEditorWindow::showOpenDialogMultiExt(const std::vector<std::string>& extensions,
+                                                      const char* title)
+{
+    @autoreleasepool
+    {
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        if (title != nullptr)
+        {
+            panel.title = @(title);
+        }
+        NSMutableArray<UTType*>* types = [NSMutableArray arrayWithCapacity:extensions.size()];
+        for (const auto& ext : extensions)
+        {
+            UTType* type = [UTType typeWithFilenameExtension:@(ext.c_str())];
+            if (type != nil)
+            {
+                [types addObject:type];
+            }
+        }
+        if (types.count > 0)
+        {
+            panel.allowedContentTypes = types;
+        }
         panel.allowsMultipleSelection = NO;
         if ([panel runModal] == NSModalResponseOK)
         {
