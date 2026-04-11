@@ -2246,6 +2246,62 @@ void EditorApp::run()
                     }
                 }
             }
+            else if (action == "reset_environment")
+            {
+                // Re-run the same asset-path search used by init() to locate
+                // the bundled default sky, then hot-swap it via IblResources.
+                auto findAsset = [](const char* relPath) -> std::string
+                {
+                    const char* prefixes[] = {"", "../", "../../", "../../../"};
+                    for (const char* p : prefixes)
+                    {
+                        std::string c = std::string(p) + relPath;
+                        if (FILE* f = std::fopen(c.c_str(), "rb"))
+                        {
+                            std::fclose(f);
+                            return c;
+                        }
+                    }
+                    char execPath[4096] = {};
+                    uint32_t execPathSize = sizeof(execPath);
+                    if (_NSGetExecutablePath(execPath, &execPathSize) == 0)
+                    {
+                        std::string base(execPath);
+                        auto slash = base.find_last_of('/');
+                        if (slash != std::string::npos)
+                            base.resize(slash);
+                        std::string prefix = base + "/";
+                        for (int depth = 0; depth < 6; ++depth)
+                        {
+                            std::string c = prefix + relPath;
+                            if (FILE* f = std::fopen(c.c_str(), "rb"))
+                            {
+                                std::fclose(f);
+                                return c;
+                            }
+                            prefix += "../";
+                        }
+                    }
+                    return relPath;
+                };
+
+                const std::string envPath = findAsset("assets/env/default.env");
+                auto loaded = engine::assets::loadEnvironmentAsset(envPath);
+                if (loaded.has_value() && impl_->iblResources.upload(*loaded))
+                {
+                    snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Reset to default sky");
+                    impl_->statusTimer = 3.0f;
+                    EditorLog::instance().info("Reset environment to default");
+                }
+                else
+                {
+                    snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                             "Reset to default sky failed");
+                    impl_->statusTimer = 3.0f;
+                    EditorLog::instance().error(
+                        "reset_environment: failed to load assets/env/default.env");
+                }
+            }
             else if (action == "import_asset")
             {
                 std::string path = impl_->window->showImportDialog();

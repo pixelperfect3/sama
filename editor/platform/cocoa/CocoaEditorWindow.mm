@@ -369,6 +369,9 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 30:
             s_menuActionCallback("load_environment");
             break;
+        case 33:
+            s_menuActionCallback("reset_environment");
+            break;
         default:
             break;
     }
@@ -610,6 +613,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             [viewMenu addItemWithTitle:@"Toggle Resources" action:nil keyEquivalent:@""];
             [viewMenu addItem:[NSMenuItem separatorItem]];
             addItem(viewMenu, @"Load Environment (Skybox)...", @"", 30);
+            addItem(viewMenu, @"Reset Skybox to Default", @"", 33);
             viewMenuItem.submenu = viewMenu;
             [menuBar addItem:viewMenuItem];
 
