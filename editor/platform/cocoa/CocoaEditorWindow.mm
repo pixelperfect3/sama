@@ -375,6 +375,9 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 32:
             s_menuActionCallback("load_environment_cubemap");
             break;
+        case 33:
+            s_menuActionCallback("reset_environment");
+            break;
         default:
             break;
     }
@@ -618,6 +621,8 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             addItem(viewMenu, @"Load Environment (Skybox)...", @"", 30);
             addItem(viewMenu, @"Load HDR Environment...", @"", 31);
             addItem(viewMenu, @"Load Cubemap (DDS/KTX)...", @"", 32);
+            [viewMenu addItem:[NSMenuItem separatorItem]];
+            addItem(viewMenu, @"Reset Skybox to Default", @"", 33);
             viewMenuItem.submenu = viewMenu;
             [menuBar addItem:viewMenuItem];
 
