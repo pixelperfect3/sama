@@ -2209,6 +2209,43 @@ void EditorApp::run()
             {
                 impl_->addComponentToSelection(action.substr(14));
             }
+            else if (action == "load_environment")
+            {
+                std::string path = impl_->window->showOpenDialog("env");
+                if (!path.empty())
+                {
+                    auto loaded = engine::assets::loadEnvironmentAsset(path);
+                    if (loaded.has_value())
+                    {
+                        // upload() destroys the previous bgfx handles before
+                        // creating new ones, so swapping is safe at any time.
+                        if (impl_->iblResources.upload(*loaded))
+                        {
+                            const auto slash = path.find_last_of('/');
+                            const std::string name =
+                                slash == std::string::npos ? path : path.substr(slash + 1);
+                            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                     "Loaded environment: %.80s", name.c_str());
+                            impl_->statusTimer = 3.0f;
+                            EditorLog::instance().info("Loaded environment");
+                        }
+                        else
+                        {
+                            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                     "Environment upload failed");
+                            impl_->statusTimer = 3.0f;
+                            EditorLog::instance().error("IblResources::upload returned false");
+                        }
+                    }
+                    else
+                    {
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                 "Environment load failed (bad magic / version)");
+                        impl_->statusTimer = 3.0f;
+                        EditorLog::instance().error("loadEnvironmentAsset returned nullopt");
+                    }
+                }
+            }
             else if (action == "import_asset")
             {
                 std::string path = impl_->window->showImportDialog();

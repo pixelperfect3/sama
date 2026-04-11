@@ -366,6 +366,9 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 24:
             s_menuActionCallback("add_component:box_collider");
             break;
+        case 30:
+            s_menuActionCallback("load_environment");
+            break;
         default:
             break;
     }
@@ -605,6 +608,8 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
             [viewMenu addItemWithTitle:@"Toggle Console" action:nil keyEquivalent:@""];
             [viewMenu addItemWithTitle:@"Toggle Resources" action:nil keyEquivalent:@""];
+            [viewMenu addItem:[NSMenuItem separatorItem]];
+            addItem(viewMenu, @"Load Environment (Skybox)...", @"", 30);
             viewMenuItem.submenu = viewMenu;
             [menuBar addItem:viewMenuItem];
 
