@@ -588,6 +588,7 @@ add_library(engine_assets STATIC
     engine/assets/GltfSceneSpawner.cpp
     engine/assets/ObjLoader.cpp
     engine/assets/CompressedTextureLoader.cpp
+    engine/assets/EnvironmentAssetSerializer.cpp
 )
 
 target_include_directories(engine_assets PUBLIC ${SAMA_ROOT_DIR})
@@ -1071,6 +1072,24 @@ add_library(sama_2d INTERFACE)
 target_link_libraries(sama_2d INTERFACE
     sama_minimal
     engine_io
+)
+
+# --- bake_default_env tool ---
+# Generates the procedural sky cubemap + BRDF LUT and writes it to disk
+# (default: assets/env/default.env). The editor loads this file at startup
+# instead of regenerating, dropping startup from ~5 s to <50 ms. Run
+# manually whenever the procedural sky model in IblResources is changed:
+#
+#   cmake --build build --target bake_default_env
+#   ./build/bake_default_env
+#   git add assets/env/default.env && git commit
+#
+add_executable(bake_default_env
+    tools/bake_default_env/main.cpp
+)
+target_link_libraries(bake_default_env PRIVATE
+    engine_assets
+    engine_rendering
 )
 
 if(SAMA_BUILD_DEMOS)

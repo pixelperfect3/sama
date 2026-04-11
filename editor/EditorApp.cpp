@@ -38,6 +38,7 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/assets/EnvironmentAssetSerializer.h"
 #include "engine/assets/GltfAsset.h"
 #include "engine/assets/GltfLoader.h"
 #include "engine/assets/GltfSceneSpawner.h"
@@ -1655,11 +1656,69 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     startupSamples.push_back({"gizmo", startupNow()});
 
     // -- Procedural IBL + skybox ----------------------------------------------
-    // generateDefault() builds a sunset-like sky model into the irradiance
-    // and prefiltered cubemaps. The skybox renderer samples mip 0 of the
-    // prefiltered cubemap to draw the visible sky behind everything else.
-    impl_->iblResources.generateDefault();
-    startupSamples.push_back({"IBL generateDefault", startupNow()});
+    // The IBL data (irradiance + prefiltered + BRDF LUT) is precomputed and
+    // shipped as assets/env/default.env (~2.5 MB binary blob produced by
+    // tools/bake_default_env). Loading the file is sub-50ms; regenerating
+    // from scratch via IblResources::generateDefault() takes ~5 seconds.
+    // Falls back to the slow path if the file is missing or has the wrong
+    // version stamp (e.g. someone changed the procedural sky model and
+    // forgot to re-bake).
+    {
+        // Same asset-path resolver used for the HUD font further below —
+        // walks cwd-relative candidates first, then upward from
+        // _NSGetExecutablePath. Inlined here because the helper is local
+        // to the HUD font block.
+        auto findAssetEarly = [](const char* relPath) -> std::string
+        {
+            const char* prefixes[] = {"", "../", "../../", "../../../"};
+            for (const char* p : prefixes)
+            {
+                std::string c = std::string(p) + relPath;
+                if (FILE* f = std::fopen(c.c_str(), "rb"))
+                {
+                    std::fclose(f);
+                    return c;
+                }
+            }
+            char execPath[4096] = {};
+            uint32_t execPathSize = sizeof(execPath);
+            if (_NSGetExecutablePath(execPath, &execPathSize) == 0)
+            {
+                std::string base(execPath);
+                auto slash = base.find_last_of('/');
+                if (slash != std::string::npos)
+                    base.resize(slash);
+                std::string prefix = base + "/";
+                for (int depth = 0; depth < 6; ++depth)
+                {
+                    std::string c = prefix + relPath;
+                    if (FILE* f = std::fopen(c.c_str(), "rb"))
+                    {
+                        std::fclose(f);
+                        return c;
+                    }
+                    prefix += "../";
+                }
+            }
+            return relPath;
+        };
+
+        const std::string envPath = findAssetEarly("assets/env/default.env");
+        auto loaded = engine::assets::loadEnvironmentAsset(envPath);
+        if (loaded.has_value())
+        {
+            impl_->iblResources.upload(*loaded);
+        }
+        else
+        {
+            fprintf(stderr,
+                    "EditorApp: assets/env/default.env not found or invalid (looked at "
+                    "%s) — regenerating procedural sky from scratch (~5 s)\n",
+                    envPath.c_str());
+            impl_->iblResources.generateDefault();
+        }
+    }
+    startupSamples.push_back({"IBL load+upload", startupNow()});
     impl_->skybox.init();
     startupSamples.push_back({"skybox", startupNow()});
 
