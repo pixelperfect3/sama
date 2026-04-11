@@ -25,6 +25,10 @@
 #include "generated/shaders/fs_shadow_glsl.bin.h"
 #include "generated/shaders/fs_shadow_mtl.bin.h"
 #include "generated/shaders/fs_shadow_spv.bin.h"
+#include "generated/shaders/fs_skybox_essl.bin.h"
+#include "generated/shaders/fs_skybox_glsl.bin.h"
+#include "generated/shaders/fs_skybox_mtl.bin.h"
+#include "generated/shaders/fs_skybox_spv.bin.h"
 #include "generated/shaders/fs_slug_essl.bin.h"
 #include "generated/shaders/fs_slug_glsl.bin.h"
 #include "generated/shaders/fs_slug_mtl.bin.h"
@@ -57,6 +61,10 @@
 #include "generated/shaders/vs_shadow_skinned_mtl.bin.h"
 #include "generated/shaders/vs_shadow_skinned_spv.bin.h"
 #include "generated/shaders/vs_shadow_spv.bin.h"
+#include "generated/shaders/vs_skybox_essl.bin.h"
+#include "generated/shaders/vs_skybox_glsl.bin.h"
+#include "generated/shaders/vs_skybox_mtl.bin.h"
+#include "generated/shaders/vs_skybox_spv.bin.h"
 #include "generated/shaders/vs_slug_essl.bin.h"
 #include "generated/shaders/vs_slug_glsl.bin.h"
 #include "generated/shaders/vs_slug_mtl.bin.h"
@@ -131,6 +139,13 @@ static const bgfx::EmbeddedShader kMsdfShaders[] = {
 static const bgfx::EmbeddedShader kSlugShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_slug),
     BGFX_EMBEDDED_SHADER(fs_slug),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+// Skybox — unit cube + cubemap fragment sampler.
+static const bgfx::EmbeddedShader kSkyboxShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_skybox),
+    BGFX_EMBEDDED_SHADER(fs_skybox),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -326,6 +341,27 @@ bgfx::ProgramHandle loadSlugProgram()
         return BGFX_INVALID_HANDLE;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSlugShaders, renderer, "fs_slug");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadSkyboxProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kSkyboxShaders, renderer, "vs_skybox");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSkyboxShaders, renderer, "fs_skybox");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);

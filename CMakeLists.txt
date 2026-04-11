@@ -404,6 +404,24 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_slug.sc FRAGMENT ANDROID ""     fs_slug_essl COMPILED_SHADERS)
 
+# Skybox — unit cube + cubemap fragment shader, four platform variants.
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_skybox.sc VERTEX   OSX     metal  vs_skybox_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_skybox.sc FRAGMENT OSX     metal  fs_skybox_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_skybox.sc VERTEX   LINUX   spirv  vs_skybox_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_skybox.sc FRAGMENT LINUX   spirv  fs_skybox_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_skybox.sc VERTEX   LINUX   120    vs_skybox_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_skybox.sc FRAGMENT LINUX   120    fs_skybox_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_skybox.sc VERTEX   ANDROID ""     vs_skybox_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_skybox.sc FRAGMENT ANDROID ""     fs_skybox_essl COMPILED_SHADERS)
+
 # Shadow — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   OSX     metal  vs_shadow_mtl  COMPILED_SHADERS)
@@ -674,6 +692,7 @@ add_library(engine_rendering STATIC
     engine/rendering/ShaderLoader.cpp
     engine/rendering/ShaderUniforms.cpp
     engine/rendering/IblResources.cpp
+    engine/rendering/SkyboxRenderer.cpp
     engine/rendering/ShadowRenderer.cpp
     engine/rendering/CsmSplitCalculator.cpp
     engine/rendering/systems/FrustumCullSystem.cpp

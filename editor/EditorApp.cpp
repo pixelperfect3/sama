@@ -51,12 +51,14 @@
 #include "engine/physics/PhysicsComponents.h"
 #include "engine/physics/PhysicsSystem.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/IblResources.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ShaderUniforms.h"
+#include "engine/rendering/SkyboxRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/HierarchyComponents.h"
@@ -144,6 +146,12 @@ struct EditorApp::Impl
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
     GizmoRenderer gizmoRenderer;
+
+    // Skybox + procedural IBL. The cubemap that the skybox samples is the
+    // mip 0 of IblResources::prefiltered() — the editor uses the engine's
+    // built-in sunset-like procedural sky model from generateDefault().
+    engine::rendering::IblResources iblResources;
+    engine::rendering::SkyboxRenderer skybox;
 
     // Undo/redo
     CommandStack commandStack;
@@ -1618,6 +1626,13 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         std::make_unique<TransformGizmo>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->gizmoRenderer.init();
 
+    // -- Procedural IBL + skybox ----------------------------------------------
+    // generateDefault() builds a sunset-like sky model into the irradiance
+    // and prefiltered cubemaps. The skybox renderer samples mip 0 of the
+    // prefiltered cubemap to draw the visible sky behind everything else.
+    impl_->iblResources.generateDefault();
+    impl_->skybox.init();
+
     // -- Camera ---------------------------------------------------------------
     impl_->camera.distance = 5.0f;
     impl_->camera.yaw = 45.0f;
@@ -2537,6 +2552,13 @@ void EditorApp::run()
             }
         }
 
+        // -- Skybox -----------------------------------------------------------
+        // Submitted on the same view as the opaque pass AFTER all opaque
+        // draws so it fills only those pixels where nothing else has been
+        // drawn (depth test = LESS_EQUAL with the vertex shader forcing
+        // depth = 1.0). The cubemap is mip 0 of the prefiltered IBL.
+        impl_->skybox.render(kViewOpaque, impl_->iblResources.prefiltered());
+
         // -- Gizmo rendering --------------------------------------------------
         // Hide all editor gizmos in Play/Paused mode so the viewport shows a
         // clean preview of the running game (Unity/Unreal/Godot convention).
@@ -2706,6 +2728,8 @@ void EditorApp::shutdown()
     }
 
     impl_->gizmoRenderer.shutdown();
+    impl_->skybox.shutdown();
+    impl_->iblResources.shutdown();
 
     // Release editor-loaded textures (decrements asset ref counts and frees
     // RenderResources texture slots — destroyAll below also drops the

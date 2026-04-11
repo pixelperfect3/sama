@@ -64,4 +64,10 @@ namespace engine::rendering
 // (Noop) mode.
 [[nodiscard]] bgfx::ProgramHandle loadSlugProgram();
 
+// Skybox program — vec3 position stream (a unit cube). Vertex shader strips
+// translation from u_view and emits gl_Position with z=w (forced to far),
+// fragment shader samples a TextureCube by the cube's local-space position.
+// Used by SkyboxRenderer. Returns BGFX_INVALID_HANDLE in headless mode.
+[[nodiscard]] bgfx::ProgramHandle loadSkyboxProgram();
+
 }  // namespace engine::rendering
