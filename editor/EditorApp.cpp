@@ -42,6 +42,7 @@
 #include "engine/assets/GltfAsset.h"
 #include "engine/assets/GltfLoader.h"
 #include "engine/assets/GltfSceneSpawner.h"
+#include "engine/assets/HdrLoader.h"
 #include "engine/assets/ObjLoader.h"
 #include "engine/assets/StdFileSystem.h"
 #include "engine/assets/Texture.h"
@@ -2243,6 +2244,42 @@ void EditorApp::run()
                                  "Environment load failed (bad magic / version)");
                         impl_->statusTimer = 3.0f;
                         EditorLog::instance().error("loadEnvironmentAsset returned nullopt");
+                    }
+                }
+            }
+            else if (action == "load_environment_hdr")
+            {
+                std::string path = impl_->window->showOpenDialog("hdr");
+                if (!path.empty())
+                {
+                    auto loaded = engine::assets::loadHdrEnvironment(path);
+                    if (loaded.has_value())
+                    {
+                        if (impl_->iblResources.upload(*loaded))
+                        {
+                            const auto slash = path.find_last_of('/');
+                            const std::string name =
+                                slash == std::string::npos ? path : path.substr(slash + 1);
+                            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                     "Loaded HDR: %.80s", name.c_str());
+                            impl_->statusTimer = 3.0f;
+                            EditorLog::instance().info("Loaded HDR environment");
+                        }
+                        else
+                        {
+                            snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                     "HDR upload failed");
+                            impl_->statusTimer = 3.0f;
+                            EditorLog::instance().error(
+                                "IblResources::upload returned false for HDR");
+                        }
+                    }
+                    else
+                    {
+                        snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
+                                 "HDR load failed (stb_image could not parse)");
+                        impl_->statusTimer = 3.0f;
+                        EditorLog::instance().error("loadHdrEnvironment returned nullopt");
                     }
                 }
             }

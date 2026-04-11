@@ -77,7 +77,7 @@ static uint16_t floatToHalf(float val)
 // Procedural sky model — sunset-like atmosphere
 // ---------------------------------------------------------------------------
 
-static Vec3 proceduralSky(const Vec3& dir)
+static Vec3 proceduralSkyImpl(const Vec3& dir)
 {
     float y = dir.y;
 
@@ -260,10 +260,32 @@ bool IblResources::upload(const assets::EnvironmentAsset& env)
 }
 
 // ---------------------------------------------------------------------------
-// IblResources::generateDefaultAsset — CPU-only computation
+// IblResources::proceduralSky — wrapper so loaders can reference the default
+// sky by name (the raw helper lives in an anonymous file-scope above).
+// ---------------------------------------------------------------------------
+
+Vec3 IblResources::proceduralSky(const Vec3& dir)
+{
+    return proceduralSkyImpl(dir);
+}
+
+// ---------------------------------------------------------------------------
+// IblResources::generateDefaultAsset — CPU-only computation using the
+// built-in procedural sky.
 // ---------------------------------------------------------------------------
 
 assets::EnvironmentAsset IblResources::generateDefaultAsset()
+{
+    return generateAssetFromSky(&proceduralSkyImpl);
+}
+
+// ---------------------------------------------------------------------------
+// IblResources::generateAssetFromSky — CPU-only integration over an arbitrary
+// direction-to-radiance callback. Identical integration loops as the default
+// procedural path; the only thing that changes is the radiance source.
+// ---------------------------------------------------------------------------
+
+assets::EnvironmentAsset IblResources::generateAssetFromSky(const SkyFunction& sky)
 {
     assets::EnvironmentAsset env;
 
@@ -302,7 +324,7 @@ assets::EnvironmentAsset IblResources::generateDefaultAsset()
                         Vec3 sampleDir = T * (glm::cos(phi) * sinTheta) +
                                          B * (glm::sin(phi) * sinTheta) + N * cosTheta;
                         sampleDir = glm::normalize(sampleDir);
-                        irradiance += proceduralSky(sampleDir);
+                        irradiance += sky(sampleDir);
                     }
                     irradiance *= glm::pi<float>() / float(irradianceSamples);
 
@@ -351,7 +373,7 @@ assets::EnvironmentAsset IblResources::generateDefaultAsset()
 
                         if (roughness < 0.01f)
                         {
-                            color = proceduralSky(N);
+                            color = sky(N);
                             totalWeight = 1.0f;
                         }
                         else
@@ -372,7 +394,7 @@ assets::EnvironmentAsset IblResources::generateDefaultAsset()
 
                                 if (NdotL > 0.0f)
                                 {
-                                    color += proceduralSky(L) * NdotL;
+                                    color += sky(L) * NdotL;
                                     totalWeight += NdotL;
                                 }
                             }

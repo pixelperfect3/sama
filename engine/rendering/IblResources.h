@@ -2,7 +2,10 @@
 
 #include <bgfx/bgfx.h>
 
+#include <functional>
+
 #include "engine/assets/EnvironmentAsset.h"
+#include "engine/math/Types.h"
 
 namespace engine::rendering
 {
@@ -51,6 +54,20 @@ public:
     // an `EnvironmentAsset` you can pass to `upload()` later or serialize
     // to disk via `engine::assets::saveEnvironmentAsset`.
     static assets::EnvironmentAsset generateDefaultAsset();
+
+    // CPU-only integration over an arbitrary radiance function. The procedural
+    // sky path becomes `generateAssetFromSky(&proceduralSky)`; the HDR import
+    // path becomes `generateAssetFromSky([&](Vec3 d){ return sampleEquirect(d); })`.
+    // The callback is queried for the incoming radiance along unit-length
+    // directions during both the irradiance and prefilter integrations, and
+    // must be thread-safe if called from parallel contexts (currently serial).
+    using SkyFunction = std::function<math::Vec3(const math::Vec3&)>;
+    static assets::EnvironmentAsset generateAssetFromSky(const SkyFunction& sky);
+
+    // Exposed for loaders that want to bake an EnvironmentAsset from the
+    // built-in procedural sky (e.g. bake tools). Returns the sunset-like
+    // color used by `generateDefaultAsset()`.
+    static math::Vec3 proceduralSky(const math::Vec3& direction);
 
     // Destroy all GPU handles.
     void shutdown();

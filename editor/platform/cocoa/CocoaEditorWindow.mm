@@ -369,6 +369,9 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 30:
             s_menuActionCallback("load_environment");
             break;
+        case 31:
+            s_menuActionCallback("load_environment_hdr");
+            break;
         default:
             break;
     }
@@ -610,6 +613,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             [viewMenu addItemWithTitle:@"Toggle Resources" action:nil keyEquivalent:@""];
             [viewMenu addItem:[NSMenuItem separatorItem]];
             addItem(viewMenu, @"Load Environment (Skybox)...", @"", 30);
+            addItem(viewMenu, @"Load HDR Environment...", @"", 31);
             viewMenuItem.submenu = viewMenu;
             [menuBar addItem:viewMenuItem];
 

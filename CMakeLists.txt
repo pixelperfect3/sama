@@ -589,6 +589,7 @@ add_library(engine_assets STATIC
     engine/assets/ObjLoader.cpp
     engine/assets/CompressedTextureLoader.cpp
     engine/assets/EnvironmentAssetSerializer.cpp
+    engine/assets/HdrLoader.cpp
 )
 
 target_include_directories(engine_assets PUBLIC ${SAMA_ROOT_DIR})
@@ -773,6 +774,7 @@ add_executable(engine_tests
     tests/assets/TestStdFileSystem.cpp
     tests/assets/TestGltfLoader.cpp
     tests/assets/TestObjLoader.cpp
+    tests/assets/TestHdrLoader.cpp
     tests/scene/TestSceneGraph.cpp
     tests/scene/TestTransformSystem.cpp
     tests/physics/TestPhysicsComponents.cpp
