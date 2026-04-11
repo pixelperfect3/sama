@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -997,6 +998,25 @@ EditorApp::~EditorApp()
 
 bool EditorApp::init(uint32_t width, uint32_t height)
 {
+    // -- Startup profile ------------------------------------------------------
+    // Records wall-clock timestamps at each major init phase and dumps a
+    // breakdown to stderr at the end of init(). Always-on; the cost is one
+    // chrono::steady_clock read per checkpoint, ~10 ns each.
+    using StartupClock = std::chrono::steady_clock;
+    const auto startupT0 = StartupClock::now();
+    auto startupNow = [&]() -> double
+    {
+        const auto dt = StartupClock::now() - startupT0;
+        return std::chrono::duration<double, std::milli>(dt).count();
+    };
+    struct StartupSample
+    {
+        const char* name;
+        double endMs;
+    };
+    std::vector<StartupSample> startupSamples;
+    startupSamples.reserve(16);
+
     // -- Window ---------------------------------------------------------------
     impl_->window = std::make_unique<CocoaEditorWindow>();
     if (!impl_->window->init(width, height, "Sama Editor"))
@@ -1004,6 +1024,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         fprintf(stderr, "EditorApp: failed to create window\n");
         return false;
     }
+    startupSamples.push_back({"native window", startupNow()});
 
     // -- bgfx init ------------------------------------------------------------
     // Single-threaded mode: call renderFrame before init.
@@ -1021,6 +1042,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         fprintf(stderr, "EditorApp: bgfx::init() failed\n");
         return false;
     }
+    startupSamples.push_back({"bgfx::init", startupNow()});
 
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 
@@ -1032,10 +1054,12 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     // -- Uniforms -------------------------------------------------------------
     impl_->uniforms.init();
+    startupSamples.push_back({"uniforms", startupNow()});
 
     // -- Shader programs ------------------------------------------------------
     impl_->pbrProgram = loadPbrProgram();
     impl_->shadowProgram = loadShadowProgram();
+    startupSamples.push_back({"shader programs (PBR + shadow)", startupNow()});
 
     // -- Default textures -----------------------------------------------------
     {
@@ -1065,6 +1089,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
                                   bgfx::copy(kWhiteDepth, sizeof(kWhiteDepth)));
     }
+    startupSamples.push_back({"default textures", startupNow()});
 
     // -- Scene ----------------------------------------------------------------
     impl_->cubeMeshId = impl_->resources.addMesh(buildMesh(makeCubeMeshData()));
@@ -1116,6 +1141,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         impl_->registry.emplace<engine::scene::NameComponent>(
             impl_->groundEntity, engine::scene::NameComponent{"Ground"});
     }
+    startupSamples.push_back({"default scene (cube + ground)", startupNow()});
 
     // -- Selection highlight material -----------------------------------------
     {
@@ -1621,17 +1647,21 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->consolePanel = std::make_unique<ConsolePanel>();
     impl_->consolePanel->setVisible(false);  // hidden by default, toggle with ~
     impl_->consolePanel->init();
+    startupSamples.push_back({"editor panels", startupNow()});
 
     impl_->gizmo =
         std::make_unique<TransformGizmo>(impl_->registry, impl_->editorState, *impl_->window);
     impl_->gizmoRenderer.init();
+    startupSamples.push_back({"gizmo", startupNow()});
 
     // -- Procedural IBL + skybox ----------------------------------------------
     // generateDefault() builds a sunset-like sky model into the irradiance
     // and prefiltered cubemaps. The skybox renderer samples mip 0 of the
     // prefiltered cubemap to draw the visible sky behind everything else.
     impl_->iblResources.generateDefault();
+    startupSamples.push_back({"IBL generateDefault", startupNow()});
     impl_->skybox.init();
+    startupSamples.push_back({"skybox", startupNow()});
 
     // -- Camera ---------------------------------------------------------------
     impl_->camera.distance = 5.0f;
@@ -1647,6 +1677,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->assetManager->registerLoader(std::make_unique<engine::assets::GltfLoader>());
     impl_->assetManager->registerLoader(std::make_unique<engine::assets::ObjLoader>());
     impl_->assetManager->registerLoader(std::make_unique<engine::assets::TextureLoader>());
+    startupSamples.push_back({"asset manager + loaders", startupNow()});
 
     // -- Scene serializer -----------------------------------------------------
     impl_->sceneSerializer.registerEngineComponents();
@@ -1663,6 +1694,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     {
         fprintf(stderr, "EditorApp: physics.init() failed\n");
     }
+    startupSamples.push_back({"physics (Jolt)", startupNow()});
 
     // -- HUD font (JetBrains Mono via MSDF) -----------------------------------
     // Resolve the asset paths against several candidates so the editor works
@@ -1713,6 +1745,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 "bgfx debug text\n",
                 hudJson.c_str());
     }
+    startupSamples.push_back({"HUD font (JBM MSDF)", startupNow()});
 
     // -- Timing ---------------------------------------------------------------
     impl_->prevTime =
@@ -1720,8 +1753,31 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     // Flush initial resource uploads.
     bgfx::frame();
+    startupSamples.push_back({"first bgfx::frame", startupNow()});
 
     EditorLog::instance().info("Sama Editor initialized");
+
+    // -- Startup profile dump -------------------------------------------------
+    // Print a per-phase breakdown to stderr. Each row shows the elapsed time
+    // for that phase (delta from the previous checkpoint) and the cumulative
+    // total. The phase that costs the most is usually the right place to
+    // start any startup-time optimization work.
+    {
+        fprintf(stderr, "\n[startup] sama_editor init breakdown (cwd: %s)\n",
+                std::filesystem::current_path().string().c_str());
+        fprintf(stderr, "  %-32s  %8s  %8s\n", "phase", "delta", "total");
+        fprintf(stderr, "  %-32s  %8s  %8s\n", "--------------------------------", "--------",
+                "--------");
+        double prev = 0.0;
+        for (const auto& s : startupSamples)
+        {
+            const double delta = s.endMs - prev;
+            fprintf(stderr, "  %-32s  %7.1fms %7.1fms\n", s.name, delta, s.endMs);
+            prev = s.endMs;
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
 
     // Initial native panel refresh.
     impl_->hierarchyDirty = true;
