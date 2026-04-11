@@ -568,6 +568,36 @@ Signing and notarization handled per platform (Xcode for Apple, certificate sign
 - [x] Phase 12: Physics in Play mode — editor owns `JoltPhysicsEngine` + `PhysicsSystem`, steps simulation only when `playState == Playing`, destroys all bodies on Editing→Play and Play/Paused→Stop transitions. Gizmo + properties + hierarchy edits gated to Editing mode only. `RigidBodyInspector` and `ColliderInspector` added to PropertiesPanel. "Add Component" menu now offers Rigid Body and Box Collider. (Commits `9f3d952`, `dab14f0`, `ec2a684`, `f4ebcf4`)
 - [x] Phase 13: HUD via UiRenderer + JetBrains Mono MSDF — replaces the old `bgfx::dbgTextPrintf` overlay with a real text pass on view 15 (`kViewImGui`). Editor owns its own `engine::ui::MsdfFont`, `UiDrawList`, and `UiRenderer`; init resolves the asset path via the `_NSGetExecutablePath` walker so the binary works from any cwd; shutdown tears down all bgfx resources. Falls back to dbgText if the JBM atlas fails to load. (Commit `755f33e`)
 - [x] Phase 14: Per-frame allocation audit + fixes — top-5 items from the editor code review fixed in `0694eef`/`def1ab4`. `syncConsoleView` and `ConsolePanel::render` now stream directly with zero per-frame heap allocations; `AssetBrowserPanel::render` caches per-row icons at scan time; `refreshHierarchyView`/`refreshPropertiesView` pre-reserve their vectors; `TransformGizmo` got a defensive axis-index bounds check.
+- [x] Phase 15: Procedural skybox + cached IBL cubemap — editor now renders the engine's existing IBL cubemap as a fullscreen-triangle skybox on view `kViewOpaque` (commit `dfd4162`), and ships a precomputed `assets/env/default.env` blob (2.5 MB) loaded by `engine::assets::loadEnvironmentAsset` instead of regenerating from scratch on every launch (commit `917623b`). Editor startup dropped from **4.96 s → 95 ms** (52× faster). Per-phase profile is dumped to stderr on every launch (commit `b5a8434`) so any future regression is immediately visible.
+
+### Default sky cubemap — re-baking
+
+The procedural sky cubemap that ships at `assets/env/default.env` is a precomputed binary produced by the `bake_default_env` tool from `IblResources::generateDefaultAsset()`. The editor loads it at startup; falls back to runtime regeneration (~5 s) only when the file is missing or fails the version check.
+
+**When to re-bake:** any change to the procedural sky model in `engine/rendering/IblResources.cpp` (the `proceduralSky` function, the cubemap dimensions, the BRDF LUT integration, anything that alters the math) invalidates the cached file. Re-bake whenever such a change lands.
+
+**How to re-bake:**
+
+```sh
+# 1. Bump the version constant so old caches in user checkouts are
+#    rejected on load and the editor falls back to generateDefault().
+$EDITOR engine/assets/EnvironmentAssetSerializer.h
+# change `kEnvironmentAssetVersion` from N to N+1
+
+# 2. Build the bake tool and run it. ~5 seconds of CPU work.
+cmake --build build --target bake_default_env -j$(sysctl -n hw.ncpu)
+./build/bake_default_env
+
+# 3. Commit the new blob plus the version bump.
+git add assets/env/default.env engine/assets/EnvironmentAssetSerializer.h
+git commit -m "chore(assets): rebake default sky after <reason>"
+```
+
+The version bump is critical: without it, users with the old cached file will silently load stale data (wrong colors, mismatched dimensions, possibly worse). The `loadEnvironmentAsset` reader checks the version field in the file header; mismatched version = `nullopt` = editor falls back to `generateDefault()` and prints a warning to stderr.
+
+`bake_default_env` accepts a custom output path as its first argument if you want to bake to a different location for testing. The default `assets/env/default.env` is what gets shipped.
+
+**Why ship the binary in git instead of generating at first run:** the file is small (~2.5 MB), deterministic, and changes only when an engine developer touches the sky model. Generating on first launch would punish every new user with a 5-second blocking startup the first time they ran the editor — and macOS app bundle distributions don't have a "first launch" hook anyway. Shipping the file is simpler and faster for everyone.
 
 ### Physics in Play Mode — Design
 
