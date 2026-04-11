@@ -175,6 +175,20 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
     if (bgfx::getRendererType() == bgfx::RendererType::Noop)
         return;
 
+    // Force sequential draw order on this view. bgfx's default sort mode
+    // (Default == DepthAscending) reorders draw calls within a view by
+    // depth, which is fine for opaque 3D geometry but breaks UI: a
+    // UiButton submits its background rect first (rect pass) and then its
+    // label as a text command (text pass), but with depth sorting bgfx
+    // can flip them and draw the rect ON TOP of the text — making
+    // labels invisible. Sequential mode preserves submission order, so
+    // each widget's background draws first and its text draws last.
+    //
+    // Reported by a downstream game integration; the fix lives here so
+    // every UiRenderer caller gets it for free without having to know
+    // about the bgfx view mode default.
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+
     // Set up orthographic projection: (0,0) top-left, (screenW, screenH)
     // bottom-right.  Uses glm::ortho to match the convention in UiRenderSystem.
     const float w = static_cast<float>(screenW);
