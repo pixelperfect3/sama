@@ -441,11 +441,11 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     // section (if any) and start a new tinted container.
                     NSView* sectionView = [[NSView alloc] init];
                     sectionView.wantsLayer = YES;
-                    // Alternating dark/light tones for clear visual separation
-                    // between component sections. The contrast is high enough
-                    // to be obvious but stays muted so the field text remains
-                    // legible in both light and dark mode.
-                    const CGFloat tone = (sectionIndex % 2 == 0) ? 0.14 : 0.28;
+                    // Alternating dark/light tones for visual separation
+                    // between component sections. Slight contrast — both
+                    // tones stay dark so the section text reads cleanly,
+                    // and the rounded border carries most of the structure.
+                    const CGFloat tone = (sectionIndex % 2 == 0) ? 0.16 : 0.20;
                     sectionView.layer.backgroundColor =
                         [NSColor colorWithCalibratedWhite:tone alpha:1.0].CGColor;
                     sectionView.layer.cornerRadius = 6.0;
