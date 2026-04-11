@@ -52,7 +52,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
 
             const uint32_t jointCount = skeleton->jointCount();
 
-            // Advance playback time if playing.
+            // Advance playback time if playing (kFlagSampleOnce does NOT advance time).
             if (animComp.flags & AnimatorComponent::kFlagPlaying)
             {
                 animComp.playbackTime += dt * animComp.speed;
@@ -75,7 +75,13 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                 }
             }
 
-            // Sample current clip.
+            // Sample current clip when playing or when the editor has requested a
+            // one-shot sample (e.g. during scrubbing while paused). The sample-once
+            // flag is consumed here so it doesn't keep firing every frame.
+            const bool sampleOnce = (animComp.flags & AnimatorComponent::kFlagSampleOnce) != 0;
+            if (sampleOnce)
+                animComp.flags &= ~AnimatorComponent::kFlagSampleOnce;
+
             Pose poseA;
             const AnimationClip* clipA = animRes.getClip(animComp.clipId);
             if (clipA)
@@ -187,6 +193,10 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                     }
                 }
             }
+
+            // Consume sample-once flag (editor scrubbing) the same way as update().
+            if (animComp.flags & AnimatorComponent::kFlagSampleOnce)
+                animComp.flags &= ~AnimatorComponent::kFlagSampleOnce;
 
             // Sample current clip.
             Pose poseA;

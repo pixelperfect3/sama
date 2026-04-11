@@ -796,6 +796,7 @@ add_executable(engine_tests
     tests/animation/TestAnimationSampler.cpp
     tests/animation/TestPoseBlend.cpp
     tests/animation/TestIkSolvers.cpp
+    tests/animation/TestAnimationSystem.cpp
     tests/game/TestProjectConfig.cpp
     tests/ui/TestUiNode.cpp
     tests/ui/TestUiLayout.cpp
