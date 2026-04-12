@@ -159,6 +159,7 @@ private:
 
     // Non-owned texture handles registered via addTexture().  Index 0 = ID 1.
     std::vector<bgfx::TextureHandle> textures_;
+    std::vector<uint32_t> textureFreeList_;
 
     std::vector<Slot> slots_;
     std::vector<uint32_t> freeList_;

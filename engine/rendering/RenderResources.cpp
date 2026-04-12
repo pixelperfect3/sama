@@ -76,6 +76,7 @@ void RenderResources::destroyAll()
 
     // Texture handles are non-owned — just drop our records.
     textures_.clear();
+    textureFreeList_.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -84,16 +85,15 @@ void RenderResources::destroyAll()
 
 uint32_t RenderResources::addTexture(bgfx::TextureHandle h)
 {
-    // Reuse the first invalid slot before growing.  The editor frequently
+    // Reuse a previously freed slot before growing.  The editor frequently
     // adds/removes textures as the user swaps material images; keeping ids
     // bounded avoids unbounded growth across a long session.
-    for (size_t i = 0; i < textures_.size(); ++i)
+    if (!textureFreeList_.empty())
     {
-        if (!bgfx::isValid(textures_[i]))
-        {
-            textures_[i] = h;
-            return static_cast<uint32_t>(i + 1);  // 1-based ID
-        }
+        uint32_t idx = textureFreeList_.back();
+        textureFreeList_.pop_back();
+        textures_[idx] = h;
+        return idx + 1;  // 1-based ID
     }
 
     textures_.push_back(h);
@@ -112,6 +112,7 @@ void RenderResources::removeTexture(uint32_t id)
     if (id == 0 || id > static_cast<uint32_t>(textures_.size()))
         return;
     textures_[id - 1] = BGFX_INVALID_HANDLE;
+    textureFreeList_.push_back(id - 1);
 }
 
 // ---------------------------------------------------------------------------
