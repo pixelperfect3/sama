@@ -23,12 +23,14 @@
 #include "editor/inspectors/NameInspector.h"
 #include "editor/inspectors/RigidBodyInspector.h"
 #include "editor/inspectors/TransformInspector.h"
+#include "editor/panels/AnimationPanel.h"
 #include "editor/panels/AssetBrowserPanel.h"
 #include "editor/panels/ConsolePanel.h"
 #include "editor/panels/HierarchyPanel.h"
 #include "editor/panels/PropertiesPanel.h"
 #include "editor/panels/ResourcePanel.h"
 #include "editor/platform/IEditorWindow.h"
+#include "editor/platform/cocoa/CocoaAnimationView.h"
 #include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaEditorWindow.h"
 #include "editor/platform/cocoa/CocoaHierarchyView.h"
@@ -38,6 +40,10 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/animation/AnimationClip.h"
+#include "engine/animation/AnimationComponents.h"
+#include "engine/animation/AnimationResources.h"
+#include "engine/animation/AnimationSystem.h"
 #include "engine/assets/CubemapLoader.h"
 #include "engine/assets/EnvironmentAssetSerializer.h"
 #include "engine/assets/GltfAsset.h"
@@ -146,6 +152,11 @@ struct EditorApp::Impl
 
     // Resource inspector
     ResourcePanel resourcePanel;
+
+    // Skeletal animation runtime + editor panel.
+    engine::animation::AnimationResources animationResources;
+    engine::animation::AnimationSystem animationSystem;
+    std::unique_ptr<AnimationPanel> animationPanel;
 
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
@@ -1650,6 +1661,121 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->consolePanel = std::make_unique<ConsolePanel>();
     impl_->consolePanel->setVisible(false);  // hidden by default, toggle with ~
     impl_->consolePanel->init();
+
+    // -- Animation panel (bottom "Animation" tab) ----------------------------
+    // Owns no state of its own; reads the selected entity's AnimatorComponent
+    // each frame and drives the native CocoaAnimationView.
+    {
+        auto* animView = impl_->window->animationView();
+        impl_->animationPanel = std::make_unique<AnimationPanel>(
+            impl_->registry, impl_->editorState, impl_->animationResources, animView);
+        impl_->animationPanel->init();
+
+        if (animView)
+        {
+            using engine::animation::AnimatorComponent;
+
+            // Helper: resolve the AnimatorComponent for the current primary
+            // selection, or nullptr if none.
+            auto getAnim = [this]() -> AnimatorComponent*
+            {
+                ecs::EntityID e = impl_->editorState.primarySelection();
+                if (e == ecs::INVALID_ENTITY)
+                    return nullptr;
+                return impl_->registry.get<AnimatorComponent>(e);
+            };
+
+            animView->setPlayCallback(
+                [this, getAnim]()
+                {
+                    if (auto* a = getAnim())
+                    {
+                        a->flags |= AnimatorComponent::kFlagPlaying;
+                        if (impl_->animationPanel)
+                            impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setPauseCallback(
+                [this, getAnim]()
+                {
+                    if (auto* a = getAnim())
+                    {
+                        a->flags &= ~AnimatorComponent::kFlagPlaying;
+                        if (impl_->animationPanel)
+                            impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setStopCallback(
+                [this, getAnim]()
+                {
+                    if (auto* a = getAnim())
+                    {
+                        a->flags &= ~AnimatorComponent::kFlagPlaying;
+                        a->playbackTime = 0.0f;
+                        a->flags |= AnimatorComponent::kFlagSampleOnce;
+                        if (impl_->animationPanel)
+                            impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setClipSelectedCallback(
+                [this, getAnim](int newClipIndex)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        if (newClipIndex >= 0 && static_cast<uint32_t>(newClipIndex) <
+                                                     impl_->animationResources.clipCount())
+                        {
+                            a->clipId = static_cast<uint32_t>(newClipIndex);
+                            a->playbackTime = 0.0f;
+                            a->flags |= AnimatorComponent::kFlagSampleOnce;
+                            if (impl_->animationPanel)
+                                impl_->animationPanel->markDirty();
+                        }
+                    }
+                });
+
+            animView->setTimeChangedCallback(
+                [this, getAnim](float newTime)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        a->playbackTime = newTime;
+                        a->flags |= AnimatorComponent::kFlagSampleOnce;
+                        if (impl_->animationPanel)
+                            impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setSpeedChangedCallback(
+                [this, getAnim](float newSpeed)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        a->speed = newSpeed;
+                        if (impl_->animationPanel)
+                            impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setLoopChangedCallback(
+                [this, getAnim](bool looping)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        if (looping)
+                            a->flags |= AnimatorComponent::kFlagLooping;
+                        else
+                            a->flags &= ~AnimatorComponent::kFlagLooping;
+                        if (impl_->animationPanel)
+                            impl_->animationPanel->markDirty();
+                    }
+                });
+        }
+    }
+
     startupSamples.push_back({"editor panels", startupNow()});
 
     impl_->gizmo =
@@ -2402,8 +2528,8 @@ void EditorApp::run()
                         impl_->registry.forEachEntity([&](EntityID e)
                                                       { entitiesBefore.push_back(e); });
 
-                        engine::assets::GltfSceneSpawner::spawn(*asset, impl_->registry,
-                                                                impl_->resources);
+                        engine::assets::GltfSceneSpawner::spawn(
+                            *asset, impl_->registry, impl_->resources, impl_->animationResources);
 
                         // Find newly spawned entities and add NameComponents.
                         std::vector<EntityID> newEntities;
@@ -2972,6 +3098,18 @@ void EditorApp::run()
             }
         }
 
+        // -- Animation system + panel ----------------------------------------
+        // The editor runs the animation system unconditionally (not gated on
+        // play mode) so scrubbing / playing in edit mode still drives the
+        // skinned mesh pose. Entities without kFlagPlaying simply don't
+        // advance their time — the kFlagSampleOnce path lets the scrubber
+        // force a fresh sample while paused.
+        impl_->animationSystem.update(impl_->registry, dt, impl_->animationResources, nullptr);
+        if (impl_->animationPanel)
+        {
+            impl_->animationPanel->update(dt);
+        }
+
         // -- Resource panel update --------------------------------------------
         impl_->resourcePanel.update(dt, impl_->registry, impl_->frameArena.get());
         {
@@ -3009,6 +3147,10 @@ void EditorApp::shutdown()
     if (impl_->consolePanel)
     {
         impl_->consolePanel->shutdown();
+    }
+    if (impl_->animationPanel)
+    {
+        impl_->animationPanel->shutdown();
     }
 
     impl_->gizmoRenderer.shutdown();

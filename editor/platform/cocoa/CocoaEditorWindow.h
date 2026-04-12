@@ -11,6 +11,7 @@ class CocoaHierarchyView;
 class CocoaPropertiesView;
 class CocoaConsoleView;
 class CocoaResourceView;
+class CocoaAnimationView;
 
 // ---------------------------------------------------------------------------
 // CocoaEditorWindow -- native macOS window backed by NSWindow + NSSplitView
@@ -89,6 +90,7 @@ public:
     CocoaPropertiesView* propertiesView() const;
     CocoaConsoleView* consoleView() const;
     CocoaResourceView* resourceView() const;
+    CocoaAnimationView* animationView() const;
 
 private:
     struct Impl;

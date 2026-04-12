@@ -5,6 +5,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#include "editor/platform/cocoa/CocoaAnimationView.h"
 #include "editor/platform/cocoa/CocoaConsoleView.h"
 #include "editor/platform/cocoa/CocoaHierarchyView.h"
 #include "editor/platform/cocoa/CocoaPropertiesView.h"
@@ -484,6 +485,7 @@ struct CocoaEditorWindow::Impl
     std::unique_ptr<CocoaPropertiesView> propertiesView;
     std::unique_ptr<CocoaConsoleView> consoleView;
     std::unique_ptr<CocoaResourceView> resourceView;
+    std::unique_ptr<CocoaAnimationView> animationView;
 
     // Bottom tab view for Console + Resources.
     NSTabView* bottomTabView = nil;
@@ -637,6 +639,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         impl_->propertiesView = std::make_unique<CocoaPropertiesView>();
         impl_->consoleView = std::make_unique<CocoaConsoleView>();
         impl_->resourceView = std::make_unique<CocoaResourceView>();
+        impl_->animationView = std::make_unique<CocoaAnimationView>();
 
         // -- Create the Metal viewport view -----------------------------------
         impl_->metalView = [[EditorMetalView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
@@ -727,6 +730,12 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             resourceTab.label = @"Resources";
             resourceTab.view = (__bridge NSView*)impl_->resourceView->nativeView();
             [impl_->bottomTabView addTabViewItem:resourceTab];
+        }
+        {
+            NSTabViewItem* animationTab = [[NSTabViewItem alloc] initWithIdentifier:@"animation"];
+            animationTab.label = @"Animation";
+            animationTab.view = (__bridge NSView*)impl_->animationView->nativeView();
+            [impl_->bottomTabView addTabViewItem:animationTab];
         }
 
         NSView* bottomView = impl_->bottomTabView;
@@ -825,6 +834,7 @@ void CocoaEditorWindow::shutdown()
         impl_->propertiesView.reset();
         impl_->consoleView.reset();
         impl_->resourceView.reset();
+        impl_->animationView.reset();
         impl_->bottomTabView = nil;
 
         if (impl_->window)
@@ -1188,6 +1198,11 @@ CocoaConsoleView* CocoaEditorWindow::consoleView() const
 CocoaResourceView* CocoaEditorWindow::resourceView() const
 {
     return impl_->resourceView.get();
+}
+
+CocoaAnimationView* CocoaEditorWindow::animationView() const
+{
+    return impl_->animationView.get();
 }
 
 void CocoaEditorWindow::setMenuCallback(MenuCallback callback)
