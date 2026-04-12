@@ -29,7 +29,8 @@ public:
             SliderField,    // 0..1 slider
             Header,         // Section header
             DropdownField,  // NSPopUpButton with a list of options + current index
-            TextureField    // Texture slot: shows filename + a Browse button
+            TextureField,   // Texture slot: shows filename + a Browse button
+            CheckboxField   // Boolean toggle
         };
 
         Type type = Type::Label;
@@ -49,6 +50,9 @@ public:
         // files; the resulting absolute path is sent through
         // TextureChangedCallback. An empty `texturePath` displays as "(none)".
         std::string texturePath;
+
+        // CheckboxField only:
+        bool checked = false;
     };
 
     using ValueChangedCallback = std::function<void(int fieldId, float newValue)>;
@@ -56,6 +60,7 @@ public:
     using IntChangedCallback = std::function<void(int fieldId, int newIndex)>;
     using TextureChangedCallback = std::function<void(int fieldId, const std::string& path)>;
     using TextureClearedCallback = std::function<void(int fieldId)>;
+    using BoolChangedCallback = std::function<void(int fieldId, bool newValue)>;
     using AddComponentCallback = std::function<void(const std::string& componentType)>;
 
     CocoaPropertiesView();
@@ -73,6 +78,7 @@ public:
     void setIntChangedCallback(IntChangedCallback cb);
     void setTextureChangedCallback(TextureChangedCallback cb);
     void setTextureClearedCallback(TextureClearedCallback cb);
+    void setBoolChangedCallback(BoolChangedCallback cb);
     // Fires when the user picks a component from the "+ Add Component" menu.
     // The componentType string is one of: "directional_light", "point_light",
     // "mesh", "rigid_body", "box_collider".

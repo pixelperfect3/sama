@@ -108,6 +108,7 @@ struct EditorApp::Impl
     ShaderUniforms uniforms;
     RenderResources resources;
     bgfx::ProgramHandle pbrProgram = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle skinnedPbrProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle shadowProgram = BGFX_INVALID_HANDLE;
 
     // Default textures
@@ -652,6 +653,16 @@ void EditorApp::Impl::refreshPropertiesView()
         fields.push_back(hdr);
     }
 
+    // Visibility checkbox.
+    {
+        CocoaPropertiesView::PropertyField f;
+        f.type = CocoaPropertiesView::PropertyField::Type::CheckboxField;
+        f.label = "Visible";
+        f.fieldId = 50;
+        f.checked = registry.has<VisibleTag>(entity);
+        fields.push_back(f);
+    }
+
     // Transform inspector.
     auto* tc = registry.get<TransformComponent>(entity);
     if (tc)
@@ -1072,8 +1083,9 @@ bool EditorApp::init(uint32_t width, uint32_t height)
 
     // -- Shader programs ------------------------------------------------------
     impl_->pbrProgram = loadPbrProgram();
+    impl_->skinnedPbrProgram = loadSkinnedPbrProgram();
     impl_->shadowProgram = loadShadowProgram();
-    startupSamples.push_back({"shader programs (PBR + shadow)", startupNow()});
+    startupSamples.push_back({"shader programs (PBR + skinned + shadow)", startupNow()});
 
     // -- Default textures -----------------------------------------------------
     {
@@ -1635,6 +1647,22 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                     break;
             }
             impl_->propertiesDirty = true;
+        });
+
+    impl_->window->propertiesView()->setBoolChangedCallback(
+        [this](int fieldId, bool newValue)
+        {
+            EntityID entity = impl_->editorState.primarySelection();
+            if (entity == INVALID_ENTITY)
+                return;
+            if (fieldId == 50)
+            {
+                if (newValue && !impl_->registry.has<VisibleTag>(entity))
+                    impl_->registry.emplace<VisibleTag>(entity);
+                else if (!newValue && impl_->registry.has<VisibleTag>(entity))
+                    impl_->registry.remove<VisibleTag>(entity);
+                impl_->propertiesDirty = true;
+            }
         });
 
     impl_->hierarchyPanel =
@@ -2920,6 +2948,15 @@ void EditorApp::run()
         impl_->drawCallSys.update(impl_->registry, impl_->resources, impl_->pbrProgram,
                                   impl_->uniforms, frame);
 
+        // -- Skinned PBR pass (skeletal animation) --------------------------------
+        const auto* boneBuffer = impl_->animationSystem.boneBuffer();
+        if (boneBuffer)
+        {
+            impl_->drawCallSys.updateSkinned(impl_->registry, impl_->resources,
+                                             impl_->skinnedPbrProgram, impl_->uniforms, frame,
+                                             boneBuffer);
+        }
+
         // -- Selection highlight -------------------------------------------------
         {
             EntityID selE = impl_->editorState.primarySelection();
@@ -3104,7 +3141,8 @@ void EditorApp::run()
         // skinned mesh pose. Entities without kFlagPlaying simply don't
         // advance their time — the kFlagSampleOnce path lets the scrubber
         // force a fresh sample while paused.
-        impl_->animationSystem.update(impl_->registry, dt, impl_->animationResources, nullptr);
+        impl_->animationSystem.update(impl_->registry, dt, impl_->animationResources,
+                                      impl_->frameArena->resource());
         if (impl_->animationPanel)
         {
             impl_->animationPanel->update(dt);
@@ -3173,6 +3211,8 @@ void EditorApp::shutdown()
     // Destroy shader programs.
     if (bgfx::isValid(impl_->pbrProgram))
         bgfx::destroy(impl_->pbrProgram);
+    if (bgfx::isValid(impl_->skinnedPbrProgram))
+        bgfx::destroy(impl_->skinnedPbrProgram);
     if (bgfx::isValid(impl_->shadowProgram))
         bgfx::destroy(impl_->shadowProgram);
 

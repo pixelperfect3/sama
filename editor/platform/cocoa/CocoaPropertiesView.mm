@@ -27,12 +27,14 @@
 @property(nonatomic, copy) void (^onTextureChanged)(int fieldId, NSString* path);
 @property(nonatomic, copy) void (^onTextureCleared)(int fieldId);
 @property(nonatomic, copy) void (^onAddComponent)(NSString* componentType);
+@property(nonatomic, copy) void (^onBoolChanged)(int fieldId, BOOL newValue);
 @property(nonatomic, assign) BOOL suppressCallbacks;  // set during rebuild to prevent stale events
 - (void)addComponentClicked:(NSButton*)sender;
 - (void)addComponentMenuItemPicked:(NSMenuItem*)sender;
 - (void)popupChanged:(NSPopUpButton*)sender;
 - (void)textureBrowseClicked:(NSButton*)sender;
 - (void)textureClearClicked:(NSButton*)sender;
+- (void)checkboxChanged:(NSButton*)sender;
 @end
 
 @implementation PropertiesFieldDelegate
@@ -183,6 +185,16 @@
     }
 }
 
+- (void)checkboxChanged:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onBoolChanged)
+    {
+        _onBoolChanged((int)sender.tag, sender.state == NSControlStateValueOn);
+    }
+}
+
 @end
 
 // ---------------------------------------------------------------------------
@@ -249,6 +261,7 @@ struct CocoaPropertiesView::Impl
     IntChangedCallback intChangedCallback;
     TextureChangedCallback textureChangedCallback;
     TextureClearedCallback textureClearedCallback;
+    BoolChangedCallback boolChangedCallback;
     AddComponentCallback addComponentCallback;
     std::vector<NSView*> fieldViews;  // Retains views for tag lookup
 };
@@ -356,6 +369,16 @@ void CocoaPropertiesView::setTextureClearedCallback(TextureClearedCallback cb)
     impl_->delegate.onTextureCleared = ^(int fieldId) {
       if (storedCb)
           storedCb(fieldId);
+    };
+}
+
+void CocoaPropertiesView::setBoolChangedCallback(BoolChangedCallback cb)
+{
+    impl_->boolChangedCallback = std::move(cb);
+    auto& storedCb = impl_->boolChangedCallback;
+    impl_->delegate.onBoolChanged = ^(int fieldId, BOOL newValue) {
+      if (storedCb)
+          storedCb(fieldId, newValue);
     };
 }
 
@@ -684,6 +707,30 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                         [row addArrangedSubview:clearBtn];
                     }
 
+                    [targetStack addArrangedSubview:row];
+                    impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
+                    break;
+                }
+
+                case PropertyField::Type::CheckboxField:
+                {
+                    NSStackView* row = [NSStackView stackViewWithViews:@[]];
+                    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                    row.spacing = 6.0;
+                    row.translatesAutoresizingMaskIntoConstraints = NO;
+
+                    NSString* labelStr = [NSString stringWithUTF8String:field.label.c_str()];
+                    NSTextField* label = makeLabel(labelStr, 11.0);
+                    [label.widthAnchor constraintEqualToConstant:60].active = YES;
+
+                    NSButton* checkbox = [NSButton checkboxWithTitle:@""
+                                                              target:impl_->delegate
+                                                              action:@selector(checkboxChanged:)];
+                    checkbox.state = field.checked ? NSControlStateValueOn : NSControlStateValueOff;
+                    checkbox.tag = field.fieldId;
+
+                    [row addArrangedSubview:label];
+                    [row addArrangedSubview:checkbox];
                     [targetStack addArrangedSubview:row];
                     impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)row);
                     break;
