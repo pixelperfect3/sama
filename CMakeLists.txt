@@ -422,6 +422,24 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_skybox.sc FRAGMENT ANDROID ""     fs_skybox_essl COMPILED_SHADERS)
 
+# Rounded rect — UI shader with per-pixel rounded-box SDF for cornerRadius > 0.
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_rounded_rect.sc VERTEX   OSX     metal  vs_rounded_rect_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_rounded_rect.sc FRAGMENT OSX     metal  fs_rounded_rect_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_rounded_rect.sc VERTEX   LINUX   spirv  vs_rounded_rect_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_rounded_rect.sc FRAGMENT LINUX   spirv  fs_rounded_rect_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_rounded_rect.sc VERTEX   LINUX   120    vs_rounded_rect_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_rounded_rect.sc FRAGMENT LINUX   120    fs_rounded_rect_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_rounded_rect.sc VERTEX   ANDROID ""     vs_rounded_rect_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_rounded_rect.sc FRAGMENT ANDROID ""     fs_rounded_rect_essl COMPILED_SHADERS)
+
 # Shadow — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_shadow.sc VERTEX   OSX     metal  vs_shadow_mtl  COMPILED_SHADERS)
@@ -1379,6 +1397,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/panels/AssetBrowserPanel.cpp
         editor/panels/ConsolePanel.cpp
         editor/panels/ResourcePanel.cpp
+        editor/panels/AnimationPanel.cpp
         editor/EditorLog.cpp
         editor/inspectors/TransformInspector.cpp
         editor/inspectors/MaterialInspector.cpp
@@ -1397,6 +1416,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/platform/cocoa/CocoaPropertiesView.mm
         editor/platform/cocoa/CocoaConsoleView.mm
         editor/platform/cocoa/CocoaResourceView.mm
+        editor/platform/cocoa/CocoaAnimationView.mm
     )
 
     add_dependencies(sama_editor engine_shaders)
@@ -1412,6 +1432,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         engine_threading
         engine_physics
         engine_ui
+        engine_animation
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"

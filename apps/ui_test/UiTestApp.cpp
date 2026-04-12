@@ -620,6 +620,40 @@ void UiTestApp::buildMainMenu()
     btnQuit->onClick = [this](UiNode& /*sender*/) { requestQuit_ = true; };
     bg->addChild(btnQuit);
 
+    // Rounded-corner showcase: 5 panels at the bottom of the menu, each
+    // with a different cornerRadius value. Demonstrates the rounded-rect
+    // SDF shader path. Sharp (0) → tiny (4) → medium (12) → large (24) →
+    // pill (48, equal to the panel's half-height).
+    auto* showcaseLabel = canvas_->createNode<UiText>("showcase_label");
+    showcaseLabel->text = "cornerRadius:  0px      4px      12px     24px     48px";
+    showcaseLabel->fontSize = 12.f;
+    showcaseLabel->color = {0.55f, 0.55f, 0.65f, 1.f};
+    showcaseLabel->align = TextAlign::Center;
+    showcaseLabel->anchor = {{0.05f, 0.78f}, {0.95f, 0.81f}};
+    showcaseLabel->offsetMin = {0.f, 0.f};
+    showcaseLabel->offsetMax = {0.f, 0.f};
+    bg->addChild(showcaseLabel);
+
+    constexpr float kRadii[] = {0.f, 4.f, 12.f, 24.f, 48.f};
+    constexpr float kPanelW = 0.13f;
+    constexpr float kSpacing = 0.16f;
+    const float startX = 0.5f - 2.f * kSpacing;
+    const engine::math::Vec4 kShowcaseColors[] = {
+        {0.85f, 0.30f, 0.30f, 1.f}, {0.30f, 0.65f, 0.85f, 1.f}, {0.30f, 0.80f, 0.40f, 1.f},
+        {0.85f, 0.70f, 0.20f, 1.f}, {0.65f, 0.40f, 0.85f, 1.f},
+    };
+    for (int i = 0; i < 5; ++i)
+    {
+        auto* p = canvas_->createNode<UiPanel>("showcase");
+        p->color = kShowcaseColors[i];
+        p->cornerRadius = kRadii[i];
+        const float cx = startX + i * kSpacing;
+        p->anchor = {{cx - kPanelW * 0.5f, 0.82f}, {cx + kPanelW * 0.5f, 0.88f}};
+        p->offsetMin = {0.f, 0.f};
+        p->offsetMax = {0.f, 0.f};
+        bg->addChild(p);
+    }
+
     // Footer text
     auto* footer = canvas_->createNode<UiText>("footer");
     footer->text = "Press 1/2/3/4 to switch screens";

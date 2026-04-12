@@ -70,4 +70,11 @@ namespace engine::rendering
 // Used by SkyboxRenderer. Returns BGFX_INVALID_HANDLE in headless mode.
 [[nodiscard]] bgfx::ProgramHandle loadSkyboxProgram();
 
+// Rounded-rect program — sprite-style vertex stream (pos2 + uv2 + color4u8)
+// plus an extra vec4 TEXCOORD1 attribute carrying (halfWidth, halfHeight,
+// cornerRadius, _pad) in screen pixels. Fragment shader runs the rounded-
+// box SDF and uses fwidth() to derive an antialiased coverage mask. Used
+// by UiRenderer when a rect command has cornerRadius > 0.
+[[nodiscard]] bgfx::ProgramHandle loadRoundedRectProgram();
+
 }  // namespace engine::rendering

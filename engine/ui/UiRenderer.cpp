@@ -2,6 +2,7 @@
 
 #include <bgfx/bgfx.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -28,6 +29,18 @@ struct UiVertex
     float x, y;      // 2D position (screen pixels)
     float u, v;      // texture coordinates
     uint32_t color;  // ABGR packed
+};
+
+// Vertex used by the rounded-rect program. Same first 20 bytes as UiVertex
+// (so the rect emission code can be shared between sharp + rounded rects),
+// plus a vec4 carrying (halfWidth, halfHeight, cornerRadius, _pad) — same
+// value for all 4 vertices of one rect.
+struct UiRoundedVertex
+{
+    float x, y;
+    float u, v;
+    uint32_t color;
+    float halfW, halfH, radius, _pad;
 };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +117,18 @@ void UiRenderer::init()
     program_ = engine::rendering::loadSpriteProgram();
     layout_ = engine::rendering::spriteLayout();
 
+    // Rounded-rect path: own program + own vertex layout. The layout is
+    // the sprite layout plus an extra TEXCOORD1 vec4 carrying (halfW,
+    // halfH, cornerRadius, _pad). All 4 vertices of one rect share the
+    // same value.
+    roundedProgram_ = engine::rendering::loadRoundedRectProgram();
+    roundedLayout_.begin()
+        .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, /*normalized=*/true)
+        .add(bgfx::Attrib::TexCoord1, 4, bgfx::AttribType::Float)
+        .end();
+
     s_texture_ = bgfx::createUniform("s_texture", bgfx::UniformType::Sampler);
 
     // Create a 1x1 white texture for solid-color rects.
@@ -119,6 +144,11 @@ void UiRenderer::shutdown()
     {
         bgfx::destroy(program_);
         program_ = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(roundedProgram_))
+    {
+        bgfx::destroy(roundedProgram_);
+        roundedProgram_ = BGFX_INVALID_HANDLE;
     }
     if (bgfx::isValid(s_texture_))
     {
@@ -202,26 +232,32 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
         BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA);
 
     // =======================================================================
-    // Pass 1: Rect + TexturedRect quads.
+    // Pass 1a: Sharp Rect + TexturedRect quads (cornerRadius == 0).
+    // Submitted with the existing sprite program + sprite vertex layout.
     // =======================================================================
 
-    uint32_t quadCount = 0;
+    uint32_t sharpCount = 0;
+    uint32_t roundedCount = 0;
     for (const auto& cmd : cmds)
     {
-        if (cmd.type != UiDrawCmd::Text)
-            ++quadCount;
+        if (cmd.type == UiDrawCmd::Text)
+            continue;
+        if (cmd.cornerRadius > 0.f && cmd.type == UiDrawCmd::Rect)
+            ++roundedCount;
+        else
+            ++sharpCount;
     }
 
-    if (quadCount > 0)
+    if (sharpCount > 0)
     {
         bgfx::TransientVertexBuffer tvb{};
         bgfx::TransientIndexBuffer tib{};
 
-        if (bgfx::getAvailTransientVertexBuffer(quadCount * 4, layout_) &&
-            bgfx::getAvailTransientIndexBuffer(quadCount * 6))
+        if (bgfx::getAvailTransientVertexBuffer(sharpCount * 4, layout_) &&
+            bgfx::getAvailTransientIndexBuffer(sharpCount * 6))
         {
-            bgfx::allocTransientVertexBuffer(&tvb, quadCount * 4, layout_);
-            bgfx::allocTransientIndexBuffer(&tib, quadCount * 6);
+            bgfx::allocTransientVertexBuffer(&tvb, sharpCount * 4, layout_);
+            bgfx::allocTransientIndexBuffer(&tib, sharpCount * 6);
 
             auto* verts = reinterpret_cast<UiVertex*>(tvb.data);
             auto* idx = reinterpret_cast<uint16_t*>(tib.data);
@@ -230,6 +266,9 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
             for (const auto& cmd : cmds)
             {
                 if (cmd.type == UiDrawCmd::Text)
+                    continue;
+                // Skip rounded Rect commands — they go through Pass 1b.
+                if (cmd.cornerRadius > 0.f && cmd.type == UiDrawCmd::Rect)
                     continue;
 
                 const float x0 = cmd.position.x;
@@ -277,6 +316,70 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
             bgfx::setVertexBuffer(0, &tvb);
             bgfx::setIndexBuffer(&tib);
             bgfx::submit(viewId, program_);
+        }
+    }
+
+    // =======================================================================
+    // Pass 1b: Rounded Rect quads (cornerRadius > 0). Same vertex format
+    // as sharp rects + 4 extra floats per vertex carrying (halfW, halfH,
+    // cornerRadius, _pad). Fragment shader runs the rounded-box SDF and
+    // uses fwidth() to derive an antialiased coverage mask.
+    // =======================================================================
+
+    if (roundedCount > 0 && bgfx::isValid(roundedProgram_))
+    {
+        bgfx::TransientVertexBuffer tvb{};
+        bgfx::TransientIndexBuffer tib{};
+
+        if (bgfx::getAvailTransientVertexBuffer(roundedCount * 4, roundedLayout_) &&
+            bgfx::getAvailTransientIndexBuffer(roundedCount * 6))
+        {
+            bgfx::allocTransientVertexBuffer(&tvb, roundedCount * 4, roundedLayout_);
+            bgfx::allocTransientIndexBuffer(&tib, roundedCount * 6);
+
+            auto* verts = reinterpret_cast<UiRoundedVertex*>(tvb.data);
+            auto* idx = reinterpret_cast<uint16_t*>(tib.data);
+
+            uint32_t qi = 0;
+            for (const auto& cmd : cmds)
+            {
+                if (cmd.type != UiDrawCmd::Rect || cmd.cornerRadius <= 0.f)
+                    continue;
+
+                const float x0 = cmd.position.x;
+                const float y0 = cmd.position.y;
+                const float x1 = x0 + cmd.size.x;
+                const float y1 = y0 + cmd.size.y;
+                const float halfW = cmd.size.x * 0.5f;
+                const float halfH = cmd.size.y * 0.5f;
+                // Clamp the radius so it can't exceed the smallest half-dimension
+                // (otherwise the SDF produces visual garbage at the corners).
+                const float r = std::min({cmd.cornerRadius, halfW, halfH});
+
+                const uint32_t rgba = packColor(cmd.color);
+                const uint32_t base = qi * 4;
+
+                verts[base + 0] = {x0, y0, 0.f, 0.f, rgba, halfW, halfH, r, 0.f};
+                verts[base + 1] = {x1, y0, 1.f, 0.f, rgba, halfW, halfH, r, 0.f};
+                verts[base + 2] = {x1, y1, 1.f, 1.f, rgba, halfW, halfH, r, 0.f};
+                verts[base + 3] = {x0, y1, 0.f, 1.f, rgba, halfW, halfH, r, 0.f};
+
+                const auto vi = static_cast<uint16_t>(base);
+                idx[qi * 6 + 0] = vi + 0;
+                idx[qi * 6 + 1] = vi + 1;
+                idx[qi * 6 + 2] = vi + 2;
+                idx[qi * 6 + 3] = vi + 0;
+                idx[qi * 6 + 4] = vi + 2;
+                idx[qi * 6 + 5] = vi + 3;
+
+                ++qi;
+            }
+
+            bgfx::setTexture(0, s_texture_, whiteTex_);
+            bgfx::setState(blendState);
+            bgfx::setVertexBuffer(0, &tvb);
+            bgfx::setIndexBuffer(&tib);
+            bgfx::submit(viewId, roundedProgram_);
         }
     }
 

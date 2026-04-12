@@ -44,6 +44,12 @@ private:
     bgfx::VertexLayout layout_;
     bgfx::UniformHandle s_texture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle whiteTex_ = BGFX_INVALID_HANDLE;
+
+    // Rounded-rect path: own program + own vertex layout (extra vec4
+    // attribute carrying half-size + corner radius). Used only when a
+    // Rect command has cornerRadius > 0.
+    bgfx::ProgramHandle roundedProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::VertexLayout roundedLayout_;
 };
 
 }  // namespace engine::ui

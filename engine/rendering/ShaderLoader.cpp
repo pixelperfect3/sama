@@ -21,6 +21,10 @@
 #include "generated/shaders/fs_pbr_glsl.bin.h"
 #include "generated/shaders/fs_pbr_mtl.bin.h"
 #include "generated/shaders/fs_pbr_spv.bin.h"
+#include "generated/shaders/fs_rounded_rect_essl.bin.h"
+#include "generated/shaders/fs_rounded_rect_glsl.bin.h"
+#include "generated/shaders/fs_rounded_rect_mtl.bin.h"
+#include "generated/shaders/fs_rounded_rect_spv.bin.h"
 #include "generated/shaders/fs_shadow_essl.bin.h"
 #include "generated/shaders/fs_shadow_glsl.bin.h"
 #include "generated/shaders/fs_shadow_mtl.bin.h"
@@ -53,6 +57,10 @@
 #include "generated/shaders/vs_pbr_skinned_mtl.bin.h"
 #include "generated/shaders/vs_pbr_skinned_spv.bin.h"
 #include "generated/shaders/vs_pbr_spv.bin.h"
+#include "generated/shaders/vs_rounded_rect_essl.bin.h"
+#include "generated/shaders/vs_rounded_rect_glsl.bin.h"
+#include "generated/shaders/vs_rounded_rect_mtl.bin.h"
+#include "generated/shaders/vs_rounded_rect_spv.bin.h"
 #include "generated/shaders/vs_shadow_essl.bin.h"
 #include "generated/shaders/vs_shadow_glsl.bin.h"
 #include "generated/shaders/vs_shadow_mtl.bin.h"
@@ -146,6 +154,14 @@ static const bgfx::EmbeddedShader kSlugShaders[] = {
 static const bgfx::EmbeddedShader kSkyboxShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_skybox),
     BGFX_EMBEDDED_SHADER(fs_skybox),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+// Rounded rect — own vs + fs because the vertex layout has an extra
+// TEXCOORD1 vec4 carrying per-rect SDF data.
+static const bgfx::EmbeddedShader kRoundedRectShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_rounded_rect),
+    BGFX_EMBEDDED_SHADER(fs_rounded_rect),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -362,6 +378,29 @@ bgfx::ProgramHandle loadSkyboxProgram()
         return BGFX_INVALID_HANDLE;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSkyboxShaders, renderer, "fs_skybox");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+bgfx::ProgramHandle loadRoundedRectProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle vsh =
+        bgfx::createEmbeddedShader(kRoundedRectShaders, renderer, "vs_rounded_rect");
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh =
+        bgfx::createEmbeddedShader(kRoundedRectShaders, renderer, "fs_rounded_rect");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
