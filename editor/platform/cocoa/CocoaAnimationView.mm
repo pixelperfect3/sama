@@ -153,10 +153,12 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             return b;
         };
 
-        impl_->playButton = makeTransportButton(@"Play", @selector(playClicked:), impl_->delegate);
+        impl_->playButton =
+            makeTransportButton(@"\u25B6", @selector(playClicked:), impl_->delegate);
         impl_->pauseButton =
-            makeTransportButton(@"Pause", @selector(pauseClicked:), impl_->delegate);
-        impl_->stopButton = makeTransportButton(@"Stop", @selector(stopClicked:), impl_->delegate);
+            makeTransportButton(@"\u23F8", @selector(pauseClicked:), impl_->delegate);
+        impl_->stopButton =
+            makeTransportButton(@"\u23F9", @selector(stopClicked:), impl_->delegate);
 
         NSStackView* transportRow = [NSStackView
             stackViewWithViews:@[ impl_->playButton, impl_->pauseButton, impl_->stopButton ]];
