@@ -183,6 +183,8 @@ private:
     // Upload queue — written by workers, drained by main thread.
     mutable std::mutex uploadMutex_;
     std::vector<UploadRequest> uploadQueue_;
+    // Reusable buffer for processUploads() to avoid per-frame allocation.
+    std::vector<UploadRequest> pendingUploads_;
 
     std::vector<std::unique_ptr<IAssetLoader>> loaders_;
 

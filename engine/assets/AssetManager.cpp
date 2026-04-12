@@ -145,15 +145,16 @@ void AssetManager::processUploads()
     }
     pendingFree_.clear();
 
-    // Drain the upload queue.
-    std::vector<UploadRequest> pending;
+    // Drain the upload queue. Swap into a reusable buffer to avoid
+    // allocating a new vector every frame.
     {
         std::lock_guard lock(uploadMutex_);
-        pending = std::move(uploadQueue_);
+        pendingUploads_.swap(uploadQueue_);
     }
 
-    for (auto& req : pending)
+    for (auto& req : pendingUploads_)
         uploadOne(req);
+    pendingUploads_.clear();
 }
 
 void AssetManager::uploadOne(UploadRequest& req)
