@@ -225,18 +225,7 @@ bool IblResources::upload(const assets::EnvironmentAsset& env)
                 // For upload purposes: convert float to f16 manually.
                 for (uint32_t p = 0; p < pixelCount * 4; ++p)
                 {
-                    // Simple float-to-half via standard bit manipulation.
-                    float val = face[p];
-                    uint32_t f32 = 0;
-                    std::memcpy(&f32, &val, 4);
-                    uint16_t sign = static_cast<uint16_t>((f32 >> 16u) & 0x8000u);
-                    uint16_t exponent = static_cast<uint16_t>(((f32 >> 23u) & 0xFFu) - 112u);
-                    uint16_t mantissa = static_cast<uint16_t>((f32 >> 13u) & 0x3FFu);
-                    if (exponent <= 0)
-                        exponent = 0, mantissa = 0;
-                    else if (exponent > 30)
-                        exponent = 30, mantissa = 0x3FFu;
-                    dst[offset++] = sign | static_cast<uint16_t>(exponent << 10u) | mantissa;
+                    dst[offset++] = floatToHalf(face[p]);
                 }
             }
         }
