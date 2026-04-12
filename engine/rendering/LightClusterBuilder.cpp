@@ -192,20 +192,31 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
     // Inverse projection matrix — used to unproject NDC corners to view space.
     math::Mat4 invProj = glm::inverse(projMatrix);
 
-    // Precompute per-cluster AABBs and assign lights.
-    // We use a two-pass approach: first count, then fill (avoids resizing).
+    // Unproject NDC (x,y,z) to view space using the full inverse projection.
+    // bgfx projections produce NDC z in [0,1].
+    auto unprojectNdc = [&](float nx, float ny, float nz) -> math::Vec3
+    {
+        math::Vec4 clip = math::Vec4(nx, ny, nz, 1.0f);
+        math::Vec4 view = invProj * clip;
+        return math::Vec3(view) / view.w;
+    };
 
-    // Pass 1: build a temporary per-cluster count list and a raw assignment
-    //         list (light index, cluster index pairs) to derive offsets.
-    // Because kMaxLightIndices bounds the total, we accumulate directly.
+    auto scaleToZ = [](const math::Vec3& v, float targetZ) -> math::Vec3
+    {
+        if (std::abs(v.z) < 1e-6f)
+            return v;
+        float t = targetZ / v.z;
+        return v * t;
+    };
 
-    uint32_t totalIndices = 0;
+    // --- Precompute cluster AABBs once (used by both count and fill passes) ---
+    struct ClusterAABB
+    {
+        math::Vec3 aabbMin;
+        math::Vec3 aabbMax;
+    };
+    std::array<ClusterAABB, kClusterCount> clusterAABBs{};
 
-    // Temporary storage: for each cluster, collect light indices.
-    // To avoid dynamic allocation use a flat list with offsets computed after
-    // the counting pass.  We need two loops: count then fill.
-
-    // --- Count pass ---
     for (uint32_t z = 0; z < kClusterZ; ++z)
     {
         float sliceNear =
@@ -215,42 +226,20 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
             nearPlane * std::pow(farPlane / nearPlane,
                                  static_cast<float>(z + 1) / static_cast<float>(kClusterZ));
 
+        float nearZ = -sliceNear;  // right-handed: view-space Z is negative
+        float farZ = -sliceFar;
+
         for (uint32_t y = 0; y < kClusterY; ++y)
         {
-            // NDC Y range for this tile (note: Y is flipped — NDC top = +1).
             float ndcYMin = 1.0f - static_cast<float>(y + 1) / static_cast<float>(kClusterY) * 2.0f;
             float ndcYMax = 1.0f - static_cast<float>(y) / static_cast<float>(kClusterY) * 2.0f;
 
             for (uint32_t x = 0; x < kClusterX; ++x)
             {
-                // NDC X range for this tile.
                 float ndcXMin = static_cast<float>(x) / static_cast<float>(kClusterX) * 2.0f - 1.0f;
                 float ndcXMax =
                     static_cast<float>(x + 1) / static_cast<float>(kClusterX) * 2.0f - 1.0f;
 
-                // Unproject the four NDC corners at the near slice depth.
-                // bgfx depth convention: 0 = near, 1 = far in NDC (depth 0..1).
-                // For the AABB extents we only need min/max X,Y in view space.
-                // We unproject at depth = 0 (near clip) and depth = 1 (far clip).
-                // Use w=-1 for a standard right-handed projection convention
-                // (bgfx uses right-handed view space, looking down -Z).
-                // Since we only care about X,Y extents, we compute two representative
-                // corners and scale linearly with depth.
-
-                // Unproject NDC (x,y, -1 in clip W) to view space using the full
-                // inverse projection.  bgfx projections produce NDC z in [0,1].
-                auto unprojectNdc = [&](float nx, float ny, float nz) -> math::Vec3
-                {
-                    math::Vec4 clip = math::Vec4(nx, ny, nz, 1.0f);
-                    math::Vec4 view = invProj * clip;
-                    return math::Vec3(view) / view.w;
-                };
-
-                // At near slice: pick the NDC Z such that the unprojected depth
-                // matches sliceNear.  Use 0.0 for near clip, 1.0 for far clip.
-                // Since log-depth slices don't map linearly to NDC Z, we use the
-                // two extremes of the tile at NDC Z = 0 and NDC Z = 1 to get a
-                // conservative AABB in view space.
                 math::Vec3 c000 = unprojectNdc(ndcXMin, ndcYMin, 0.0f);
                 math::Vec3 c100 = unprojectNdc(ndcXMax, ndcYMin, 0.0f);
                 math::Vec3 c010 = unprojectNdc(ndcXMin, ndcYMax, 0.0f);
@@ -260,32 +249,12 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
                 math::Vec3 c011 = unprojectNdc(ndcXMin, ndcYMax, 1.0f);
                 math::Vec3 c111 = unprojectNdc(ndcXMax, ndcYMax, 1.0f);
 
-                // Scale the corners to sliceNear and sliceFar depths.
-                // view.xy scales linearly with view.z for a perspective projection.
-                // We use the near/far view-Z values directly.
-                // (The unprojected corners from NDC z=0/1 give us the X,Y
-                // extents at the frustum extremes; we scale to the slice depths.)
-                float nearZ = -sliceNear;  // right-handed: view-space Z is negative
-                float farZ = -sliceFar;
-
-                // Build tile corner rays (direction in view space from origin).
-                // Use the NDC z=0 unproject to get the corner directions.
-                auto scaleToZ = [](const math::Vec3& v, float targetZ) -> math::Vec3
-                {
-                    if (std::abs(v.z) < 1e-6f)
-                        return v;
-                    float t = targetZ / v.z;
-                    return v * t;
-                };
-
-                // Tile corners at sliceNear and sliceFar.
                 math::Vec3 p[8] = {
                     scaleToZ(c000, nearZ), scaleToZ(c100, nearZ), scaleToZ(c010, nearZ),
                     scaleToZ(c110, nearZ), scaleToZ(c001, farZ),  scaleToZ(c101, farZ),
                     scaleToZ(c011, farZ),  scaleToZ(c111, farZ),
                 };
 
-                // AABB of the 8 corners.
                 math::Vec3 aabbMin = p[0];
                 math::Vec3 aabbMax = p[0];
                 for (int k = 1; k < 8; ++k)
@@ -295,26 +264,33 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
                 }
 
                 uint32_t clusterIdx = z * (kClusterX * kClusterY) + y * kClusterX + x;
-
-                // Test each light sphere against this AABB.
-                uint32_t count = 0;
-                for (uint32_t li = 0; li < lightCount_; ++li)
-                {
-                    const LightEntry& light = lights_[li];
-
-                    // Closest point on AABB to sphere center.
-                    math::Vec3 closest = glm::clamp(light.position, aabbMin, aabbMax);
-                    math::Vec3 delta = light.position - closest;
-                    float distSq = glm::dot(delta, delta);
-
-                    if (distSq <= light.radius * light.radius)
-                        ++count;
-                }
-
-                grid_[clusterIdx].count = count;
-                totalIndices += count;
+                clusterAABBs[clusterIdx] = {aabbMin, aabbMax};
             }
         }
+    }
+
+    // --- Count pass: count lights per cluster ---
+    uint32_t totalIndices = 0;
+
+    for (uint32_t ci = 0; ci < kClusterCount; ++ci)
+    {
+        const auto& aabb = clusterAABBs[ci];
+        uint32_t count = 0;
+        for (uint32_t li = 0; li < lightCount_; ++li)
+        {
+            const LightEntry& light = lights_[li];
+
+            // Closest point on AABB to sphere center.
+            math::Vec3 closest = glm::clamp(light.position, aabb.aabbMin, aabb.aabbMax);
+            math::Vec3 delta = light.position - closest;
+            float distSq = glm::dot(delta, delta);
+
+            if (distSq <= light.radius * light.radius)
+                ++count;
+        }
+
+        grid_[ci].count = count;
+        totalIndices += count;
     }
 
     // --- Compute offsets (prefix sum) ---
@@ -331,87 +307,26 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
     // Cap total indices to kMaxLightIndices.
     totalIndices = std::min(totalIndices, kMaxLightIndices);
 
-    // --- Fill pass: write actual indices ---
-    for (uint32_t z = 0; z < kClusterZ; ++z)
+    // --- Fill pass: write actual indices (reusing cached AABBs) ---
+    for (uint32_t ci = 0; ci < kClusterCount; ++ci)
     {
-        float sliceNear =
-            nearPlane *
-            std::pow(farPlane / nearPlane, static_cast<float>(z) / static_cast<float>(kClusterZ));
-        float sliceFar =
-            nearPlane * std::pow(farPlane / nearPlane,
-                                 static_cast<float>(z + 1) / static_cast<float>(kClusterZ));
+        const auto& aabb = clusterAABBs[ci];
+        uint32_t base = grid_[ci].offset;
 
-        for (uint32_t y = 0; y < kClusterY; ++y)
+        for (uint32_t li = 0; li < lightCount_; ++li)
         {
-            float ndcYMin = 1.0f - static_cast<float>(y + 1) / static_cast<float>(kClusterY) * 2.0f;
-            float ndcYMax = 1.0f - static_cast<float>(y) / static_cast<float>(kClusterY) * 2.0f;
+            const LightEntry& light = lights_[li];
+            math::Vec3 closest = glm::clamp(light.position, aabb.aabbMin, aabb.aabbMax);
+            math::Vec3 delta = light.position - closest;
+            float distSq = glm::dot(delta, delta);
 
-            for (uint32_t x = 0; x < kClusterX; ++x)
+            if (distSq <= light.radius * light.radius)
             {
-                float ndcXMin = static_cast<float>(x) / static_cast<float>(kClusterX) * 2.0f - 1.0f;
-                float ndcXMax =
-                    static_cast<float>(x + 1) / static_cast<float>(kClusterX) * 2.0f - 1.0f;
-
-                auto unprojectNdc = [&](float nx, float ny, float nz) -> math::Vec3
+                uint32_t writeIdx = base + grid_[ci].count;
+                if (writeIdx < kMaxLightIndices)
                 {
-                    math::Vec4 clip = math::Vec4(nx, ny, nz, 1.0f);
-                    math::Vec4 view = invProj * clip;
-                    return math::Vec3(view) / view.w;
-                };
-
-                math::Vec3 c000 = unprojectNdc(ndcXMin, ndcYMin, 0.0f);
-                math::Vec3 c100 = unprojectNdc(ndcXMax, ndcYMin, 0.0f);
-                math::Vec3 c010 = unprojectNdc(ndcXMin, ndcYMax, 0.0f);
-                math::Vec3 c110 = unprojectNdc(ndcXMax, ndcYMax, 0.0f);
-                math::Vec3 c001 = unprojectNdc(ndcXMin, ndcYMin, 1.0f);
-                math::Vec3 c101 = unprojectNdc(ndcXMax, ndcYMin, 1.0f);
-                math::Vec3 c011 = unprojectNdc(ndcXMin, ndcYMax, 1.0f);
-                math::Vec3 c111 = unprojectNdc(ndcXMax, ndcYMax, 1.0f);
-
-                float nearZ = -sliceNear;
-                float farZ = -sliceFar;
-
-                auto scaleToZ = [](const math::Vec3& v, float targetZ) -> math::Vec3
-                {
-                    if (std::abs(v.z) < 1e-6f)
-                        return v;
-                    float t = targetZ / v.z;
-                    return v * t;
-                };
-
-                math::Vec3 p[8] = {
-                    scaleToZ(c000, nearZ), scaleToZ(c100, nearZ), scaleToZ(c010, nearZ),
-                    scaleToZ(c110, nearZ), scaleToZ(c001, farZ),  scaleToZ(c101, farZ),
-                    scaleToZ(c011, farZ),  scaleToZ(c111, farZ),
-                };
-
-                math::Vec3 aabbMin = p[0];
-                math::Vec3 aabbMax = p[0];
-                for (int k = 1; k < 8; ++k)
-                {
-                    aabbMin = glm::min(aabbMin, p[k]);
-                    aabbMax = glm::max(aabbMax, p[k]);
-                }
-
-                uint32_t clusterIdx = z * (kClusterX * kClusterY) + y * kClusterX + x;
-                uint32_t base = grid_[clusterIdx].offset;
-
-                for (uint32_t li = 0; li < lightCount_; ++li)
-                {
-                    const LightEntry& light = lights_[li];
-                    math::Vec3 closest = glm::clamp(light.position, aabbMin, aabbMax);
-                    math::Vec3 delta = light.position - closest;
-                    float distSq = glm::dot(delta, delta);
-
-                    if (distSq <= light.radius * light.radius)
-                    {
-                        uint32_t writeIdx = base + grid_[clusterIdx].count;
-                        if (writeIdx < kMaxLightIndices)
-                        {
-                            indices_[writeIdx] = li;
-                            ++grid_[clusterIdx].count;
-                        }
-                    }
+                    indices_[writeIdx] = li;
+                    ++grid_[ci].count;
                 }
             }
         }
