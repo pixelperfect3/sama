@@ -111,6 +111,7 @@ struct CpuSceneData
         math::Mat4 localTransform{1.0f};  // local TRS matrix
         int32_t meshIndex = -1;
         int32_t materialIndex = -1;
+        bool isJoint = false;  // true if this node is a skeleton joint
         std::vector<uint32_t> childIndices;
     };
     std::vector<Node> nodes;

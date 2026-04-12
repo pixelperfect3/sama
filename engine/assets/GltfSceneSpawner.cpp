@@ -10,6 +10,7 @@
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/scene/HierarchyComponents.h"
+#include "engine/scene/NameComponent.h"
 #include "engine/scene/SceneGraph.h"
 
 namespace engine::assets
@@ -82,17 +83,33 @@ rendering::TransformComponent decomposeToTRS(const math::Mat4& m)
 }
 
 // Recurse over node tree, spawning entities with local TRS + hierarchy.
-// Returns the EntityID of the spawned node.
+// Skips joint-only nodes (skeleton bones with no mesh) to avoid cluttering
+// the hierarchy with internal skeleton structure.
+// Returns the EntityID of the spawned node, or INVALID_ENTITY if skipped.
 ecs::EntityID spawnNode(const GltfAsset& asset, uint32_t nodeIdx, ecs::EntityID parentEntity,
                         ecs::Registry& reg, const std::vector<uint32_t>& meshIds,
                         const std::vector<uint32_t>& matIds)
 {
     const GltfAsset::Node& node = asset.nodes[nodeIdx];
 
+    // Skip joint-only nodes — they are internal skeleton structure managed by
+    // the animation system, not scene entities.
+    if (node.isJoint && node.meshIndex < 0)
+    {
+        // Still recurse children — a joint's child might have a mesh.
+        for (uint32_t childIdx : node.childIndices)
+            spawnNode(asset, childIdx, parentEntity, reg, meshIds, matIds);
+        return ecs::INVALID_ENTITY;
+    }
+
     ecs::EntityID e = reg.createEntity();
 
     // Store local TRS; TransformSystem will compute WorldTransformComponent.
     reg.emplace<rendering::TransformComponent>(e, decomposeToTRS(node.localTransform));
+
+    // Assign glTF node name if available.
+    if (!node.name.empty())
+        reg.emplace<scene::NameComponent>(e, scene::NameComponent{node.name});
 
     // Establish parent-child link.
     if (parentEntity != ecs::INVALID_ENTITY)
@@ -177,8 +194,7 @@ void GltfSceneSpawner::spawn(const GltfAsset& asset, ecs::Registry& reg,
                 }
             }
 
-            if (gltfMeshIdx < 0 ||
-                static_cast<size_t>(gltfMeshIdx) >= asset.meshSkinIndices.size())
+            if (gltfMeshIdx < 0 || static_cast<size_t>(gltfMeshIdx) >= asset.meshSkinIndices.size())
                 return;
 
             int32_t skinIdx = asset.meshSkinIndices[gltfMeshIdx];
@@ -197,16 +213,15 @@ void GltfSceneSpawner::spawn(const GltfAsset& asset, ecs::Registry& reg,
             anim.blendFactor = 0.0f;
             anim.blendDuration = 0.0f;
             anim.blendElapsed = 0.0f;
-            anim.flags = 0x03;  // looping + playing
+            anim.flags = animation::AnimatorComponent::kFlagLooping;  // looping, not auto-playing
             anim._pad[0] = anim._pad[1] = anim._pad[2] = 0;
             reg.emplace<animation::AnimatorComponent>(entity, anim);
 
-            const animation::Skeleton* skel = animRes.getSkeleton(
-                skelIds[static_cast<size_t>(skinIdx)]);
+            const animation::Skeleton* skel =
+                animRes.getSkeleton(skelIds[static_cast<size_t>(skinIdx)]);
             uint32_t boneCount = skel ? skel->jointCount() : 0;
 
-            reg.emplace<animation::SkinComponent>(
-                entity, animation::SkinComponent{0, boneCount});
+            reg.emplace<animation::SkinComponent>(entity, animation::SkinComponent{0, boneCount});
         });
 }
 

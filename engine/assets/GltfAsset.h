@@ -39,6 +39,7 @@ struct GltfAsset
         math::Mat4 localTransform{1.0f};
         int32_t meshIndex = -1;      // -1 = no mesh on this node
         int32_t materialIndex = -1;  // -1 = no material override
+        bool isJoint = false;        // true if this node is a skeleton joint
         std::vector<uint32_t> childIndices;
     };
     std::vector<Node> nodes;

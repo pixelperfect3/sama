@@ -6,6 +6,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "engine/assets/CpuAssetData.h"
 #include "engine/assets/IFileSystem.h"
@@ -692,7 +693,8 @@ std::vector<CpuAnimationClipData> extractAnimations(const cgltf_data* data, cons
 // ---------------------------------------------------------------------------
 
 void buildNodeTree(const cgltf_data* data, const cgltf_node* node, CpuSceneData& scene,
-                   uint32_t parentIndex, bool isRoot)
+                   uint32_t parentIndex, bool isRoot,
+                   const std::unordered_set<const cgltf_node*>& jointNodes)
 {
     const uint32_t nodeIndex = static_cast<uint32_t>(scene.nodes.size());
     scene.nodes.emplace_back();
@@ -700,6 +702,7 @@ void buildNodeTree(const cgltf_data* data, const cgltf_node* node, CpuSceneData&
 
     dst.name = node->name ? node->name : "";
     dst.localTransform = nodeLocalTransform(*node);
+    dst.isJoint = jointNodes.count(node) > 0;
 
     if (node->mesh)
     {
@@ -725,7 +728,7 @@ void buildNodeTree(const cgltf_data* data, const cgltf_node* node, CpuSceneData&
         scene.nodes[parentIndex].childIndices.push_back(nodeIndex);
 
     for (size_t c = 0; c < node->children_count; ++c)
-        buildNodeTree(data, node->children[c], scene, nodeIndex, false);
+        buildNodeTree(data, node->children[c], scene, nodeIndex, false, jointNodes);
 }
 
 }  // anonymous namespace
@@ -953,7 +956,12 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
                         oy = (1.0f - std::abs(px)) * (py >= 0.0f ? 1.0f : -1.0f);
                     }
                     float len = std::sqrt(ox * ox + oy * oy + oz * oz);
-                    if (len > 1e-6f) { ox /= len; oy /= len; oz /= len; }
+                    if (len > 1e-6f)
+                    {
+                        ox /= len;
+                        oy /= len;
+                        oz /= len;
+                    }
                     normData[vi * 3 + 0] = ox;
                     normData[vi * 3 + 1] = oy;
                     normData[vi * 3 + 2] = oz;
@@ -974,49 +982,73 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
                     const float* uv1 = &uvFloats[i1 * 2];
                     const float* uv2 = &uvFloats[i2 * 2];
 
-                    const float e1x = p1[0]-p0[0], e1y = p1[1]-p0[1], e1z = p1[2]-p0[2];
-                    const float e2x = p2[0]-p0[0], e2y = p2[1]-p0[1], e2z = p2[2]-p0[2];
-                    const float du1 = uv1[0]-uv0[0], dv1 = uv1[1]-uv0[1];
-                    const float du2 = uv2[0]-uv0[0], dv2 = uv2[1]-uv0[1];
+                    const float e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
+                    const float e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
+                    const float du1 = uv1[0] - uv0[0], dv1 = uv1[1] - uv0[1];
+                    const float du2 = uv2[0] - uv0[0], dv2 = uv2[1] - uv0[1];
 
                     float det = du1 * dv2 - du2 * dv1;
-                    if (std::abs(det) < 1e-8f) det = 1e-8f;
+                    if (std::abs(det) < 1e-8f)
+                        det = 1e-8f;
                     const float inv = 1.f / det;
 
-                    const float tx = (dv2*e1x - dv1*e2x) * inv;
-                    const float ty = (dv2*e1y - dv1*e2y) * inv;
-                    const float tz = (dv2*e1z - dv1*e2z) * inv;
-                    const float bx = (-du2*e1x + du1*e2x) * inv;
-                    const float by = (-du2*e1y + du1*e2y) * inv;
-                    const float bz = (-du2*e1z + du1*e2z) * inv;
+                    const float tx = (dv2 * e1x - dv1 * e2x) * inv;
+                    const float ty = (dv2 * e1y - dv1 * e2y) * inv;
+                    const float tz = (dv2 * e1z - dv1 * e2z) * inv;
+                    const float bx = (-du2 * e1x + du1 * e2x) * inv;
+                    const float by = (-du2 * e1y + du1 * e2y) * inv;
+                    const float bz = (-du2 * e1z + du1 * e2z) * inv;
 
                     for (uint32_t idx : {i0, i1, i2})
                     {
-                        tanAccum[idx*3+0] += tx; tanAccum[idx*3+1] += ty; tanAccum[idx*3+2] += tz;
-                        bitAccum[idx*3+0] += bx; bitAccum[idx*3+1] += by; bitAccum[idx*3+2] += bz;
+                        tanAccum[idx * 3 + 0] += tx;
+                        tanAccum[idx * 3 + 1] += ty;
+                        tanAccum[idx * 3 + 2] += tz;
+                        bitAccum[idx * 3 + 0] += bx;
+                        bitAccum[idx * 3 + 1] += by;
+                        bitAccum[idx * 3 + 2] += bz;
                     }
                 }
 
                 merged.tangents.resize(mergedVertCount * 4);
                 for (size_t vi = 0; vi < mergedVertCount; ++vi)
                 {
-                    float nx = normData[vi*3], ny = normData[vi*3+1], nz = normData[vi*3+2];
-                    float ttx = tanAccum[vi*3], tty = tanAccum[vi*3+1], ttz = tanAccum[vi*3+2];
-                    float nd = nx*ttx + ny*tty + nz*ttz;
-                    ttx -= nx*nd; tty -= ny*nd; ttz -= nz*nd;
-                    float tlen = std::sqrt(ttx*ttx + tty*tty + ttz*ttz);
-                    if (tlen < 1e-6f) {
-                        if (std::abs(nx) < 0.9f) { ttx=0; tty=-nz; ttz=ny; }
-                        else { ttx=nz; tty=0; ttz=-nx; }
-                        tlen = std::sqrt(ttx*ttx + tty*tty + ttz*ttz);
+                    float nx = normData[vi * 3], ny = normData[vi * 3 + 1],
+                          nz = normData[vi * 3 + 2];
+                    float ttx = tanAccum[vi * 3], tty = tanAccum[vi * 3 + 1],
+                          ttz = tanAccum[vi * 3 + 2];
+                    float nd = nx * ttx + ny * tty + nz * ttz;
+                    ttx -= nx * nd;
+                    tty -= ny * nd;
+                    ttz -= nz * nd;
+                    float tlen = std::sqrt(ttx * ttx + tty * tty + ttz * ttz);
+                    if (tlen < 1e-6f)
+                    {
+                        if (std::abs(nx) < 0.9f)
+                        {
+                            ttx = 0;
+                            tty = -nz;
+                            ttz = ny;
+                        }
+                        else
+                        {
+                            ttx = nz;
+                            tty = 0;
+                            ttz = -nx;
+                        }
+                        tlen = std::sqrt(ttx * ttx + tty * tty + ttz * ttz);
                     }
-                    ttx /= tlen; tty /= tlen; ttz /= tlen;
-                    float cx = ny*ttz - nz*tty, cy = nz*ttx - nx*ttz, cz = nx*tty - ny*ttx;
-                    float bd = cx*bitAccum[vi*3] + cy*bitAccum[vi*3+1] + cz*bitAccum[vi*3+2];
+                    ttx /= tlen;
+                    tty /= tlen;
+                    ttz /= tlen;
+                    float cx = ny * ttz - nz * tty, cy = nz * ttx - nx * ttz,
+                          cz = nx * tty - ny * ttx;
+                    float bd = cx * bitAccum[vi * 3] + cy * bitAccum[vi * 3 + 1] +
+                               cz * bitAccum[vi * 3 + 2];
                     float sign = (bd < 0.f) ? -1.f : 1.f;
-                    encodeOctTangent(ttx, tty, ttz, sign,
-                                     merged.tangents[vi*4], merged.tangents[vi*4+1],
-                                     merged.tangents[vi*4+2], merged.tangents[vi*4+3]);
+                    encodeOctTangent(ttx, tty, ttz, sign, merged.tangents[vi * 4],
+                                     merged.tangents[vi * 4 + 1], merged.tangents[vi * 4 + 2],
+                                     merged.tangents[vi * 4 + 3]);
                 }
             }
         }
@@ -1103,13 +1135,23 @@ CpuAssetData GltfLoader::decode(std::span<const uint8_t> bytes, std::string_view
     }
 
     // ----- Scene node tree -----
+    // Build a set of all joint nodes across all skins so buildNodeTree can
+    // mark them. Joint-only nodes (no mesh) are skipped during entity spawn.
+    std::unordered_set<const cgltf_node*> jointNodes;
+    for (size_t s = 0; s < data->skins_count; ++s)
+    {
+        const cgltf_skin& skin = data->skins[s];
+        for (size_t j = 0; j < skin.joints_count; ++j)
+            jointNodes.insert(skin.joints[j]);
+    }
+
     const cgltf_scene* gltfScene =
         data->scene ? data->scene : (data->scenes_count > 0 ? &data->scenes[0] : nullptr);
 
     if (gltfScene)
     {
         for (size_t i = 0; i < gltfScene->nodes_count; ++i)
-            buildNodeTree(data, gltfScene->nodes[i], scene, 0, true);
+            buildNodeTree(data, gltfScene->nodes[i], scene, 0, true, jointNodes);
     }
 
     cgltf_free(data);

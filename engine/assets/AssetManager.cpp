@@ -331,6 +331,7 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
         dst.localTransform = src.localTransform;
         dst.meshIndex = src.meshIndex;
         dst.materialIndex = src.materialIndex;
+        dst.isJoint = src.isJoint;
         dst.childIndices = std::move(src.childIndices);
         asset.nodes.push_back(std::move(dst));
     }
