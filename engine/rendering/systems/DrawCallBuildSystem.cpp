@@ -85,6 +85,8 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     auto visibleView =
         reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
 
+    const Material defaultMat{};
+
     visibleView.each(
         [&](ecs::EntityID /*entity*/, const VisibleTag& /*tag*/, const WorldTransformComponent& wtc,
             const MeshComponent& mc, const MaterialComponent& matc)
@@ -95,7 +97,6 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 
             // Fetch material; fall back to default if not found.
             const Material* mat = res.getMaterial(matc.material);
-            Material defaultMat{};
             if (mat == nullptr)
                 mat = &defaultMat;
 
@@ -150,6 +151,8 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
                                     frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
 
+    const Material defaultMat2{};
+
     auto visibleView =
         reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
 
@@ -166,9 +169,8 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 return;
 
             const Material* mat = res.getMaterial(matc.material);
-            Material defaultMat{};
             if (mat == nullptr)
-                mat = &defaultMat;
+                mat = &defaultMat2;
 
             // Per-draw: material
             float materialData[8] = {
@@ -237,8 +239,8 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             if (mat->transparent)
             {
                 bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW |
-                               BGFX_STATE_MSAA | BGFX_STATE_BLEND_ALPHA);
+                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
+                               BGFX_STATE_BLEND_ALPHA);
                 bgfx::submit(kViewTransparent, program);
             }
             else
@@ -370,6 +372,8 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
     const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
                                     frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
 
+    const Material skinnedDefaultMat{};
+
     auto skinnedView =
         reg.view<VisibleTag, animation::SkinComponent, MeshComponent, MaterialComponent>();
 
@@ -383,9 +387,8 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
                 return;
 
             const Material* mat = res.getMaterial(matc.material);
-            Material defaultMat{};
             if (mat == nullptr)
-                mat = &defaultMat;
+                mat = &skinnedDefaultMat;
 
             // Per-draw: material
             float materialData[8] = {
@@ -454,8 +457,8 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             if (mat->transparent)
             {
                 bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW |
-                               BGFX_STATE_MSAA | BGFX_STATE_BLEND_ALPHA);
+                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
+                               BGFX_STATE_BLEND_ALPHA);
                 bgfx::submit(kViewTransparent, skinnedProgram);
             }
             else
