@@ -1231,3 +1231,11 @@ The `physics_demo_v2` target demonstrates migration. The original 500-line `main
 ProjectConfig has 8 unit tests covering: defaults, full config parsing, partial config (missing fields keep defaults), fixedRateHz conversion, empty object, invalid JSON, toEngineDesc conversion, and missing file handling. All existing 437 tests continue to pass.
 
 ---
+
+## TODO — Performance & Hygiene
+
+Items reviewed during the 2026-04-12 engine audit but deferred due to risk or complexity:
+
+- [ ] **AssetManager string copies in load()**: `pathToSlot_.find(std::string(path))` creates a temporary string on every lookup. Fixing requires enabling transparent hash/comparison on the `ankerl::unordered_dense::map`, which is a nontrivial API change — needs careful testing of the heterogeneous lookup support.
+- [ ] **AnimationSystem boneBuffer_ lifetime documentation**: The raw `boneBuffer_` pointer appears to dangle after the local `pmr::vector` destructs, but is safe because `FrameArena` doesn't reclaim memory until `reset()` at frame end. This is subtle and should have a comment explaining the lifetime contract.
+- [ ] **Transparent hash for asset path lookups**: Several maps in AssetManager and RenderResources use `std::string` keys but are often queried with `std::string_view`. Enabling heterogeneous lookup across these maps would eliminate temporary string allocations on hot paths.
