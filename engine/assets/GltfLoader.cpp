@@ -323,15 +323,28 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
     }
 
     // Indices — stored as uint16. Meshes with > 65535 vertices are not supported.
-    auto idx32 = readIndexAccessor(prim.indices);
-    md.indices.reserve(idx32.size());
-    for (uint32_t i : idx32)
+    if (prim.indices)
     {
-        if (i > 0xFFFFu)
-            throw std::runtime_error("GltfLoader: mesh index " + std::to_string(i) +
-                                     " exceeds uint16 max (65535). "
-                                     "Split the mesh or add uint32 index support.");
-        md.indices.push_back(static_cast<uint16_t>(i));
+        auto idx32 = readIndexAccessor(prim.indices);
+        md.indices.reserve(idx32.size());
+        for (uint32_t i : idx32)
+        {
+            if (i > 0xFFFFu)
+                throw std::runtime_error("GltfLoader: mesh index " + std::to_string(i) +
+                                         " exceeds uint16 max (65535). "
+                                         "Split the mesh or add uint32 index support.");
+            md.indices.push_back(static_cast<uint16_t>(i));
+        }
+    }
+    else
+    {
+        // Non-indexed mesh — generate sequential indices.
+        if (vertCount > 0xFFFFu)
+            throw std::runtime_error("GltfLoader: non-indexed mesh has " +
+                                     std::to_string(vertCount) + " vertices, exceeds uint16 max.");
+        md.indices.resize(vertCount);
+        for (size_t i = 0; i < vertCount; ++i)
+            md.indices[i] = static_cast<uint16_t>(i);
     }
 
     // -----------------------------------------------------------------------
@@ -339,7 +352,7 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
     // does not provide TANGENT attributes (common for many sample models).
     // Uses a standard per-triangle tangent computation averaged at vertices.
     // -----------------------------------------------------------------------
-    if (!tanAcc && normAcc && !uvData.empty() && !md.indices.empty())
+    if (!tanAcc && !md.normals.empty() && !uvData.empty() && !md.indices.empty())
     {
         const auto& posData = md.positions;  // float×3 per vertex
         // uvData was captured earlier as float×2 per vertex
@@ -348,9 +361,9 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
         std::vector<float> tanAccum(vertCount * 3, 0.f);
         std::vector<float> bitAccum(vertCount * 3, 0.f);
 
-        for (size_t t = 0; t + 2 < idx32.size(); t += 3)
+        for (size_t t = 0; t + 2 < md.indices.size(); t += 3)
         {
-            const uint32_t i0 = idx32[t + 0], i1 = idx32[t + 1], i2 = idx32[t + 2];
+            const uint32_t i0 = md.indices[t + 0], i1 = md.indices[t + 1], i2 = md.indices[t + 2];
 
             const float* p0 = &posData[i0 * 3];
             const float* p1 = &posData[i1 * 3];
@@ -391,7 +404,26 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
         }
 
         // Orthonormalize and encode.
-        auto normData = readFloatAccessor(normAcc);
+        // Decode normals: either from the original accessor or from the
+        // oct-encoded values we generated for meshes without NORMAL.
+        std::vector<float> normData;
+        if (normAcc)
+        {
+            normData = readFloatAccessor(normAcc);
+        }
+        else
+        {
+            // Decode generated oct-encoded normals back to float3 for
+            // tangent orthogonalization.
+            normData.resize(vertCount * 3);
+            for (size_t i = 0; i < vertCount; ++i)
+            {
+                // Default generated normal is (0,1,0).
+                normData[i * 3 + 0] = 0.0f;
+                normData[i * 3 + 1] = 1.0f;
+                normData[i * 3 + 2] = 0.0f;
+            }
+        }
         md.tangents.resize(vertCount * 4);
         for (size_t i = 0; i < vertCount; ++i)
         {

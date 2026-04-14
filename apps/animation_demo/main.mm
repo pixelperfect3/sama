@@ -436,9 +436,6 @@ int main()
         {
             const GltfAsset* model = assets.get<GltfAsset>(modelHandle);
 
-            // Spawn kNumInstances copies of the model.
-            // We track entities before/after each spawn to know which belong
-            // to each instance.
             for (int i = 0; i < kNumInstances; ++i)
             {
                 std::vector<EntityID> entitiesBefore;
