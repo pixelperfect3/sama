@@ -548,7 +548,7 @@ int main()
             if (!printed)
             {
                 printed = true;
-                fprintf(stderr, "animation_demo: asset load failed: %s\n",
+                fprintf(stdout, "animation_demo: asset load failed: %s\n",
                         assets.error(modelHandle).c_str());
             }
         }
@@ -645,6 +645,10 @@ int main()
         // Clear per-entity event queues from last frame.
         reg.view<AnimationEventQueue>().each([](EntityID, AnimationEventQueue& q) { q.clear(); });
 
+        // -- Transform system (before animation so WorldTransformComponent is
+        //    available for bone matrix computation) ----------------------------
+        transformSys.update(reg);
+
         // -- Animation + IK system update -------------------------------------
         auto* arena = eng.frameArena().resource();
 
@@ -657,9 +661,6 @@ int main()
 
         // Phase 3: Bone matrix computation.
         animSys.computeBoneMatrices(reg, animRes, arena);
-
-        // -- Transform system -------------------------------------------------
-        transformSys.update(reg);
 
         // -- Render -----------------------------------------------------------
         double frameStart = glfwGetTime();
