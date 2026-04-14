@@ -56,6 +56,7 @@
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/scene/HierarchyComponents.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
 #include "imgui.h"
@@ -73,7 +74,7 @@ using namespace engine::threading;
 // =============================================================================
 
 static constexpr int kNumInstances = 3;
-static constexpr float kInstanceSpacing = 3.0f;
+static constexpr float kInstanceSpacing = 6.0f;
 static constexpr float kSpeedStep = 0.1f;
 static constexpr float kDefaultBlendDuration = 0.5f;
 
@@ -432,11 +433,13 @@ int main()
                         }
                     });
 
-                // Offset all new entities and configure animation.
+                // Offset only root entities (no parent) to avoid double-offsetting
+                // children whose positions are relative to their parent.
                 for (EntityID e : instances[i].entities)
                 {
+                    auto* hc = reg.get<engine::scene::HierarchyComponent>(e);
                     auto* tc = reg.get<TransformComponent>(e);
-                    if (tc)
+                    if (tc && !hc)
                     {
                         tc->position.x += instances[i].rootOffset.x;
                         tc->position.y += instances[i].rootOffset.y;
@@ -711,8 +714,8 @@ int main()
             bgfx::dbgTextPrintf(1, row++, 0x06, "RMB=orbit  Scroll=zoom  WASD=move");
         }
 
-        // -- ImGui panel ------------------------------------------------------
-        ImGui::SetNextWindowPos(ImVec2(10, 80), ImGuiCond_FirstUseEver);
+        // -- ImGui panel (anchored to right side) --------------------------------
+        ImGui::SetNextWindowPos(ImVec2(fbW - 340.0f, 10.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(320, 460), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Animation Controls"))
         {
