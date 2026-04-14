@@ -1,5 +1,6 @@
 #include "engine/animation/AnimationSystem.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "engine/animation/AnimationComponents.h"
+#include "engine/animation/AnimationEventQueue.h"
 #include "engine/animation/AnimationSampler.h"
 #include "engine/animation/IkComponents.h"
 #include "engine/animation/Pose.h"
@@ -43,14 +45,18 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
     auto view = reg.view<SkeletonComponent, AnimatorComponent, SkinComponent>();
 
     view.each(
-        [&](ecs::EntityID /*entity*/, const SkeletonComponent& skelComp,
-            AnimatorComponent& animComp, SkinComponent& skinComp)
+        [&](ecs::EntityID entity, const SkeletonComponent& skelComp, AnimatorComponent& animComp,
+            SkinComponent& skinComp)
         {
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
             if (!skeleton || skeleton->joints.empty())
                 return;
 
             const uint32_t jointCount = skeleton->jointCount();
+
+            // Remember the time before advancing for event detection.
+            const float prevTime = animComp.playbackTime;
+            const bool isLooping = (animComp.flags & AnimatorComponent::kFlagLooping) != 0;
 
             // Advance playback time if playing (kFlagSampleOnce does NOT advance time).
             if (animComp.flags & AnimatorComponent::kFlagPlaying)
@@ -60,7 +66,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                 const AnimationClip* clip = animRes.getClip(animComp.clipId);
                 if (clip && clip->duration > 0.0f)
                 {
-                    if (animComp.flags & AnimatorComponent::kFlagLooping)
+                    if (isLooping)
                     {
                         while (animComp.playbackTime >= clip->duration)
                             animComp.playbackTime -= clip->duration;
@@ -73,7 +79,17 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                             glm::clamp(animComp.playbackTime, 0.0f, clip->duration);
                     }
                 }
+
+                // Fire animation events for the interval we just advanced through.
+                const AnimationClip* evtClip = animRes.getClip(animComp.clipId);
+                if (evtClip && !evtClip->events.empty())
+                {
+                    fireEvents(reg, entity, *evtClip, prevTime, animComp.playbackTime, isLooping);
+                }
             }
+
+            // Update prevPlaybackTime for the next frame.
+            animComp.prevPlaybackTime = animComp.playbackTime;
 
             // Sample current clip when playing or when the editor has requested a
             // one-shot sample (e.g. during scrubbing while paused). The sample-once
@@ -171,6 +187,10 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
 
             const uint32_t jointCount = skeleton->jointCount();
 
+            // Remember the time before advancing for event detection.
+            const float prevTime = animComp.playbackTime;
+            const bool isLooping = (animComp.flags & AnimatorComponent::kFlagLooping) != 0;
+
             // Advance playback time if playing.
             if (animComp.flags & AnimatorComponent::kFlagPlaying)
             {
@@ -179,7 +199,7 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                 const AnimationClip* clip = animRes.getClip(animComp.clipId);
                 if (clip && clip->duration > 0.0f)
                 {
-                    if (animComp.flags & AnimatorComponent::kFlagLooping)
+                    if (isLooping)
                     {
                         while (animComp.playbackTime >= clip->duration)
                             animComp.playbackTime -= clip->duration;
@@ -192,7 +212,17 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                             glm::clamp(animComp.playbackTime, 0.0f, clip->duration);
                     }
                 }
+
+                // Fire animation events for the interval we just advanced through.
+                const AnimationClip* evtClip = animRes.getClip(animComp.clipId);
+                if (evtClip && !evtClip->events.empty())
+                {
+                    fireEvents(reg, entity, *evtClip, prevTime, animComp.playbackTime, isLooping);
+                }
             }
+
+            // Update prevPlaybackTime for the next frame.
+            animComp.prevPlaybackTime = animComp.playbackTime;
 
             // Consume sample-once flag (editor scrubbing) the same way as update().
             if (animComp.flags & AnimatorComponent::kFlagSampleOnce)
@@ -303,6 +333,73 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
 
     boneBuffer_ = boneBuffer.data();
     boneBufferSize_ = static_cast<uint32_t>(boneBuffer.size());
+}
+
+void AnimationSystem::fireEvents(ecs::Registry& reg, ecs::EntityID entity,
+                                 const AnimationClip& clip, float prevTime, float newTime,
+                                 bool looping)
+{
+    // Ensure the entity has an AnimationEventQueue component.
+    auto* queue = reg.get<AnimationEventQueue>(entity);
+    if (!queue)
+    {
+        reg.emplace<AnimationEventQueue>(entity, AnimationEventQueue{});
+        queue = reg.get<AnimationEventQueue>(entity);
+    }
+
+    // Helper lambda: collect events in the half-open interval (rangeStart, rangeEnd].
+    // We use open-start so that an event exactly at prevTime (already fired last frame)
+    // is not re-fired, but an event exactly at newTime is fired.
+    auto collectInRange = [&](float rangeStart, float rangeEnd)
+    {
+        for (const auto& evt : clip.events)
+        {
+            if (evt.time > rangeStart && evt.time <= rangeEnd)
+            {
+                queue->events.push_back({evt.nameHash, evt.time});
+                if (eventCallback_)
+                    eventCallback_(entity, evt);
+            }
+        }
+    };
+
+    // Helper lambda: collect events in reverse for the half-open interval
+    // [rangeStart, rangeEnd). Used for reverse playback.
+    auto collectInRangeReverse = [&](float rangeStart, float rangeEnd)
+    {
+        // Iterate in reverse order through events.
+        for (auto it = clip.events.rbegin(); it != clip.events.rend(); ++it)
+        {
+            if (it->time >= rangeStart && it->time < rangeEnd)
+            {
+                queue->events.push_back({it->nameHash, it->time});
+                if (eventCallback_)
+                    eventCallback_(entity, *it);
+            }
+        }
+    };
+
+    if (newTime >= prevTime)
+    {
+        // Normal forward playback, no wrap.
+        collectInRange(prevTime, newTime);
+    }
+    else if (looping && prevTime > newTime)
+    {
+        // Wrapped around. Could be forward wrap or reverse wrap.
+        // Forward wrap: prevTime -> duration, then 0 -> newTime.
+        // Reverse wrap: prevTime -> 0, then duration -> newTime.
+        if (prevTime > newTime)
+        {
+            // Forward wrap (most common): events in (prevTime, duration] + (0, newTime]
+            // But also handle reverse: if speed is negative the wrap goes the other way.
+            // We detect direction by checking if duration - prevTime + newTime is small
+            // (forward) vs prevTime + duration - newTime is small (reverse).
+            // Simpler: just check both ranges in forward order for forward wrap.
+            collectInRange(prevTime, clip.duration);
+            collectInRange(-0.0001f, newTime);  // use slightly negative to include t=0
+        }
+    }
 }
 
 }  // namespace engine::animation

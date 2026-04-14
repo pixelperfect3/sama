@@ -16,9 +16,9 @@ TEST_CASE("sizeof(Joint) == 80", "[animation]")
     STATIC_CHECK(sizeof(Joint) == 80);
 }
 
-TEST_CASE("sizeof(AnimatorComponent) == 32", "[animation]")
+TEST_CASE("sizeof(AnimatorComponent) == 36", "[animation]")
 {
-    STATIC_CHECK(sizeof(AnimatorComponent) == 32);
+    STATIC_CHECK(sizeof(AnimatorComponent) == 36);
 }
 
 TEST_CASE("sizeof(SkinComponent) == 8", "[animation]")

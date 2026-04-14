@@ -57,6 +57,7 @@ TEST_CASE("AnimationSystem kFlagSampleOnce does not advance time", "[animation]"
     anim.clipId = clipId;
     anim.nextClipId = UINT32_MAX;
     anim.playbackTime = 0.5f;
+    anim.prevPlaybackTime = 0.5f;
     anim.speed = 1.0f;
     anim.flags = AnimatorComponent::kFlagSampleOnce;  // explicitly NOT playing
     reg.emplace<AnimatorComponent>(entity, anim);
@@ -90,6 +91,7 @@ TEST_CASE("AnimationSystem kFlagPlaying advances time and clears sample-once", "
     anim.clipId = clipId;
     anim.nextClipId = UINT32_MAX;
     anim.playbackTime = 0.0f;
+    anim.prevPlaybackTime = 0.0f;
     anim.speed = 1.0f;
     anim.flags = AnimatorComponent::kFlagPlaying | AnimatorComponent::kFlagSampleOnce;
     reg.emplace<AnimatorComponent>(entity, anim);

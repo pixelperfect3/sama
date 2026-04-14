@@ -209,6 +209,7 @@ void GltfSceneSpawner::spawn(const GltfAsset& asset, ecs::Registry& reg,
             anim.clipId = clipIds.empty() ? UINT32_MAX : clipIds[0];
             anim.nextClipId = UINT32_MAX;
             anim.playbackTime = 0.0f;
+            anim.prevPlaybackTime = 0.0f;
             anim.speed = 1.0f;
             anim.blendFactor = 0.0f;
             anim.blendDuration = 0.0f;
