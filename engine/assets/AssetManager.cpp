@@ -354,6 +354,7 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
     {
         animation::Skeleton skeleton;
         skeleton.joints.resize(cpuSkel.joints.size());
+        skeleton.restPoses.resize(cpuSkel.joints.size());
 #if !defined(NDEBUG)
         skeleton.debugJointNames.resize(cpuSkel.joints.size());
 #endif
@@ -365,6 +366,12 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
 #if !defined(NDEBUG)
             skeleton.debugJointNames[j] = cpuSkel.joints[j].name;
 #endif
+            if (j < cpuSkel.restPoses.size())
+            {
+                skeleton.restPoses[j].position = cpuSkel.restPoses[j].position;
+                skeleton.restPoses[j].rotation = cpuSkel.restPoses[j].rotation;
+                skeleton.restPoses[j].scale = cpuSkel.restPoses[j].scale;
+            }
         }
         asset.skeletons.push_back(std::move(skeleton));
     }

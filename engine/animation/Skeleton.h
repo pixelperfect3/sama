@@ -9,18 +9,26 @@
 namespace engine::animation
 {
 
-struct Joint                             // offset  size
+struct JointRestPose
+{
+    math::Vec3 position{0.0f};
+    math::Quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    math::Vec3 scale{1.0f};
+};
+
+struct Joint  // offset  size
 {
     math::Mat4 inverseBindMatrix{1.0f};  //  0      64  mesh space -> bone-local space
     int32_t parentIndex = -1;            // 64       4  -1 = root joint (no parent)
-    uint32_t nameHash = 0;              // 68       4  FNV-1a hash of joint name
-    uint8_t _pad[8] = {};              // 72       8  trailing alignment padding
+    uint32_t nameHash = 0;               // 68       4  FNV-1a hash of joint name
+    uint8_t _pad[8] = {};                // 72       8  trailing alignment padding
 };  // total: 80 bytes (aligned to 16 for Mat4)
 static_assert(sizeof(Joint) == 80);
 
 struct Skeleton
 {
-    std::vector<Joint> joints;  // ordered such that parent always precedes child
+    std::vector<Joint> joints;             // ordered such that parent always precedes child
+    std::vector<JointRestPose> restPoses;  // bind/rest pose per joint (parallel to joints)
 
 #if !defined(NDEBUG)
     // Debug-only: human-readable joint names, parallel to joints[].

@@ -62,6 +62,13 @@ struct CpuMaterialData
 // CPU-side animation data — decoded from glTF skins and animations.
 // ---------------------------------------------------------------------------
 
+struct CpuJointRestPose
+{
+    math::Vec3 position{0.0f};
+    math::Quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    math::Vec3 scale{1.0f};
+};
+
 struct CpuJointData
 {
     math::Mat4 inverseBindMatrix{1.0f};
@@ -72,6 +79,7 @@ struct CpuJointData
 struct CpuSkeletonData
 {
     std::vector<CpuJointData> joints;
+    std::vector<CpuJointRestPose> restPoses;  // bind pose per joint
 };
 
 struct CpuAnimationClipData

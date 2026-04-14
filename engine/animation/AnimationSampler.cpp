@@ -74,12 +74,22 @@ void sampleClip(const AnimationClip& clip, const Skeleton& skeleton, float time,
     const uint32_t jointCount = skeleton.jointCount();
     outPose.jointPoses.resize(jointCount);
 
-    // Initialize to default (identity) pose.
+    // Initialize to rest pose from the skeleton (glTF node transforms).
+    // Joints without animation channels keep their bind pose.
     for (uint32_t i = 0; i < jointCount; ++i)
     {
-        outPose.jointPoses[i].position = math::Vec3(0.0f);
-        outPose.jointPoses[i].rotation = math::Quat(1.0f, 0.0f, 0.0f, 0.0f);
-        outPose.jointPoses[i].scale = math::Vec3(1.0f);
+        if (i < skeleton.restPoses.size())
+        {
+            outPose.jointPoses[i].position = skeleton.restPoses[i].position;
+            outPose.jointPoses[i].rotation = skeleton.restPoses[i].rotation;
+            outPose.jointPoses[i].scale = skeleton.restPoses[i].scale;
+        }
+        else
+        {
+            outPose.jointPoses[i].position = math::Vec3(0.0f);
+            outPose.jointPoses[i].rotation = math::Quat(1.0f, 0.0f, 0.0f, 0.0f);
+            outPose.jointPoses[i].scale = math::Vec3(1.0f);
+        }
     }
 
     // Sample each channel.

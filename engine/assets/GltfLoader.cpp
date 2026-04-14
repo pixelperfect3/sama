@@ -607,8 +607,9 @@ SkeletonExtraction extractSkeleton(const cgltf_data* data, const cgltf_skin& ski
     for (size_t i = 0; i < sortedOrder.size(); ++i)
         result.remap[sortedOrder[i]] = static_cast<int32_t>(i);
 
-    // Build final sorted joint data.
+    // Build final sorted joint data + rest poses from glTF node transforms.
     skelData.joints.resize(skin.joints_count);
+    skelData.restPoses.resize(skin.joints_count);
     for (size_t i = 0; i < sortedOrder.size(); ++i)
     {
         const auto& raw = rawJoints[sortedOrder[i]];
@@ -616,6 +617,17 @@ SkeletonExtraction extractSkeleton(const cgltf_data* data, const cgltf_skin& ski
         dst.inverseBindMatrix = raw.ibm;
         dst.name = raw.name;
         dst.parentIndex = (raw.parentOriginal >= 0) ? result.remap[raw.parentOriginal] : -1;
+
+        // Extract rest pose TRS from the glTF node.
+        const cgltf_node* node = skin.joints[sortedOrder[i]];
+        auto& rp = skelData.restPoses[i];
+        if (node->has_translation)
+            rp.position = {node->translation[0], node->translation[1], node->translation[2]};
+        if (node->has_rotation)
+            rp.rotation = math::Quat(node->rotation[3], node->rotation[0], node->rotation[1],
+                                     node->rotation[2]);
+        if (node->has_scale)
+            rp.scale = {node->scale[0], node->scale[1], node->scale[2]};
     }
 
     return result;
