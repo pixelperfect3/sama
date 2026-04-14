@@ -559,6 +559,8 @@ add_library(engine_animation STATIC
     engine/animation/IkSolvers.cpp
     engine/animation/IkSystem.cpp
     engine/animation/FootIkHelper.cpp
+    engine/animation/AnimStateMachine.cpp
+    engine/animation/AnimStateMachineSystem.cpp
 )
 target_include_directories(engine_animation PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_animation PUBLIC engine_ecs glm::glm)
@@ -815,6 +817,7 @@ add_executable(engine_tests
     tests/animation/TestPoseBlend.cpp
     tests/animation/TestIkSolvers.cpp
     tests/animation/TestAnimationSystem.cpp
+    tests/animation/TestAnimStateMachine.cpp
     tests/game/TestProjectConfig.cpp
     tests/ui/TestUiNode.cpp
     tests/ui/TestUiLayout.cpp
