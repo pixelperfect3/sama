@@ -78,7 +78,7 @@ using namespace engine::threading;
 // =============================================================================
 
 static constexpr int kNumInstances = 3;
-static constexpr float kInstanceSpacing = 6.0f;
+static constexpr float kInstanceSpacing = 4.0f;
 static constexpr float kSpeedStep = 0.1f;
 static constexpr float kDefaultBlendDuration = 0.5f;
 
@@ -468,6 +468,7 @@ int main()
                         tc->position.x += instances[i].rootOffset.x;
                         tc->position.y += instances[i].rootOffset.y;
                         tc->position.z += instances[i].rootOffset.z;
+                        tc->rotation = glm::angleAxis(glm::radians(-90.0f), glm::vec3(1, 0, 0));
                         tc->flags |= 1;
                     }
 
