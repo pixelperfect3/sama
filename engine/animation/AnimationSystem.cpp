@@ -14,6 +14,7 @@
 #include "engine/animation/IkComponents.h"
 #include "engine/animation/Pose.h"
 #include "engine/animation/Skeleton.h"
+#include "engine/rendering/EcsComponents.h"
 
 namespace engine::animation
 {
@@ -155,13 +156,19 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                     worldTransforms[i] = local;
             }
 
+            // Incorporate the entity's world transform so skinned meshes
+            // render at the correct position, not always at the origin.
+            const auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);
+            const math::Mat4 entityWorld = wtc ? wtc->matrix : math::Mat4(1.0f);
+
             // Record offset and append bone matrices.
             skinComp.boneMatrixOffset = static_cast<uint32_t>(boneBuffer.size());
             skinComp.boneCount = jointCount;
 
             for (uint32_t i = 0; i < jointCount; ++i)
             {
-                math::Mat4 finalMatrix = worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
+                math::Mat4 finalMatrix =
+                    entityWorld * worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
                 boneBuffer.push_back(finalMatrix);
             }
         });
@@ -297,7 +304,7 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
     auto view = reg.view<SkeletonComponent, SkinComponent, PoseComponent>();
 
     view.each(
-        [&](ecs::EntityID /*entity*/, const SkeletonComponent& skelComp, SkinComponent& skinComp,
+        [&](ecs::EntityID entity, const SkeletonComponent& skelComp, SkinComponent& skinComp,
             const PoseComponent& poseComp)
         {
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
@@ -321,12 +328,16 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
                     worldTransforms[i] = local;
             }
 
+            const auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);
+            const math::Mat4 entityWorld = wtc ? wtc->matrix : math::Mat4(1.0f);
+
             skinComp.boneMatrixOffset = static_cast<uint32_t>(boneBuffer.size());
             skinComp.boneCount = jointCount;
 
             for (uint32_t i = 0; i < jointCount; ++i)
             {
-                math::Mat4 finalMatrix = worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
+                math::Mat4 finalMatrix =
+                    entityWorld * worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
                 boneBuffer.push_back(finalMatrix);
             }
         });
