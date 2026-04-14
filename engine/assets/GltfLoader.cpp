@@ -277,6 +277,14 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
                             md.normals[i * 2 + 0], md.normals[i * 2 + 1]);
         }
     }
+    else
+    {
+        // No normals in glTF — generate default Y-up normals so the
+        // surface buffer is created and the PBR shader has valid data.
+        md.normals.resize(vertCount * 2);
+        for (size_t i = 0; i < vertCount; ++i)
+            encodeOctNormal(0.0f, 1.0f, 0.0f, md.normals[i * 2 + 0], md.normals[i * 2 + 1]);
+    }
 
     if (tanAcc)
     {
@@ -295,7 +303,7 @@ rendering::MeshData convertPrimitive(const cgltf_primitive& prim)
     {
         uvData = readFloatAccessor(uvAcc);
     }
-    else if (normAcc)
+    else
     {
         // No UVs in the mesh — generate zero UVs so the surface buffer
         // can be created (normals + tangents + UVs are all required).
