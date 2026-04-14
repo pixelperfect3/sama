@@ -126,7 +126,7 @@ int main()
     ibl.generateDefault();
 
     // -- Start async model load ----------------------------------------------
-    auto modelHandle = assets.load<GltfAsset>("BrainStem.glb");
+    auto modelHandle = assets.load<GltfAsset>("Fox.glb");
 
     // -- ECS ------------------------------------------------------------------
     Registry reg;
@@ -507,24 +507,24 @@ int main()
                                      { recentEvents.push_back({evt.name, 0.0f}); });
 
             // -- Set up state machine --------------------------------------------
-            // Three states using the same clip at different speeds.
-            if (totalClipCount > 0)
+            // Three states mapped to Fox's clips: Survey(0), Walk(1), Run(2).
+            if (totalClipCount >= 3)
             {
-                uint32_t slow = stateMachine.addState("Slow", 0, true, 0.5f);
-                uint32_t normal = stateMachine.addState("Normal", 0, true, 1.0f);
-                uint32_t fast = stateMachine.addState("Fast", 0, true, 2.0f);
+                uint32_t survey = stateMachine.addState("Survey", 0, true, 1.0f);
+                uint32_t walk = stateMachine.addState("Walk", 1, true, 1.0f);
+                uint32_t run = stateMachine.addState("Run", 2, true, 1.0f);
 
-                // Slow → Normal when speed > 0.75
-                stateMachine.addTransition(slow, normal, 0.3f, "speed",
+                // Survey → Walk when speed > 0.75
+                stateMachine.addTransition(survey, walk, 0.3f, "speed",
                                            TransitionCondition::Compare::Greater, 0.75f);
-                // Normal → Slow when speed < 0.5
-                stateMachine.addTransition(normal, slow, 0.3f, "speed",
+                // Walk → Survey when speed < 0.5
+                stateMachine.addTransition(walk, survey, 0.3f, "speed",
                                            TransitionCondition::Compare::Less, 0.5f);
-                // Normal → Fast when speed > 1.75
-                stateMachine.addTransition(normal, fast, 0.3f, "speed",
+                // Walk → Run when speed > 1.75
+                stateMachine.addTransition(walk, run, 0.3f, "speed",
                                            TransitionCondition::Compare::Greater, 1.75f);
-                // Fast → Normal when speed < 1.5
-                stateMachine.addTransition(fast, normal, 0.3f, "speed",
+                // Run → Walk when speed < 1.5
+                stateMachine.addTransition(run, walk, 0.3f, "speed",
                                            TransitionCondition::Compare::Less, 1.5f);
 
                 // Attach state machine to the third instance (index 2).
@@ -533,7 +533,7 @@ int main()
                 {
                     AnimStateMachineComponent smComp;
                     smComp.machine = &stateMachine;
-                    smComp.currentState = normal;
+                    smComp.currentState = walk;
                     smComp.setFloat("speed", smSpeedParam);
                     reg.emplace<AnimStateMachineComponent>(smEntity, std::move(smComp));
                     stateMachineSetup = true;
@@ -776,11 +776,11 @@ int main()
                                 eng.frameArena().capacity() / 1024);
 
             if (modelState == AssetState::Ready)
-                bgfx::dbgTextPrintf(1, row++, 0x0a, "BrainStem.glb -- Ready");
+                bgfx::dbgTextPrintf(1, row++, 0x0a, "Fox.glb -- Ready");
             else if (modelState == AssetState::Failed)
-                bgfx::dbgTextPrintf(1, row++, 0x0c, "BrainStem.glb -- FAILED");
+                bgfx::dbgTextPrintf(1, row++, 0x0c, "Fox.glb -- FAILED");
             else
-                bgfx::dbgTextPrintf(1, row++, 0x0e, "BrainStem.glb -- Loading...");
+                bgfx::dbgTextPrintf(1, row++, 0x0e, "Fox.glb -- Loading...");
 
             row++;
             bgfx::dbgTextPrintf(1, row++, 0x0f,

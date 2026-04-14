@@ -1290,12 +1290,12 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         GLM_ENABLE_EXPERIMENTAL
     )
 
-    # Copy BrainStem GLB next to the binary so StdFileSystem(".")/load() finds it.
+    # Copy Fox GLB next to the binary so StdFileSystem(".")/load() finds it.
     add_custom_command(TARGET animation_demo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${SAMA_ROOT_DIR}/assets/BrainStem.glb"
-            "$<TARGET_FILE_DIR:animation_demo>/BrainStem.glb"
-        COMMENT "Copying BrainStem.glb to build directory"
+            "${SAMA_ROOT_DIR}/assets/Fox.glb"
+            "$<TARGET_FILE_DIR:animation_demo>/Fox.glb"
+        COMMENT "Copying Fox.glb to build directory"
     )
 endif()
 
