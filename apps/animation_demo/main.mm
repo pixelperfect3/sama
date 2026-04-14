@@ -468,7 +468,7 @@ int main()
                         tc->position.x += instances[i].rootOffset.x;
                         tc->position.y += instances[i].rootOffset.y;
                         tc->position.z += instances[i].rootOffset.z;
-                        tc->rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(1, 0, 0));
+                        tc->rotation = glm::angleAxis(glm::radians(0.0f), glm::vec3(1, 0, 0));
                         tc->flags |= 1;
                     }
 
