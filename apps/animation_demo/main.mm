@@ -31,7 +31,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "engine/animation/AnimStateMachine.h"
+#include "engine/animation/AnimStateMachineSystem.h"
+#include "engine/animation/AnimationClip.h"
 #include "engine/animation/AnimationComponents.h"
+#include "engine/animation/AnimationEventQueue.h"
 #include "engine/animation/AnimationResources.h"
 #include "engine/animation/AnimationSystem.h"
 #include "engine/animation/Hash.h"
@@ -130,6 +134,7 @@ int main()
     engine::scene::TransformSystem transformSys;
     AnimationSystem animSys;
     AnimationResources animRes;
+    AnimStateMachineSystem stateMachineSys;
     IkSystem ikSys;
     bool modelSpawned = false;
 
@@ -149,6 +154,19 @@ int main()
     float ikBlendWeight = 1.0f;
     glm::vec3 ikTargetPos{0.5f, 1.0f, 0.5f};
     uint32_t totalClipCount = 0;
+
+    // State machine: Slow → Normal → Fast based on "speed" parameter.
+    AnimStateMachine stateMachine;
+    bool stateMachineSetup = false;
+    float smSpeedParam = 1.0f;  // controlled by Left/Right arrows
+
+    // Animation events: recent fired events for HUD display.
+    struct FiredEvent
+    {
+        std::string name;
+        float age = 0.0f;  // seconds since it fired
+    };
+    std::vector<FiredEvent> recentEvents;
 
     // -- Ground plane ---------------------------------------------------------
     MeshData cubeData = makeCubeMeshData();
@@ -380,6 +398,12 @@ int main()
                 showHud = !showHud;
             }
 
+            // Left/Right: adjust state machine speed parameter
+            if (input.isKeyPressed(Key::Right))
+                smSpeedParam = std::min(smSpeedParam + 0.25f, 3.0f);
+            if (input.isKeyPressed(Key::Left))
+                smSpeedParam = std::max(smSpeedParam - 0.25f, 0.0f);
+
             // 1-9: select clip on selected instance (if multiple clips exist)
             for (int k = 0; k < 9; ++k)
             {
@@ -462,6 +486,59 @@ int main()
             }
 
             totalClipCount = animRes.clipCount();
+
+            // -- Set up animation events on clips --------------------------------
+            // Add programmatic event markers for demonstration.
+            for (uint32_t ci = 0; ci < totalClipCount; ++ci)
+            {
+                AnimationClip* clip = animRes.getClipMut(ci);
+                if (clip && clip->duration > 0.0f)
+                {
+                    clip->addEvent(0.0f, "anim_start");
+                    clip->addEvent(clip->duration * 0.25f, "quarter");
+                    clip->addEvent(clip->duration * 0.5f, "halfway");
+                    clip->addEvent(clip->duration * 0.75f, "three_quarter");
+                }
+            }
+
+            // Set up global event callback for logging.
+            animSys.setEventCallback([&recentEvents](EntityID /*entity*/, const AnimationEvent& evt)
+                                     { recentEvents.push_back({evt.name, 0.0f}); });
+
+            // -- Set up state machine --------------------------------------------
+            // Three states using the same clip at different speeds.
+            if (totalClipCount > 0)
+            {
+                uint32_t slow = stateMachine.addState("Slow", 0, true, 0.5f);
+                uint32_t normal = stateMachine.addState("Normal", 0, true, 1.0f);
+                uint32_t fast = stateMachine.addState("Fast", 0, true, 2.0f);
+
+                // Slow → Normal when speed > 0.75
+                stateMachine.addTransition(slow, normal, 0.3f, "speed",
+                                           TransitionCondition::Compare::Greater, 0.75f);
+                // Normal → Slow when speed < 0.5
+                stateMachine.addTransition(normal, slow, 0.3f, "speed",
+                                           TransitionCondition::Compare::Less, 0.5f);
+                // Normal → Fast when speed > 1.75
+                stateMachine.addTransition(normal, fast, 0.3f, "speed",
+                                           TransitionCondition::Compare::Greater, 1.75f);
+                // Fast → Normal when speed < 1.5
+                stateMachine.addTransition(fast, normal, 0.3f, "speed",
+                                           TransitionCondition::Compare::Less, 1.5f);
+
+                // Attach state machine to the third instance (index 2).
+                EntityID smEntity = instances[2].animatedEntity;
+                if (smEntity != INVALID_ENTITY)
+                {
+                    AnimStateMachineComponent smComp;
+                    smComp.machine = &stateMachine;
+                    smComp.currentState = normal;
+                    smComp.setFloat("speed", smSpeedParam);
+                    reg.emplace<AnimStateMachineComponent>(smEntity, std::move(smComp));
+                    stateMachineSetup = true;
+                }
+            }
+
             modelSpawned = true;
         }
         else if (modelState == AssetState::Failed)
@@ -543,6 +620,29 @@ int main()
                 markerTc->flags |= 1;
             }
         }
+
+        // -- Update state machine parameter + age recent events -----------------
+        if (stateMachineSetup)
+        {
+            EntityID smEntity = instances[2].animatedEntity;
+            if (smEntity != INVALID_ENTITY)
+            {
+                auto* smComp = reg.get<AnimStateMachineComponent>(smEntity);
+                if (smComp)
+                    smComp->setFloat("speed", smSpeedParam);
+            }
+            stateMachineSys.update(reg, dt, animRes);
+        }
+
+        // Age and prune recent events.
+        for (auto& ev : recentEvents)
+            ev.age += dt;
+        recentEvents.erase(std::remove_if(recentEvents.begin(), recentEvents.end(),
+                                          [](const FiredEvent& e) { return e.age > 3.0f; }),
+                           recentEvents.end());
+
+        // Clear per-entity event queues from last frame.
+        reg.view<AnimationEventQueue>().each([](EntityID, AnimationEventQueue& q) { q.clear(); });
 
         // -- Animation + IK system update -------------------------------------
         auto* arena = eng.frameArena().resource();
@@ -698,20 +798,41 @@ int main()
                                 ikBlendWeight);
             bgfx::dbgTextPrintf(1, row++, 0x07, "Clips available: %u", totalClipCount);
 
-            // TODO: Animation events display. Pending AnimationEvent system from
-            // another agent. When AnimationEvent is available, add events to clips
-            // programmatically (e.g. "footstep" events) and display fired events
-            // here.
+            // Animation events display.
+            if (!recentEvents.empty())
+            {
+                bgfx::dbgTextPrintf(1, row++, 0x0d, "Events (last 3s):");
+                int shown = 0;
+                for (int ei = static_cast<int>(recentEvents.size()) - 1; ei >= 0 && shown < 5;
+                     --ei, ++shown)
+                {
+                    bgfx::dbgTextPrintf(3, row++, 0x05, "  [%.1fs ago] %s", recentEvents[ei].age,
+                                        recentEvents[ei].name.c_str());
+                }
+            }
 
-            // TODO: State machine display. Pending AnimStateMachine system from
-            // another agent. When available, set up Idle -> Walk -> Run transitions
-            // based on a "speed" parameter and display current state here.
+            // State machine display.
+            if (stateMachineSetup)
+            {
+                EntityID smEntity = instances[2].animatedEntity;
+                auto* smComp = reg.get<AnimStateMachineComponent>(smEntity);
+                if (smComp && smComp->machine)
+                {
+                    const auto& state = smComp->machine->states[smComp->currentState];
+                    bgfx::dbgTextPrintf(1, row++, 0x0b,
+                                        "State Machine (#3): %s  |  param speed=%.2f",
+                                        state.name.c_str(), smSpeedParam);
+                    bgfx::dbgTextPrintf(1, row++, 0x06,
+                                        "  Left/Right arrows to change speed param");
+                }
+            }
 
             row++;
             bgfx::dbgTextPrintf(1, row++, 0x06, "--- Controls ---");
             bgfx::dbgTextPrintf(1, row++, 0x06, "Space=play/pause  Up/Down=speed  B=blend");
             bgfx::dbgTextPrintf(1, row++, 0x06, "1-9=clip  I=toggle IK  R=reset  H=hide HUD");
-            bgfx::dbgTextPrintf(1, row++, 0x06, "RMB=orbit  Scroll=zoom  WASD=move");
+            bgfx::dbgTextPrintf(1, row++, 0x06,
+                                "Left/Right=state machine speed  RMB=orbit  WASD=move");
         }
 
         // -- ImGui panel (anchored to right side) --------------------------------
@@ -883,6 +1004,38 @@ int main()
                             "  #%d: speed=%.2f  time=%.2f  %s", i + 1, ac->speed, ac->playbackTime,
                             (ac->flags & AnimatorComponent::kFlagPlaying) ? "PLAY" : "STOP");
                     }
+                }
+            }
+
+            // State machine controls
+            if (stateMachineSetup)
+            {
+                ImGui::Separator();
+                ImGui::Text("State Machine (Instance #3)");
+                EntityID smEntity = instances[2].animatedEntity;
+                auto* smComp = reg.get<AnimStateMachineComponent>(smEntity);
+                if (smComp && smComp->machine)
+                {
+                    const auto& state = smComp->machine->states[smComp->currentState];
+                    ImGui::Text("Current State: %s", state.name.c_str());
+                }
+                if (ImGui::SliderFloat("SM Speed", &smSpeedParam, 0.0f, 3.0f, "%.2f"))
+                {
+                    // Parameter updated in the per-frame section above.
+                }
+            }
+
+            // Recent events
+            if (!recentEvents.empty())
+            {
+                ImGui::Separator();
+                ImGui::Text("Recent Events:");
+                int shown = 0;
+                for (int ei = static_cast<int>(recentEvents.size()) - 1; ei >= 0 && shown < 5;
+                     --ei, ++shown)
+                {
+                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "  [%.1fs] %s",
+                                       recentEvents[ei].age, recentEvents[ei].name.c_str());
                 }
             }
 

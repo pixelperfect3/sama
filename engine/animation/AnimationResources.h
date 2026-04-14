@@ -47,6 +47,13 @@ public:
         return nullptr;
     }
 
+    [[nodiscard]] AnimationClip* getClipMut(uint32_t id)
+    {
+        if (id < clips_.size())
+            return &clips_[id];
+        return nullptr;
+    }
+
     [[nodiscard]] uint32_t skeletonCount() const noexcept
     {
         return static_cast<uint32_t>(skeletons_.size());
