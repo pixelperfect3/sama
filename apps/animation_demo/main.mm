@@ -248,8 +248,8 @@ int main()
 
     // -- Camera and interaction state -----------------------------------------
     engine::core::OrbitCamera cam;
-    cam.distance = 8.0f;
-    cam.pitch = 15.0f;
+    cam.distance = 5.0f;
+    cam.pitch = 20.0f;
     cam.target = {0, 0.5f, 0};
     bool rightDragging = false;
     double prevMouseX = 0.0, prevMouseY = 0.0;
@@ -468,7 +468,7 @@ int main()
                         tc->position.x += instances[i].rootOffset.x;
                         tc->position.y += instances[i].rootOffset.y;
                         tc->position.z += instances[i].rootOffset.z;
-                        tc->rotation = glm::angleAxis(glm::radians(0.0f), glm::vec3(1, 0, 0));
+                        tc->scale = glm::vec3(0.02f);
                         tc->flags |= 1;
                     }
 
