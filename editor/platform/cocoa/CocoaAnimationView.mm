@@ -35,6 +35,649 @@
 @end
 
 // ---------------------------------------------------------------------------
+// StateMachineGraphView -- custom NSView that renders the state machine as a
+// visual node graph with draggable state nodes and bezier-curve transitions.
+// ---------------------------------------------------------------------------
+
+@interface StateMachineGraphView : NSView
+{
+    NSMutableArray<NSValue*>* nodePositions_;  // NSPoint values
+    NSMutableArray<NSString*>* nodeNames_;
+    NSMutableArray<NSString*>* nodeClipNames_;
+    int currentStateIndex_;
+    int selectedStateIndex_;
+    int selectedTransitionIndex_;
+    int stateCount_;
+
+    // Transition data: arrays of (fromState, toState, conditionLabel)
+    NSMutableArray<NSNumber*>* transFromState_;
+    NSMutableArray<NSNumber*>* transToState_;
+    NSMutableArray<NSString*>* transCondLabel_;
+    // Map: each entry is (sourceStateIndex * 1000 + transitionIndex) for
+    // reverse-lookup when clicking arrows.
+    NSMutableArray<NSNumber*>* transStateTransIdx_;
+
+    CGFloat zoomLevel_;
+    NSPoint panOffset_;
+    BOOL isDraggingNode_;
+    int dragNodeIndex_;
+    NSPoint dragStartMouse_;
+    NSPoint dragStartNodePos_;
+    BOOL isPanning_;
+    NSPoint panStartMouse_;
+    NSPoint panStartOffset_;
+    BOOL positionsInitialized_;
+}
+
+@property(nonatomic, copy) void (^onStateSelected)(int stateIndex);
+@property(nonatomic, copy) void (^onTransitionSelected)(int stateIndex, int transIndex);
+@property(nonatomic, copy) void (^onStateForceSet)(int stateIndex);
+@property(nonatomic, copy) void (^onStateAdded)(void);
+@property(nonatomic, copy) void (^onStateRemoved)(int stateIndex);
+
+- (void)setStateCount:(int)count
+                 names:(NSArray<NSString*>*)names
+             clipNames:(NSArray<NSString*>*)clipNames
+          currentState:(int)current
+         selectedState:(int)selected
+    selectedTransition:(int)selTrans;
+- (void)setTransitions:(NSArray<NSNumber*>*)from
+                    to:(NSArray<NSNumber*>*)to
+                labels:(NSArray<NSString*>*)labels
+       stateTransIdxes:(NSArray<NSNumber*>*)stateTransIdxes;
+@end
+
+static const CGFloat kNodeWidth = 120.0;
+static const CGFloat kNodeHeight = 50.0;
+static const CGFloat kNodeSpacingX = 160.0;
+static const CGFloat kNodeSpacingY = 80.0;
+static const CGFloat kNodeCornerRadius = 8.0;
+static const CGFloat kArrowHeadSize = 8.0;
+static const CGFloat kMinZoom = 0.5;
+static const CGFloat kMaxZoom = 2.0;
+
+@implementation StateMachineGraphView
+
+- (instancetype)initWithFrame:(NSRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self)
+    {
+        nodePositions_ = [NSMutableArray array];
+        nodeNames_ = [NSMutableArray array];
+        nodeClipNames_ = [NSMutableArray array];
+        transFromState_ = [NSMutableArray array];
+        transToState_ = [NSMutableArray array];
+        transCondLabel_ = [NSMutableArray array];
+        transStateTransIdx_ = [NSMutableArray array];
+        currentStateIndex_ = -1;
+        selectedStateIndex_ = -1;
+        selectedTransitionIndex_ = -1;
+        stateCount_ = 0;
+        zoomLevel_ = 1.0;
+        panOffset_ = NSMakePoint(10.0, 10.0);
+        isDraggingNode_ = NO;
+        dragNodeIndex_ = -1;
+        isPanning_ = NO;
+        positionsInitialized_ = NO;
+    }
+    return self;
+}
+
+- (BOOL)isFlipped
+{
+    return YES;
+}
+
+- (BOOL)acceptsFirstResponder
+{
+    return YES;
+}
+
+- (void)setStateCount:(int)count
+                 names:(NSArray<NSString*>*)names
+             clipNames:(NSArray<NSString*>*)clipNames
+          currentState:(int)current
+         selectedState:(int)selected
+    selectedTransition:(int)selTrans
+{
+    BOOL countChanged = (count != stateCount_);
+    stateCount_ = count;
+    currentStateIndex_ = current;
+    selectedStateIndex_ = selected;
+    selectedTransitionIndex_ = selTrans;
+
+    [nodeNames_ removeAllObjects];
+    [nodeNames_ addObjectsFromArray:names];
+    [nodeClipNames_ removeAllObjects];
+    [nodeClipNames_ addObjectsFromArray:clipNames];
+
+    // Auto-layout: arrange in a grid when positions need initialization.
+    if (countChanged || !positionsInitialized_ || (int)nodePositions_.count != count)
+    {
+        [nodePositions_ removeAllObjects];
+        int cols = MAX(1, (int)ceil(sqrt((double)count)));
+        for (int i = 0; i < count; ++i)
+        {
+            int col = i % cols;
+            int row = i / cols;
+            CGFloat x = 20.0 + col * kNodeSpacingX;
+            CGFloat y = 20.0 + row * kNodeSpacingY;
+            [nodePositions_ addObject:[NSValue valueWithPoint:NSMakePoint(x, y)]];
+        }
+        positionsInitialized_ = (count > 0);
+    }
+
+    [self setNeedsDisplay:YES];
+}
+
+- (void)setTransitions:(NSArray<NSNumber*>*)from
+                    to:(NSArray<NSNumber*>*)to
+                labels:(NSArray<NSString*>*)labels
+       stateTransIdxes:(NSArray<NSNumber*>*)stateTransIdxes
+{
+    [transFromState_ removeAllObjects];
+    [transFromState_ addObjectsFromArray:from];
+    [transToState_ removeAllObjects];
+    [transToState_ addObjectsFromArray:to];
+    [transCondLabel_ removeAllObjects];
+    [transCondLabel_ addObjectsFromArray:labels];
+    [transStateTransIdx_ removeAllObjects];
+    [transStateTransIdx_ addObjectsFromArray:stateTransIdxes];
+    [self setNeedsDisplay:YES];
+}
+
+- (NSPoint)nodeCenterForIndex:(int)idx
+{
+    if (idx < 0 || idx >= (int)nodePositions_.count)
+        return NSZeroPoint;
+    NSPoint p = nodePositions_[idx].pointValue;
+    return NSMakePoint(p.x + kNodeWidth / 2.0, p.y + kNodeHeight / 2.0);
+}
+
+- (NSRect)nodeRectForIndex:(int)idx
+{
+    if (idx < 0 || idx >= (int)nodePositions_.count)
+        return NSZeroRect;
+    NSPoint p = nodePositions_[idx].pointValue;
+    return NSMakeRect(p.x, p.y, kNodeWidth, kNodeHeight);
+}
+
+// Convert a point in view coords to canvas coords (accounting for pan/zoom).
+- (NSPoint)viewToCanvas:(NSPoint)viewPt
+{
+    return NSMakePoint((viewPt.x - panOffset_.x) / zoomLevel_,
+                       (viewPt.y - panOffset_.y) / zoomLevel_);
+}
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+    [super drawRect:dirtyRect];
+
+    NSRect bounds = self.bounds;
+
+    // Background.
+    [[NSColor windowBackgroundColor] setFill];
+    NSRectFill(bounds);
+
+    // Draw a subtle border.
+    [[NSColor separatorColor] setStroke];
+    NSBezierPath* borderPath = [NSBezierPath bezierPathWithRect:bounds];
+    borderPath.lineWidth = 1.0;
+    [borderPath stroke];
+
+    CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
+    CGContextSaveGState(ctx);
+
+    // Apply pan and zoom.
+    CGContextTranslateCTM(ctx, panOffset_.x, panOffset_.y);
+    CGContextScaleCTM(ctx, zoomLevel_, zoomLevel_);
+
+    // Draw transitions (behind nodes).
+    for (NSUInteger ti = 0; ti < transFromState_.count; ++ti)
+    {
+        int fromIdx = transFromState_[ti].intValue;
+        int toIdx = transToState_[ti].intValue;
+        if (fromIdx < 0 || fromIdx >= stateCount_ || toIdx < 0 || toIdx >= stateCount_)
+            continue;
+
+        NSPoint fromCenter = [self nodeCenterForIndex:fromIdx];
+        NSPoint toCenter = [self nodeCenterForIndex:toIdx];
+
+        // Determine if this transition is selected.
+        int combined = transStateTransIdx_[ti].intValue;
+        int tStateIdx = combined / 1000;
+        int tTransIdx = combined % 1000;
+        BOOL isSelected =
+            (tStateIdx == selectedStateIndex_ && tTransIdx == selectedTransitionIndex_);
+
+        // Compute start/end on node edges.
+        NSPoint startPt, endPt;
+        if (fromIdx == toIdx)
+        {
+            // Self-transition: draw a loop above the node.
+            NSRect nodeRect = [self nodeRectForIndex:fromIdx];
+            startPt = NSMakePoint(nodeRect.origin.x + kNodeWidth * 0.3, nodeRect.origin.y);
+            endPt = NSMakePoint(nodeRect.origin.x + kNodeWidth * 0.7, nodeRect.origin.y);
+
+            NSBezierPath* loopPath = [NSBezierPath bezierPath];
+            [loopPath moveToPoint:startPt];
+            NSPoint cp1 = NSMakePoint(startPt.x - 20.0, startPt.y - 40.0);
+            NSPoint cp2 = NSMakePoint(endPt.x + 20.0, endPt.y - 40.0);
+            [loopPath curveToPoint:endPt controlPoint1:cp1 controlPoint2:cp2];
+
+            if (isSelected)
+                [[NSColor systemBlueColor] setStroke];
+            else
+                [[NSColor systemGrayColor] setStroke];
+            loopPath.lineWidth = 1.5 / zoomLevel_;
+            [loopPath stroke];
+
+            // Arrowhead at end.
+            [self drawArrowHeadAt:endPt
+                        direction:NSMakePoint(endPt.x - cp2.x, endPt.y - cp2.y)
+                       isSelected:isSelected];
+
+            // Label at top of loop.
+            if (ti < transCondLabel_.count && transCondLabel_[ti].length > 0)
+            {
+                NSPoint labelPt = NSMakePoint((startPt.x + endPt.x) / 2.0, startPt.y - 45.0);
+                [self drawLabel:transCondLabel_[ti] atPoint:labelPt isSelected:isSelected];
+            }
+            continue;
+        }
+
+        // Offset for multiple arrows between same pair: nudge perpendicular.
+        CGFloat dx = toCenter.x - fromCenter.x;
+        CGFloat dy = toCenter.y - fromCenter.y;
+        CGFloat dist = sqrt(dx * dx + dy * dy);
+        if (dist < 1.0)
+            dist = 1.0;
+        CGFloat nx = dx / dist;
+        CGFloat ny = dy / dist;
+
+        // Start from edge of source node, end at edge of target node.
+        startPt = NSMakePoint(fromCenter.x + nx * kNodeWidth / 2.0,
+                              fromCenter.y + ny * kNodeHeight / 2.0);
+        endPt =
+            NSMakePoint(toCenter.x - nx * kNodeWidth / 2.0, toCenter.y - ny * kNodeHeight / 2.0);
+
+        // Control points for gentle bezier curve: offset perpendicular.
+        CGFloat perpX = -ny * 20.0;
+        CGFloat perpY = nx * 20.0;
+        NSPoint cp1 =
+            NSMakePoint((startPt.x + endPt.x) / 2.0 + perpX, (startPt.y + endPt.y) / 2.0 + perpY);
+
+        NSBezierPath* arrowPath = [NSBezierPath bezierPath];
+        [arrowPath moveToPoint:startPt];
+        [arrowPath curveToPoint:endPt controlPoint1:cp1 controlPoint2:cp1];
+
+        if (isSelected)
+            [[NSColor systemBlueColor] setStroke];
+        else
+            [[NSColor systemGrayColor] setStroke];
+        arrowPath.lineWidth = 1.5 / zoomLevel_;
+        [arrowPath stroke];
+
+        // Arrowhead at end.
+        CGFloat adx = endPt.x - cp1.x;
+        CGFloat ady = endPt.y - cp1.y;
+        [self drawArrowHeadAt:endPt direction:NSMakePoint(adx, ady) isSelected:isSelected];
+
+        // Label at midpoint.
+        if (ti < transCondLabel_.count && transCondLabel_[ti].length > 0)
+        {
+            // Bezier midpoint approximation (t=0.5 with quadratic).
+            NSPoint mid = NSMakePoint(0.25 * startPt.x + 0.5 * cp1.x + 0.25 * endPt.x,
+                                      0.25 * startPt.y + 0.5 * cp1.y + 0.25 * endPt.y);
+            [self drawLabel:transCondLabel_[ti] atPoint:mid isSelected:isSelected];
+        }
+    }
+
+    // Draw state nodes.
+    for (int i = 0; i < stateCount_; ++i)
+    {
+        NSRect nodeRect = [self nodeRectForIndex:i];
+
+        // Fill.
+        NSColor* fillColor = [NSColor controlBackgroundColor];
+        [fillColor setFill];
+        NSBezierPath* nodePath = [NSBezierPath bezierPathWithRoundedRect:nodeRect
+                                                                 xRadius:kNodeCornerRadius
+                                                                 yRadius:kNodeCornerRadius];
+        [nodePath fill];
+
+        // Border.
+        NSColor* borderColor;
+        CGFloat borderWidth = 1.5 / zoomLevel_;
+        if (i == currentStateIndex_ && i == selectedStateIndex_)
+        {
+            // Both active and selected: use green with blue inner glow.
+            borderColor = [NSColor systemGreenColor];
+            borderWidth = 2.5 / zoomLevel_;
+        }
+        else if (i == currentStateIndex_)
+        {
+            borderColor = [NSColor systemGreenColor];
+            borderWidth = 2.0 / zoomLevel_;
+        }
+        else if (i == selectedStateIndex_)
+        {
+            borderColor = [NSColor systemBlueColor];
+            borderWidth = 2.0 / zoomLevel_;
+        }
+        else
+        {
+            borderColor = [NSColor separatorColor];
+        }
+
+        [borderColor setStroke];
+        nodePath.lineWidth = borderWidth;
+        [nodePath stroke];
+
+        // State name (bold, centered).
+        NSString* name = (i < (int)nodeNames_.count) ? nodeNames_[i] : @"?";
+        NSString* clipName = (i < (int)nodeClipNames_.count) ? nodeClipNames_[i] : @"";
+
+        NSDictionary* nameAttrs = @{
+            NSFontAttributeName : [NSFont boldSystemFontOfSize:10.0],
+            NSForegroundColorAttributeName : [NSColor labelColor]
+        };
+        NSSize nameSize = [name sizeWithAttributes:nameAttrs];
+        NSPoint namePos = NSMakePoint(nodeRect.origin.x + (kNodeWidth - nameSize.width) / 2.0,
+                                      nodeRect.origin.y + 8.0);
+        [name drawAtPoint:namePos withAttributes:nameAttrs];
+
+        // Clip name (smaller, below state name).
+        if (clipName.length > 0)
+        {
+            NSDictionary* clipAttrs = @{
+                NSFontAttributeName : [NSFont systemFontOfSize:9.0],
+                NSForegroundColorAttributeName : [NSColor secondaryLabelColor]
+            };
+            NSSize clipSize = [clipName sizeWithAttributes:clipAttrs];
+            NSPoint clipPos = NSMakePoint(nodeRect.origin.x + (kNodeWidth - clipSize.width) / 2.0,
+                                          nodeRect.origin.y + 26.0);
+            [clipName drawAtPoint:clipPos withAttributes:clipAttrs];
+        }
+    }
+
+    CGContextRestoreGState(ctx);
+
+    // Draw "State Graph" label in top-left corner (not affected by zoom/pan).
+    NSDictionary* headerAttrs = @{
+        NSFontAttributeName : [NSFont boldSystemFontOfSize:9.0],
+        NSForegroundColorAttributeName : [NSColor tertiaryLabelColor]
+    };
+    [@"State Graph" drawAtPoint:NSMakePoint(4.0, 4.0) withAttributes:headerAttrs];
+}
+
+- (void)drawArrowHeadAt:(NSPoint)tip direction:(NSPoint)dir isSelected:(BOOL)selected
+{
+    CGFloat len = sqrt(dir.x * dir.x + dir.y * dir.y);
+    if (len < 0.001)
+        return;
+    CGFloat nx = dir.x / len;
+    CGFloat ny = dir.y / len;
+
+    CGFloat sz = kArrowHeadSize / zoomLevel_;
+    NSPoint base1 = NSMakePoint(tip.x - nx * sz + ny * sz * 0.4, tip.y - ny * sz - nx * sz * 0.4);
+    NSPoint base2 = NSMakePoint(tip.x - nx * sz - ny * sz * 0.4, tip.y - ny * sz + nx * sz * 0.4);
+
+    NSBezierPath* head = [NSBezierPath bezierPath];
+    [head moveToPoint:tip];
+    [head lineToPoint:base1];
+    [head lineToPoint:base2];
+    [head closePath];
+
+    if (selected)
+        [[NSColor systemBlueColor] setFill];
+    else
+        [[NSColor systemGrayColor] setFill];
+    [head fill];
+}
+
+- (void)drawLabel:(NSString*)label atPoint:(NSPoint)pt isSelected:(BOOL)selected
+{
+    NSDictionary* attrs = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:8.0],
+        NSForegroundColorAttributeName : selected ? [NSColor systemBlueColor]
+                                                  : [NSColor secondaryLabelColor]
+    };
+
+    NSSize labelSize = [label sizeWithAttributes:attrs];
+
+    // Draw a small background pill behind the text for readability.
+    NSRect bgRect =
+        NSMakeRect(pt.x - labelSize.width / 2.0 - 3.0, pt.y - labelSize.height / 2.0 - 1.0,
+                   labelSize.width + 6.0, labelSize.height + 2.0);
+    [[NSColor windowBackgroundColor] setFill];
+    NSBezierPath* bg = [NSBezierPath bezierPathWithRoundedRect:bgRect xRadius:3.0 yRadius:3.0];
+    [bg fill];
+
+    NSPoint drawPt = NSMakePoint(pt.x - labelSize.width / 2.0, pt.y - labelSize.height / 2.0);
+    [label drawAtPoint:drawPt withAttributes:attrs];
+}
+
+// --- Hit testing ---
+
+- (int)hitTestNodeAtPoint:(NSPoint)canvasPt
+{
+    for (int i = stateCount_ - 1; i >= 0; --i)
+    {
+        NSRect r = [self nodeRectForIndex:i];
+        if (NSPointInRect(canvasPt, r))
+            return i;
+    }
+    return -1;
+}
+
+- (int)hitTestTransitionAtPoint:(NSPoint)canvasPt
+{
+    CGFloat threshold = 8.0 / zoomLevel_;
+    for (NSUInteger ti = 0; ti < transFromState_.count; ++ti)
+    {
+        int fromIdx = transFromState_[ti].intValue;
+        int toIdx = transToState_[ti].intValue;
+        if (fromIdx < 0 || fromIdx >= stateCount_ || toIdx < 0 || toIdx >= stateCount_)
+            continue;
+        if (fromIdx == toIdx)
+            continue;  // Skip self-loops for simplicity.
+
+        NSPoint fromCenter = [self nodeCenterForIndex:fromIdx];
+        NSPoint toCenter = [self nodeCenterForIndex:toIdx];
+
+        CGFloat dx = toCenter.x - fromCenter.x;
+        CGFloat dy = toCenter.y - fromCenter.y;
+        CGFloat dist = sqrt(dx * dx + dy * dy);
+        if (dist < 1.0)
+            continue;
+        CGFloat nx = dx / dist;
+        CGFloat ny = dy / dist;
+
+        NSPoint startPt = NSMakePoint(fromCenter.x + nx * kNodeWidth / 2.0,
+                                      fromCenter.y + ny * kNodeHeight / 2.0);
+        NSPoint endPt =
+            NSMakePoint(toCenter.x - nx * kNodeWidth / 2.0, toCenter.y - ny * kNodeHeight / 2.0);
+
+        CGFloat perpX = -ny * 20.0;
+        CGFloat perpY = nx * 20.0;
+        NSPoint cp =
+            NSMakePoint((startPt.x + endPt.x) / 2.0 + perpX, (startPt.y + endPt.y) / 2.0 + perpY);
+
+        // Sample the quadratic bezier and check distance.
+        for (int s = 0; s <= 20; ++s)
+        {
+            CGFloat t = (CGFloat)s / 20.0;
+            CGFloat invT = 1.0 - t;
+            CGFloat bx = invT * invT * startPt.x + 2.0 * invT * t * cp.x + t * t * endPt.x;
+            CGFloat by = invT * invT * startPt.y + 2.0 * invT * t * cp.y + t * t * endPt.y;
+            CGFloat ddx = canvasPt.x - bx;
+            CGFloat ddy = canvasPt.y - by;
+            if (ddx * ddx + ddy * ddy < threshold * threshold)
+                return (int)ti;
+        }
+    }
+    return -1;
+}
+
+// --- Mouse events ---
+
+- (void)mouseDown:(NSEvent*)event
+{
+    NSPoint viewPt = [self convertPoint:event.locationInWindow fromView:nil];
+    NSPoint canvasPt = [self viewToCanvas:viewPt];
+
+    // Check for option-drag (pan).
+    if (event.modifierFlags & NSEventModifierFlagOption)
+    {
+        isPanning_ = YES;
+        panStartMouse_ = viewPt;
+        panStartOffset_ = panOffset_;
+        return;
+    }
+
+    // Hit test nodes first.
+    int hitNode = [self hitTestNodeAtPoint:canvasPt];
+    if (hitNode >= 0)
+    {
+        // Double-click: force-set state.
+        if (event.clickCount >= 2)
+        {
+            if (_onStateForceSet)
+                _onStateForceSet(hitNode);
+            return;
+        }
+
+        // Single click: select + start drag.
+        if (_onStateSelected)
+            _onStateSelected(hitNode);
+
+        isDraggingNode_ = YES;
+        dragNodeIndex_ = hitNode;
+        dragStartMouse_ = canvasPt;
+        dragStartNodePos_ = nodePositions_[hitNode].pointValue;
+        return;
+    }
+
+    // Hit test transitions.
+    int hitTrans = [self hitTestTransitionAtPoint:canvasPt];
+    if (hitTrans >= 0)
+    {
+        int combined = transStateTransIdx_[hitTrans].intValue;
+        int sIdx = combined / 1000;
+        int tIdx = combined % 1000;
+        if (_onTransitionSelected)
+            _onTransitionSelected(sIdx, tIdx);
+        return;
+    }
+
+    // Clicked empty area: deselect.
+    if (_onStateSelected)
+        _onStateSelected(-1);
+}
+
+- (void)mouseDragged:(NSEvent*)event
+{
+    NSPoint viewPt = [self convertPoint:event.locationInWindow fromView:nil];
+
+    if (isPanning_)
+    {
+        panOffset_ = NSMakePoint(panStartOffset_.x + (viewPt.x - panStartMouse_.x),
+                                 panStartOffset_.y + (viewPt.y - panStartMouse_.y));
+        [self setNeedsDisplay:YES];
+        return;
+    }
+
+    if (isDraggingNode_ && dragNodeIndex_ >= 0 && dragNodeIndex_ < (int)nodePositions_.count)
+    {
+        NSPoint canvasPt = [self viewToCanvas:viewPt];
+        CGFloat dx = canvasPt.x - dragStartMouse_.x;
+        CGFloat dy = canvasPt.y - dragStartMouse_.y;
+        NSPoint newPos = NSMakePoint(dragStartNodePos_.x + dx, dragStartNodePos_.y + dy);
+        nodePositions_[dragNodeIndex_] = [NSValue valueWithPoint:newPos];
+        [self setNeedsDisplay:YES];
+    }
+}
+
+- (void)mouseUp:(NSEvent*)event
+{
+    (void)event;
+    isDraggingNode_ = NO;
+    dragNodeIndex_ = -1;
+    isPanning_ = NO;
+}
+
+- (void)scrollWheel:(NSEvent*)event
+{
+    CGFloat delta = event.deltaY;
+    if (fabs(delta) < 0.01)
+        return;
+
+    NSPoint viewPt = [self convertPoint:event.locationInWindow fromView:nil];
+
+    // Zoom toward mouse position.
+    CGFloat oldZoom = zoomLevel_;
+    CGFloat newZoom = oldZoom * (1.0 + delta * 0.05);
+    newZoom = MAX(kMinZoom, MIN(kMaxZoom, newZoom));
+
+    // Adjust pan so the point under the cursor stays fixed.
+    panOffset_ = NSMakePoint(viewPt.x - (viewPt.x - panOffset_.x) * newZoom / oldZoom,
+                             viewPt.y - (viewPt.y - panOffset_.y) * newZoom / oldZoom);
+
+    zoomLevel_ = newZoom;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)rightMouseDown:(NSEvent*)event
+{
+    NSPoint viewPt = [self convertPoint:event.locationInWindow fromView:nil];
+    NSPoint canvasPt = [self viewToCanvas:viewPt];
+
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+
+    int hitNode = [self hitTestNodeAtPoint:canvasPt];
+    if (hitNode >= 0)
+    {
+        NSString* title = [NSString
+            stringWithFormat:@"Delete \"%@\"",
+                             (hitNode < (int)nodeNames_.count) ? nodeNames_[hitNode] : @"?"];
+        NSMenuItem* deleteItem = [[NSMenuItem alloc] initWithTitle:title
+                                                            action:@selector(contextDeleteState:)
+                                                     keyEquivalent:@""];
+        deleteItem.target = self;
+        deleteItem.tag = hitNode;
+        [menu addItem:deleteItem];
+    }
+    else
+    {
+        NSMenuItem* addItem = [[NSMenuItem alloc] initWithTitle:@"Add State"
+                                                         action:@selector(contextAddState:)
+                                                  keyEquivalent:@""];
+        addItem.target = self;
+        [menu addItem:addItem];
+    }
+
+    [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+}
+
+- (void)contextDeleteState:(NSMenuItem*)sender
+{
+    int idx = (int)sender.tag;
+    if (_onStateRemoved)
+        _onStateRemoved(idx);
+}
+
+- (void)contextAddState:(NSMenuItem*)sender
+{
+    (void)sender;
+    if (_onStateAdded)
+        _onStateAdded();
+}
+
+@end
+
+// ---------------------------------------------------------------------------
 // AnimationViewDelegate -- target for the clip dropdown, transport buttons,
 // scrubber, speed slider and loop checkbox. Holds owning blocks that wrap
 // the C++ callbacks. suppressCallbacks is set during state pushes so we
@@ -557,6 +1200,9 @@ struct CocoaAnimationView::Impl
     // Add parameter button.
     NSButton* addParamButton = nil;
 
+    // State machine graph view.
+    StateMachineGraphView* smGraphView = nil;
+
     // Cached state data for the editing widgets.
     int lastStateInfoCount = -1;
 
@@ -1033,8 +1679,46 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         impl_->addParamButton.controlSize = NSControlSizeSmall;
         impl_->addParamButton.font = [NSFont systemFontOfSize:11.0];
 
+        // State machine graph view (node graph visualization).
+        impl_->smGraphView =
+            [[StateMachineGraphView alloc] initWithFrame:NSMakeRect(0, 0, 400, 200)];
+        impl_->smGraphView.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->smGraphView
+            addConstraint:[NSLayoutConstraint constraintWithItem:impl_->smGraphView
+                                                       attribute:NSLayoutAttributeHeight
+                                                       relatedBy:NSLayoutRelationEqual
+                                                          toItem:nil
+                                                       attribute:NSLayoutAttributeNotAnAttribute
+                                                      multiplier:1.0
+                                                        constant:200.0]];
+
+        // Wire graph view callbacks to the same delegate callbacks.
+        {
+            auto* implPtr = impl_.get();
+            impl_->smGraphView.onStateSelected = ^(int stateIndex) {
+              if (implPtr->stateSelectedCb)
+                  implPtr->stateSelectedCb(stateIndex);
+            };
+            impl_->smGraphView.onTransitionSelected = ^(int stateIndex, int transIndex) {
+              if (implPtr->transitionSelectedCb)
+                  implPtr->transitionSelectedCb(stateIndex, transIndex);
+            };
+            impl_->smGraphView.onStateForceSet = ^(int stateIndex) {
+              if (implPtr->stateForceSetCb)
+                  implPtr->stateForceSetCb(stateIndex);
+            };
+            impl_->smGraphView.onStateAdded = ^{
+              if (implPtr->stateAddedCb)
+                  implPtr->stateAddedCb();
+            };
+            impl_->smGraphView.onStateRemoved = ^(int stateIndex) {
+              if (implPtr->stateRemovedCb)
+                  implPtr->stateRemovedCb(stateIndex);
+            };
+        }
+
         impl_->smSectionStack = [NSStackView stackViewWithViews:@[
-            smCaption, smStateLabelRow, impl_->smStateDropdown, stateHeaderRow,
+            smCaption, impl_->smGraphView, smStateLabelRow, impl_->smStateDropdown, stateHeaderRow,
             impl_->smStateListStack, impl_->smStatePropsStack, transHeaderRow,
             impl_->smTransitionListStack, impl_->smTransPropsStack, impl_->addParamButton,
             impl_->smParamStack
@@ -1094,6 +1778,10 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
                 constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
             [impl_->smConditionListStack.trailingAnchor
                 constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
+            [impl_->smGraphView.leadingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
+            [impl_->smGraphView.trailingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
         ]];
     }
 }
@@ -1143,6 +1831,7 @@ CocoaAnimationView::~CocoaAnimationView()
         impl_->addConditionButton = nil;
         impl_->removeConditionButton = nil;
         impl_->addParamButton = nil;
+        impl_->smGraphView = nil;
         impl_->delegate = nil;
     }
 }
@@ -1470,6 +2159,69 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                 {
                     [impl_->smStateDropdown selectItemAtIndex:s.currentStateIndex];
                 }
+            }
+
+            // Update graph view with current state data.
+            {
+                NSMutableArray<NSString*>* gNames = [NSMutableArray array];
+                NSMutableArray<NSString*>* gClips = [NSMutableArray array];
+                for (const auto& si : s.stateInfos)
+                {
+                    [gNames addObject:[NSString stringWithUTF8String:si.name.c_str()]];
+                    [gClips addObject:[NSString stringWithUTF8String:si.clipName.c_str()]];
+                }
+                [impl_->smGraphView setStateCount:(int)s.stateInfos.size()
+                                            names:gNames
+                                        clipNames:gClips
+                                     currentState:s.currentStateIndex
+                                    selectedState:s.selectedStateIndex
+                               selectedTransition:s.selectedTransitionIndex];
+
+                // Build flat transition arrays for the graph view.
+                NSMutableArray<NSNumber*>* tFrom = [NSMutableArray array];
+                NSMutableArray<NSNumber*>* tTo = [NSMutableArray array];
+                NSMutableArray<NSString*>* tLabels = [NSMutableArray array];
+                NSMutableArray<NSNumber*>* tCombined = [NSMutableArray array];
+
+                for (size_t si = 0; si < s.stateInfos.size(); ++si)
+                {
+                    const auto& state = s.stateInfos[si];
+                    for (size_t ti = 0; ti < state.transitions.size(); ++ti)
+                    {
+                        const auto& tr = state.transitions[ti];
+                        [tFrom addObject:@((int)si)];
+                        [tTo addObject:@(tr.targetState)];
+
+                        // Build condition summary label.
+                        NSMutableString* condStr = [NSMutableString string];
+                        static const char* compareNames[] = {">", "<", "==", "!=", "true", "false"};
+                        for (size_t ci = 0; ci < tr.conditions.size(); ++ci)
+                        {
+                            const auto& cond = tr.conditions[ci];
+                            int cmpIdx = cond.compare;
+                            if (cmpIdx < 0 || cmpIdx > 5)
+                                cmpIdx = 0;
+                            if (ci > 0)
+                                [condStr appendString:@", "];
+                            if (cmpIdx >= 4)
+                            {
+                                [condStr appendFormat:@"%s %s", cond.paramName.c_str(),
+                                                      compareNames[cmpIdx]];
+                            }
+                            else
+                            {
+                                [condStr appendFormat:@"%s %s %.1f", cond.paramName.c_str(),
+                                                      compareNames[cmpIdx], cond.threshold];
+                            }
+                        }
+                        [tLabels addObject:condStr];
+                        [tCombined addObject:@((int)si * 1000 + (int)ti)];
+                    }
+                }
+                [impl_->smGraphView setTransitions:tFrom
+                                                to:tTo
+                                            labels:tLabels
+                                   stateTransIdxes:tCombined];
             }
 
             // Parameter rows.
