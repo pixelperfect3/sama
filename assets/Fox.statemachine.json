@@ -1,0 +1,65 @@
+{
+    "defaultState": 0,
+    "states": [
+        {
+            "name": "Survey",
+            "clip": "Survey",
+            "speed": 1.0,
+            "loop": true,
+            "transitions": [
+                {
+                    "target": 1,
+                    "blendDuration": 0.4,
+                    "exitTime": 0.0,
+                    "hasExitTime": false,
+                    "conditions": [
+                        { "param": "speed", "compare": "greater", "threshold": 0.5 }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Walk",
+            "clip": "Walk",
+            "speed": 1.0,
+            "loop": true,
+            "transitions": [
+                {
+                    "target": 0,
+                    "blendDuration": 0.4,
+                    "exitTime": 0.0,
+                    "hasExitTime": false,
+                    "conditions": [
+                        { "param": "speed", "compare": "less", "threshold": 0.3 }
+                    ]
+                },
+                {
+                    "target": 2,
+                    "blendDuration": 0.3,
+                    "exitTime": 0.0,
+                    "hasExitTime": false,
+                    "conditions": [
+                        { "param": "speed", "compare": "greater", "threshold": 1.5 }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Run",
+            "clip": "Run",
+            "speed": 1.0,
+            "loop": true,
+            "transitions": [
+                {
+                    "target": 1,
+                    "blendDuration": 0.3,
+                    "exitTime": 0.0,
+                    "hasExitTime": false,
+                    "conditions": [
+                        { "param": "speed", "compare": "less", "threshold": 1.2 }
+                    ]
+                }
+            ]
+        }
+    ]
+}

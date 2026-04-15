@@ -1,0 +1,30 @@
+{
+    "clips": [
+        {
+            "name": "Survey",
+            "events": [
+                { "name": "look_left", "time": 0.5 },
+                { "name": "look_right", "time": 1.5 },
+                { "name": "ear_twitch", "time": 2.8 }
+            ]
+        },
+        {
+            "name": "Walk",
+            "events": [
+                { "name": "footstep_left", "time": 0.3 },
+                { "name": "footstep_right", "time": 0.7 },
+                { "name": "footstep_left", "time": 1.1 },
+                { "name": "footstep_right", "time": 1.5 }
+            ]
+        },
+        {
+            "name": "Run",
+            "events": [
+                { "name": "footstep_left", "time": 0.15 },
+                { "name": "footstep_right", "time": 0.35 },
+                { "name": "footstep_left", "time": 0.55 },
+                { "name": "footstep_right", "time": 0.75 }
+            ]
+        }
+    ]
+}

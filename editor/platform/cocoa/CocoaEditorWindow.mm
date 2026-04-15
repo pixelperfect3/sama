@@ -410,7 +410,7 @@ static MenuActionFn s_menuActionCallback = nullptr;
     {
         _leftMinWidth = 150.0;
         _rightMinWidth = 180.0;
-        _bottomMinHeight = 80.0;
+        _bottomMinHeight = 200.0;
     }
     return self;
 }
@@ -765,8 +765,9 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         [bottomView setFrameSize:NSMakeSize(w, bottomHeight)];
 
         // Set divider positions.
-        [impl_->verticalSplit adjustSubviews];
-        [impl_->horizontalSplit adjustSubviews];
+        [impl_->verticalSplit setPosition:topHeight ofDividerAtIndex:0];
+        [impl_->horizontalSplit setPosition:leftWidth ofDividerAtIndex:0];
+        [impl_->horizontalSplit setPosition:(leftWidth + centerWidth) ofDividerAtIndex:1];
 
         // Set as content view.
         [impl_->window setContentView:impl_->verticalSplit];
