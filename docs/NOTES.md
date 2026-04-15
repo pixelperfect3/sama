@@ -632,9 +632,42 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 
 **Editor features still pending (post-MVP, no concrete game blocked yet)**
 - [ ] Material editor (proper): node graph or at least a typed multi-channel inspector — texture pickers, sliders, color wells per PBR channel. *Trigger:* first time we want to author a material that isn't a glTF import.
-- [ ] Animation timeline: scrubber + keyframe view for `AnimationComponent`. *Trigger:* first authored animation that isn't imported from glTF.
+- [x] Animation timeline: scrubber + transport controls for `AnimatorComponent`. Done — clip dropdown, ▶/⏸/⏹ transport, scrubber with time label, speed slider, loop checkbox. `kFlagSampleOnce` for frame-accurate editor scrubbing.
 - [ ] Node graph: shader / behavior graph editor. *Trigger:* a designer-authored shader or visual scripting requirement (currently neither exists).
 - [ ] Lua / scripting host: deferred until non-programmer authoring or hot-reload-without-recompile is a real ask (NOTES.md → Editor → Deferred).
+
+**Animation editor features (phased roadmap)**
+
+The animation events system and state machine are implemented in the engine but have no editor UI yet. Game devs currently set them up programmatically. The phases below add editor tooling in order of impact-to-effort ratio.
+
+*Phase 1 — Event markers on timeline (low effort, high value)*
+- [ ] Draw event marker dots/triangles on the existing NSSlider scrubber (custom drawing or NSView overlay above the slider, positioned at `event.time / clip.duration`).
+- [ ] Add an event list (NSTableView) below the scrubber showing name + time for each event in the current clip. Editable inline.
+- [ ] Add/Remove event buttons. "Add" inserts at the current scrubber time with a default name; "Remove" deletes the selected row.
+- [ ] Event flash indicator: briefly highlight the event row when it fires during playback (0.3s yellow background flash).
+- [ ] All within `CocoaAnimationView` — no new panels needed.
+
+*Phase 2 — State machine parameter panel (medium effort)*
+- [ ] New section in the Animation panel (or new bottom tab) listing all parameters for the selected entity's `AnimStateMachineComponent`.
+- [ ] Float parameters: NSSlider + value label. Bool parameters: NSButton checkbox.
+- [ ] Current state label showing `machine->states[currentState].name`.
+- [ ] State dropdown to force-set current state (for testing transitions).
+- [ ] Transition list: read-only table showing from→to, conditions, blend duration.
+- [ ] No graph view yet — just a flat list of states and transitions.
+
+*Phase 3 — Visual state machine node graph (high effort, big payoff)*
+- [ ] Custom NSView with draggable state nodes (rounded rectangles with clip name + speed).
+- [ ] Bezier curve arrows between states for transitions (drag from edge to create).
+- [ ] Click arrow to edit transition properties in an inspector sidebar.
+- [ ] Current state highlighted green, active blend arrow pulses.
+- [ ] Zoom/pan with scroll wheel and drag.
+- [ ] This is the industry standard (Unity Animator, Unreal AnimBP) and the ultimate goal.
+
+*Phase 4 — Serialization (sidecar files)*
+- [ ] Save animation events to `<model>.events.json` alongside the GLB file. Auto-load on import.
+- [ ] Save state machine definition to `<model>.statemachine.json`. Auto-load on import.
+- [ ] Scene serializer includes `AnimStateMachineComponent` parameter values and current state.
+- [ ] Round-trip: export scene → load scene → animations and state machines restored.
 
 **Implementation hygiene (§ 18.7 checklist — apply incrementally as code is touched)**
 - [ ] Header hygiene sweep: confirm no `.h` under `editor/` includes `AppKit`, `windows.h`, or `commctrl.h`; Pimpl all platform types; `IEditorPanel`/`IEditorWindow`/`IComponentInspector` headers contain only `<cstdint>` + forward decls.
