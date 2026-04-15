@@ -50,10 +50,12 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - Wire into `Engine::init()` / `Engine::beginFrame()` / `Engine::endFrame()` lifecycle
 - [ ] Minimal `AndroidManifest.xml` template
   - `android:hasCode="false"` (native-only)
-  - OpenGL ES 3.0 feature requirement
+  - `android.hardware.vulkan.level` feature requirement (Vulkan 1.1+)
   - Landscape orientation default (configurable)
-- [ ] Verify bgfx initializes correctly on Android (GLES 3.x or Vulkan backend)
+- [ ] Verify bgfx initializes with Vulkan backend on Android
+  - `bgfx::Init::type = bgfx::RendererType::Vulkan`
   - bgfx's `PlatformData` needs `nativeWindowHandle` from `ANativeWindow`
+  - bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` internally
 - [ ] Build smoke test: empty window with clear color on an Android device/emulator
 
 ---
@@ -68,10 +70,8 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - Follows the same interface as `StdFileSystem` so all existing loaders work unchanged
 - [ ] `AndroidWindow` wrapping `ANativeWindow`
   - Pass `ANativeWindow*` to bgfx via `bgfx::PlatformData::nativeWindowHandle`
-  - bgfx handles the graphics API surface internally:
-    - **GLES path:** bgfx creates EGL display/surface/context from the `ANativeWindow*`
-    - **Vulkan path:** bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` — no EGL involved
-  - Our code never touches EGL or Vulkan directly — just manage the `ANativeWindow*` lifecycle
+  - Vulkan only: bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` internally
+  - No EGL — our code never touches graphics API surfaces, just manages the `ANativeWindow*` lifecycle
   - Surface size tracking for framebuffer resize on orientation change
   - Content scale factor (display density via `AConfiguration_getDensity`) for HiDPI-aware rendering
 - [ ] Lifecycle handling
@@ -116,8 +116,8 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - Quality per tier: 4x4 (high), 6x6 (mid), 8x8 (low)
   - Max texture size per tier: 2048 (high), 1024 (mid), 512 (low) — downscale if needed
 - [ ] Shader cross-compilation
-  - bgfx `shaderc` already compiles to SPIRV and ESSL — invoke it for Android targets
-  - Output both SPIRV (Vulkan) and ESSL 300 (GLES 3.0) variants
+  - bgfx `shaderc` already compiles to SPIRV — invoke it for Android Vulkan target
+  - Output SPIRV only (no ESSL — Vulkan-only target)
   - Embed compiled shaders in the asset bundle
 - [ ] Mesh processing (optional)
   - LOD generation for low tier (mesh decimation via meshoptimizer or similar)
@@ -259,11 +259,13 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ## Key Design Decisions
 
+- **Vulkan only, no GLES fallback.** Google has required Vulkan 1.1 for all new devices since Android 10 (2019) and Vulkan 1.3 since Android 14 (2023). As of 2026, Vulkan coverage is ~95%+ across active devices: 100% high-end (2022+), ~98% mid-range (2020+), ~85-90% low-end (2019+). The remaining ~5% are pre-2019 budget devices — a shrinking tail not worth the complexity of maintaining a GLES backend. If GLES fallback is ever needed, bgfx makes it trivial (change `RendererType::Vulkan` to `RendererType::OpenGLES`), but we don't plan for it.
+
 - **NativeActivity, not GameActivity.** NativeActivity is simpler (no Java/Kotlin boilerplate), sufficient for games, and avoids the complexity of JNI bridging. Switch to GameActivity only if we need system UI integration (notifications, in-app purchases, etc.).
 
 - **Gradle-free build.** Direct use of `aapt2` + `zipalign` + `apksigner` keeps the build fast and avoids the 30+ second Gradle startup tax. The tradeoff is we must manage resource compilation ourselves, but games have minimal Android resources (just an icon and manifest).
 
-- **ASTC texture compression.** ASTC is universally supported on all Android devices with OpenGL ES 3.1+ (API 21+, which is our minimum). It offers better quality-per-bit than ETC2 and supports all block sizes from 4x4 (highest quality) to 12x12 (smallest size). The `astcenc` encoder is already in third_party.
+- **ASTC texture compression.** ASTC is universally supported on all Vulkan-capable Android devices. It offers better quality-per-bit than ETC2 and supports all block sizes from 4x4 (highest quality) to 12x12 (smallest size). The `astcenc` encoder is already in third_party.
 
 - **Tier system over automatic quality scaling.** Auto-detecting the right quality level at runtime is unreliable (GPU model strings are inconsistent, available memory varies with background apps). Explicit tiers let developers test each configuration and guarantee performance. Runtime detection can be added later as a hint for the default tier selection.
 
