@@ -713,7 +713,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             wrapWithTitle((__bridge NSView*)impl_->propertiesView->nativeView(), @"Properties");
 
         // Build a tabbed bottom panel (Console + Resources).
-        impl_->bottomTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(0, 0, w, 100)];
+        impl_->bottomTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(0, 0, w, 150)];
         impl_->bottomTabView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         impl_->bottomTabView.tabViewType = NSTopTabsBezelBorder;
         impl_->bottomTabView.controlSize = NSControlSizeSmall;
@@ -750,9 +750,8 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         CGFloat rightWidth = 250.0;
         CGFloat centerWidth = w - leftWidth - rightWidth - 2.0;  // 2px for dividers
 
-        // Bottom panel takes a fraction of the window, clamped to reasonable bounds.
-        CGFloat bottomHeight = fmax(80.0, fmin(h * 0.15, 150.0));
-        CGFloat topHeight = fmax(100.0, h - bottomHeight - 1.0);
+        CGFloat bottomHeight = 150.0;
+        CGFloat topHeight = h - bottomHeight - 1.0;
 
         [leftView setFrameSize:NSMakeSize(leftWidth, topHeight)];
         [impl_->metalView setFrameSize:NSMakeSize(centerWidth, topHeight)];
@@ -765,9 +764,8 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         [bottomView setFrameSize:NSMakeSize(w, bottomHeight)];
 
         // Set divider positions.
-        [impl_->verticalSplit setPosition:topHeight ofDividerAtIndex:0];
-        [impl_->horizontalSplit setPosition:leftWidth ofDividerAtIndex:0];
-        [impl_->horizontalSplit setPosition:(leftWidth + centerWidth) ofDividerAtIndex:1];
+        [impl_->verticalSplit adjustSubviews];
+        [impl_->horizontalSplit adjustSubviews];
 
         // Set as content view.
         [impl_->window setContentView:impl_->verticalSplit];
