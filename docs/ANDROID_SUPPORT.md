@@ -67,9 +67,13 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - `AAsset_read()` for synchronous loads, `AAsset_getLength()` for size queries
   - Follows the same interface as `StdFileSystem` so all existing loaders work unchanged
 - [ ] `AndroidWindow` wrapping `ANativeWindow`
-  - EGL surface creation for bgfx (or let bgfx handle it via `PlatformData`)
+  - Pass `ANativeWindow*` to bgfx via `bgfx::PlatformData::nativeWindowHandle`
+  - bgfx handles the graphics API surface internally:
+    - **GLES path:** bgfx creates EGL display/surface/context from the `ANativeWindow*`
+    - **Vulkan path:** bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` — no EGL involved
+  - Our code never touches EGL or Vulkan directly — just manage the `ANativeWindow*` lifecycle
   - Surface size tracking for framebuffer resize on orientation change
-  - Content scale factor (display density) for HiDPI-aware rendering
+  - Content scale factor (display density via `AConfiguration_getDensity`) for HiDPI-aware rendering
 - [ ] Lifecycle handling
   - Pause: stop rendering, release EGL surface
   - Resume: re-create surface, resume rendering
