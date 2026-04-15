@@ -277,7 +277,6 @@ struct CocoaAnimationView::Impl
     NSStackView* eventListStack = nil;
     NSButton* addEventButton = nil;
     NSButton* removeEventButton = nil;
-    NSScrollView* eventScrollView = nil;
     int selectedEventIndex = -1;
     int eventCounter = 0;  // for generating default event names
     float currentScrubberTime = 0.0f;
@@ -461,41 +460,12 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         eventHeaderRow.alignment = NSLayoutAttributeCenterY;
         eventHeaderRow.spacing = 4.0;
 
-        // Event list: a stack view inside a scroll view.
-        impl_->eventListStack = [[NSStackView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
+        // Event list: simple stack view (no scroll view — event counts are small).
+        impl_->eventListStack = [[NSStackView alloc] initWithFrame:NSZeroRect];
         impl_->eventListStack.orientation = NSUserInterfaceLayoutOrientationVertical;
         impl_->eventListStack.alignment = NSLayoutAttributeLeading;
         impl_->eventListStack.spacing = 2.0;
         impl_->eventListStack.translatesAutoresizingMaskIntoConstraints = NO;
-
-        NSView* eventListContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
-        eventListContainer.translatesAutoresizingMaskIntoConstraints = NO;
-        [eventListContainer addSubview:impl_->eventListStack];
-        [NSLayoutConstraint activateConstraints:@[
-            [impl_->eventListStack.topAnchor constraintEqualToAnchor:eventListContainer.topAnchor],
-            [impl_->eventListStack.leadingAnchor
-                constraintEqualToAnchor:eventListContainer.leadingAnchor],
-            [impl_->eventListStack.trailingAnchor
-                constraintEqualToAnchor:eventListContainer.trailingAnchor],
-            [impl_->eventListStack.bottomAnchor
-                constraintEqualToAnchor:eventListContainer.bottomAnchor],
-        ]];
-
-        impl_->eventScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 400, 80)];
-        impl_->eventScrollView.translatesAutoresizingMaskIntoConstraints = NO;
-        impl_->eventScrollView.hasVerticalScroller = YES;
-        impl_->eventScrollView.hasHorizontalScroller = NO;
-        impl_->eventScrollView.autohidesScrollers = YES;
-        impl_->eventScrollView.borderType = NSBezelBorder;
-        impl_->eventScrollView.documentView = eventListContainer;
-        [impl_->eventScrollView
-            addConstraint:[NSLayoutConstraint constraintWithItem:impl_->eventScrollView
-                                                       attribute:NSLayoutAttributeHeight
-                                                       relatedBy:NSLayoutRelationEqual
-                                                          toItem:nil
-                                                       attribute:NSLayoutAttributeNotAnAttribute
-                                                      multiplier:1.0
-                                                        constant:80.0]];
 
         // State Machine section (hidden by default; shown when hasStateMachine).
         NSTextField* smCaption = [NSTextField labelWithString:@"State Machine"];
@@ -542,7 +512,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         // Root vertical stack.
         impl_->rootStack = [NSStackView stackViewWithViews:@[
             topRow, transportRow, scrubberRow, impl_->eventMarkerView, speedRow, eventHeaderRow,
-            impl_->eventScrollView, impl_->smSectionStack
+            impl_->eventListStack, impl_->smSectionStack
         ]];
         impl_->rootStack.orientation = NSUserInterfaceLayoutOrientationVertical;
         impl_->rootStack.alignment = NSLayoutAttributeLeading;
@@ -564,10 +534,10 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
                 constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
             [impl_->eventMarkerView.trailingAnchor
                 constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
-            // Make the event scroll view stretch too.
-            [impl_->eventScrollView.leadingAnchor
+            // Make the event list stretch too.
+            [impl_->eventListStack.leadingAnchor
                 constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
-            [impl_->eventScrollView.trailingAnchor
+            [impl_->eventListStack.trailingAnchor
                 constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
         ]];
     }
@@ -593,7 +563,6 @@ CocoaAnimationView::~CocoaAnimationView()
         impl_->eventListStack = nil;
         impl_->addEventButton = nil;
         impl_->removeEventButton = nil;
-        impl_->eventScrollView = nil;
         impl_->smSectionStack = nil;
         impl_->smStateLabel = nil;
         impl_->smStateDropdown = nil;
@@ -819,16 +788,7 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                 [impl_->eventListStack addArrangedSubview:row];
             }
 
-            // Force the document view to resize to fit the stack content.
-            // NSScrollView doesn't auto-size its documentView from auto-layout,
-            // so we must set the frame explicitly.
             [impl_->eventListStack layoutSubtreeIfNeeded];
-            NSSize fittingSize = impl_->eventListStack.fittingSize;
-            NSView* docView = impl_->eventScrollView.documentView;
-            CGFloat docWidth = docView.frame.size.width;
-            if (docWidth < 100)
-                docWidth = 380;
-            [docView setFrameSize:NSMakeSize(docWidth, fittingSize.height)];
         }
 
         // Update state machine section.
