@@ -529,11 +529,12 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             [impl_->rootStack.trailingAnchor
                 constraintLessThanOrEqualToAnchor:impl_->containerView.trailingAnchor
                                          constant:-8],
-            // Make the event marker view stretch to match the scrubber width.
+            // Align the event marker view with the scrubber track so
+            // triangle positions match the slider's visual range.
             [impl_->eventMarkerView.leadingAnchor
-                constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
+                constraintEqualToAnchor:impl_->scrubber.leadingAnchor],
             [impl_->eventMarkerView.trailingAnchor
-                constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
+                constraintEqualToAnchor:impl_->scrubber.trailingAnchor],
             // Make the event list stretch too.
             [impl_->eventListStack.leadingAnchor
                 constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
