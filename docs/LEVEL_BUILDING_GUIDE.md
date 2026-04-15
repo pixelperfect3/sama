@@ -444,11 +444,73 @@ That's a known gap.
 
 ---
 
-## 17. What's missing today (and where to find it later)
+## 17. Animation: event markers and state machine panel
+
+When you select an entity that has an `AnimatorComponent` and
+`SkeletonComponent`, the bottom **Animation panel** (the timeline tab)
+shows transport controls, a clip dropdown, scrubber, speed slider, and
+loop checkbox. Beyond basic playback, it now also supports:
+
+### 17.1 Event markers
+
+Animation events are named markers at specific times in a clip (e.g.,
+"footstep_left" at t=0.3s). The animation panel shows:
+
+- **Event list** — all events in the current clip with name and time.
+  Editable inline.
+- **Add event** — inserts a new event at the current scrubber position
+  with a default name.
+- **Remove event** — deletes the selected event.
+- **Edit event** — change name or time of an existing event.
+- **Flash indicator** — when an event fires during playback, it briefly
+  highlights in the event list.
+
+Events are stored on the `AnimationClip` in memory. To persist them
+across sessions, use sidecar files (see 17.3 below).
+
+### 17.2 State machine panel
+
+When the selected entity also has an `AnimStateMachineComponent`, the
+animation panel shows an additional section:
+
+- **Current state** — label showing the active state name.
+- **State dropdown** — force-set the entity into any state for testing
+  transitions without triggering conditions.
+- **Parameters** — each parameter from the state machine definition is
+  listed. Bool parameters render as checkboxes; float parameters render
+  as sliders. Editing a parameter value takes effect immediately, which
+  is useful for testing transitions interactively (e.g., toggle
+  "isRunning" to true and watch the state machine transition from Idle
+  to Run).
+
+Parameter names are human-readable strings, resolved from the
+`paramNames` map on the `AnimStateMachine` definition.
+
+### 17.3 Sidecar files
+
+Animation events and state machine definitions can be saved to JSON
+sidecar files alongside the `.glb` model:
+
+- `Model.events.json` — event markers for all clips
+- `Model.statemachine.json` — state machine states, transitions, conditions
+
+When you import a `.glb` via **File > Import Asset**, the editor
+automatically checks for these sidecar files and loads them if present.
+This means you can re-export a model from Blender and your engine-side
+events and state machine are preserved without re-entry.
+
+To create sidecar files programmatically, use the `AnimationSerializer`
+API (see `docs/AGENTS.md` for code examples).
+
+---
+
+## 18. What's missing today (and where to find it later)
 
 - A material texture picker (texture maps for albedo / normal / roughness
   beyond what glTF imports give you).
-- Animation timeline / keyframe editor.
+- Visual state machine node graph (the current UI is a flat list of
+  states and parameters; a draggable node graph like Unity Animator is
+  tracked as Phase 3 in the animation editor roadmap).
 - Visual scripting / behavior graph.
 - Lua hot-reload.
 - Compound physics colliders.
@@ -462,7 +524,7 @@ matter of which feature lands first when a real game needs it.
 
 ---
 
-## 18. Where to look in the source
+## 19. Where to look in the source
 
 If you're modifying the editor and need to find where a feature lives:
 
@@ -471,6 +533,9 @@ If you're modifying the editor and need to find where a feature lives:
   `editor/platform/cocoa/CocoaHierarchyView.mm`
 - **Properties panel**: `editor/panels/PropertiesPanel.cpp` +
   `editor/platform/cocoa/CocoaPropertiesView.mm`
+- **Animation panel**: `editor/panels/AnimationPanel.cpp` +
+  `editor/platform/cocoa/CocoaAnimationView.h` (events, state machine, sidecar callbacks)
+- **Animation serialization**: `engine/animation/AnimationSerializer.h` / `.cpp`
 - **Component inspectors**: `editor/inspectors/*.cpp` (one per
   component type)
 - **Transform gizmo**: `editor/gizmo/TransformGizmo.cpp` +

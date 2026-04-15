@@ -730,6 +730,73 @@ if (clip)
 }
 ```
 
+#### Animation serialization (sidecar files)
+
+```cpp
+#include "engine/animation/AnimationSerializer.h"
+
+// Save all clip events to a sidecar JSON file.
+// Format: { "clips": [ { "name": "Walk", "events": [...] }, ... ] }
+engine::animation::saveEvents(animRes, "assets/models/Character.events.json");
+
+// Load events from a sidecar and apply to matching clips by name.
+engine::animation::loadEvents(animRes, "assets/models/Character.events.json");
+
+// Save a state machine definition to JSON.
+// Clip IDs are resolved to clip names for portability.
+engine::animation::saveStateMachine(sm, animRes,
+    "assets/models/Character.statemachine.json");
+
+// Load a state machine definition from JSON.
+// Clip names are resolved back to clip IDs via AnimationResources.
+AnimStateMachine sm;
+engine::animation::loadStateMachine(sm, animRes,
+    "assets/models/Character.statemachine.json");
+```
+
+**Sidecar file naming convention:** For a model at `path/Model.glb`, sidecar files are `path/Model.events.json` and `path/Model.statemachine.json`. The editor auto-loads these on import.
+
+**Events JSON example:**
+```json
+{
+    "clips": [
+        {
+            "name": "Walk",
+            "events": [
+                { "name": "footstep_left", "time": 0.3 },
+                { "name": "footstep_right", "time": 0.8 }
+            ]
+        }
+    ]
+}
+```
+
+**State machine JSON example:**
+```json
+{
+    "defaultState": 0,
+    "states": [
+        {
+            "name": "Idle",
+            "clip": "Idle",
+            "speed": 1.0,
+            "loop": true,
+            "transitions": [
+                {
+                    "target": 1,
+                    "blendDuration": 0.2,
+                    "exitTime": 0.0,
+                    "hasExitTime": false,
+                    "conditions": [
+                        { "param": "speed", "compare": "greater", "threshold": 0.5 }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+```
+
 #### Set up IK chains
 
 ```cpp
@@ -1507,7 +1574,7 @@ int main()
 | `AnimatorComponent` | `clipId`, `nextClipId`, `playbackTime`, `prevPlaybackTime`, `speed`, `blendFactor`, `blendDuration`, `blendElapsed`, `flags` | Animation playback state (36 bytes). `prevPlaybackTime` tracks time at frame start for event detection. |
 | `SkinComponent` | `boneMatrixOffset`, `boneCount` (both uint32) | Offset into per-frame bone matrix buffer. |
 | `AnimationEventQueue` | `events` (vector of AnimationEventRecord) | Per-entity queue of animation events that fired this frame. Game code polls and clears. |
-| `AnimStateMachineComponent` | `machine` (const AnimStateMachine*), `currentState`, `params` (unordered_map) | Per-entity state machine runtime state. Set parameters via `setFloat()`/`setBool()`. |
+| `AnimStateMachineComponent` | `machine` (const AnimStateMachine*), `currentState`, `params` (unordered_map) | Per-entity state machine runtime state. Set parameters via `setFloat()`/`setBool()`. The shared `AnimStateMachine` has a `paramNames` map (hash -> string) for editor display. |
 | `PoseComponent` | `pose` (Pose*) | Arena-allocated FK pose, valid for one frame. |
 | `IkChainsComponent` | `chains` (InlinedVector of IkChainDef) | IK chain definitions (up to 4 inline). |
 | `IkTargetsComponent` | `targets` (InlinedVector of IkTarget) | World-space IK targets (parallel to chains). |
@@ -1634,6 +1701,12 @@ reg.view<AnimatorComponent>().each(
     });
 ```
 
+### Sidecar files must match the GLB base name
+
+**Symptom:** Animation events or state machine not loaded when importing a glTF in the editor.
+
+Sidecar files must be in the same directory as the `.glb` and share the same base name. For `assets/characters/Fox.glb`, the sidecar files must be `assets/characters/Fox.events.json` and `assets/characters/Fox.statemachine.json`. The editor strips the extension from the import path and appends `.events.json` / `.statemachine.json` -- if the names don't match, the files are silently ignored. Also note that sidecar files use clip names (not indices) as keys, so if you re-export a model and rename clips in Blender, the sidecar events will not match and will be skipped.
+
 ### UI font asset paths are cwd-relative
 
 **Symptom:** `MsdfFont::loadFromFile()` returns false when the binary is launched from outside the repo root, even though the asset exists.
@@ -1662,6 +1735,7 @@ reg.view<AnimatorComponent>().each(
 | Skinned mesh not visible | Missing `updateSkinned` call in draw pass | Call `drawCallSys.updateSkinned(...)` after `drawCallSys.update(...)` with the bone buffer from `animSys.boneBuffer()`. |
 | Animation events not firing | Events suppressed or queue not polled | Events only fire when `kFlagPlaying` is set (not during `kFlagSampleOnce`). Clear `AnimationEventQueue` after consuming. |
 | State machine not transitioning | `AnimStateMachineSystem::update()` not called | Call `smSys.update(reg, dt, animRes)` BEFORE `animSys.update()` each frame. |
+| Sidecar events/SM not loaded on import | File name mismatch or wrong directory | Sidecar files must be alongside the `.glb` with matching base name: `Model.events.json`, `Model.statemachine.json`. |
 | Shadow not appearing | Shadow pass not submitted, or shadow atlas not bound | Call `eng.shadow().beginCascade(...)` + `submitShadowDrawCalls(...)` before the opaque pass. Pass `eng.shadow().atlasTexture()` in `PbrFrameParams`. |
 | Crash on shutdown | AssetManager destroyed after bgfx context | Ensure AssetManager is constructed after Renderer (LIFO destruction order). Release all handles before shutdown. |
 

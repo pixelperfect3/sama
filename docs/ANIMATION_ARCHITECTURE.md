@@ -554,6 +554,8 @@ engine/animation/
     AnimationResources.cpp
     AnimStateMachine.h     -- AnimState, StateTransition, TransitionCondition, AnimStateMachine
     AnimStateMachineSystem.h -- AnimStateMachineSystem (drives AnimatorComponent via state machine)
+    AnimationSerializer.h  -- saveEvents/loadEvents/saveStateMachine/loadStateMachine (sidecar JSON)
+    AnimationSerializer.cpp
     Hash.h                 -- fnv1a() hash function for event/parameter names
     IkComponents.h         -- IkChainDef, IkTarget, IkChainsComponent, IkTargetsComponent, PoseComponent
     IkSystem.h             -- IkSystem class (Two-Bone, CCD, FABRIK solvers)
@@ -646,8 +648,11 @@ The `Skeleton::joints` array is topologically sorted, so the forward pass that c
 | N | Bone matrix world transform: multiply `WorldTransformComponent` into bone matrices | Phase C | Done |
 | O | glTF loader improvements: non-indexed meshes, default normals/UVs, joint-only node skipping, node names | Phase D | Done |
 | P | Editor animation panel: clip selector, transport controls, scrubber, speed, loop | Phase C | Done |
+| Q | Editor event markers: event list, add/remove/edit, fired-event flash | Phase P, K | Done |
+| R | Editor state machine panel: parameter display, state dropdown, force-set, param editing | Phase P, L | Done |
+| S | Animation serialization: sidecar JSON files for events and state machines, auto-load on import | Phases K, L | Done |
 
-All phases are complete.
+All phases except the visual state machine node graph (Phase 3 in the editor roadmap) are complete.
 
 ---
 
@@ -699,6 +704,121 @@ Several improvements to `GltfLoader` and `GltfSceneSpawner` were made alongside 
 - **Node names:** `GltfSceneSpawner` now assigns a `NameComponent` to spawned entities using the glTF node name, making hierarchy debugging much easier.
 - **Imported animations start paused:** `GltfSceneSpawner` sets `kFlagLooping` but not `kFlagPlaying` on imported `AnimatorComponent`. This prevents animations from auto-playing on spawn; game code explicitly starts playback when ready.
 - **Tangent generation:** Works without the original normal accessor by using the generated normals.
+
+---
+
+## 17. Animation Serialization (Sidecar Files)
+
+Animation events and state machine definitions are stored in JSON sidecar files alongside the `.glb` model file. This approach was chosen because glTF does not natively support animation events or state machines, and embedding custom extensions in the GLB would break round-tripping through third-party tools.
+
+### Sidecar File Convention
+
+For a model at `assets/characters/BrainStem.glb`, the sidecar files are:
+- `assets/characters/BrainStem.events.json` — animation event markers
+- `assets/characters/BrainStem.statemachine.json` — state machine definition
+
+### API (`engine/animation/AnimationSerializer.h`)
+
+```cpp
+#include "engine/animation/AnimationSerializer.h"
+
+// Save all clip events across all clips in AnimationResources.
+bool saveEvents(const AnimationResources& res, const std::string& path);
+
+// Load events from JSON and apply to matching clips by name.
+bool loadEvents(AnimationResources& res, const std::string& path);
+
+// Save a state machine definition. Clip IDs are resolved to clip names.
+bool saveStateMachine(const AnimStateMachine& machine, const AnimationResources& res,
+                      const std::string& path);
+
+// Load a state machine definition. Clip names are resolved to clip IDs.
+bool loadStateMachine(AnimStateMachine& machine, const AnimationResources& res,
+                      const std::string& path);
+```
+
+### Events JSON Format
+
+```json
+{
+    "clips": [
+        {
+            "name": "Walk",
+            "events": [
+                { "name": "footstep_left", "time": 0.3 },
+                { "name": "footstep_right", "time": 0.8 }
+            ]
+        }
+    ]
+}
+```
+
+Clips are matched by name, not by index. Events for clips not found in `AnimationResources` are silently skipped, making the format tolerant of re-exports that reorder clips.
+
+### State Machine JSON Format
+
+```json
+{
+    "defaultState": 0,
+    "states": [
+        {
+            "name": "Idle",
+            "clip": "Idle",
+            "speed": 1.0,
+            "loop": true,
+            "transitions": [
+                {
+                    "target": 1,
+                    "blendDuration": 0.2,
+                    "exitTime": 0.0,
+                    "hasExitTime": false,
+                    "conditions": [
+                        { "param": "speed", "compare": "greater", "threshold": 0.5 }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+```
+
+Parameters are stored by name (not hash). On load, `fnv1aHash()` recomputes the hash and populates `machine.paramNames` so the editor can display human-readable labels.
+
+### Auto-Load on Import
+
+When the editor imports a `.glb` via File > Import Asset, `EditorApp.cpp` strips the file extension and checks for `<basename>.events.json` and `<basename>.statemachine.json`. If found, they are loaded automatically via `loadEvents()` and `loadStateMachine()`. This means artists can re-export a model from Blender and the engine-side events and state machine are preserved without manual re-entry.
+
+---
+
+## 18. Editor Animation Panel (Events and State Machine)
+
+The editor's animation panel (`editor/panels/AnimationPanel.cpp`) was extended beyond basic transport controls to support event markers and state machine inspection.
+
+### Event Markers
+
+`AnimationPanel::update()` reads `AnimationClip::events` for the current clip and populates `AnimationViewState::events` (a vector of `EventMarker` with name and time). During playback, fired events are read from `AnimationEventQueue` and forwarded via `AnimationViewState::firedEvents` for visual flash feedback in the native view.
+
+Three callbacks enable editing events from the UI:
+- `EventAddedCallback(float time, const std::string& name)` — insert a new event at the given time
+- `EventRemovedCallback(int eventIndex)` — delete an event by index
+- `EventEditedCallback(int eventIndex, float newTime, const std::string& newName)` — update an existing event
+
+These are wired in `EditorApp.cpp` to mutate the clip via `animRes.getClipMut()`.
+
+### State Machine Parameter Panel
+
+When the selected entity has an `AnimStateMachineComponent`, the panel populates a state machine section in `AnimationViewState`:
+- `stateNames` — all state names from the machine
+- `currentStateName` / `currentStateIndex` — active state
+- `params` — vector of `ParamInfo` structs (name, value, isBool)
+
+The `isBool` flag is determined by heuristic: if any transition condition on the parameter uses `BoolTrue` or `BoolFalse` comparison, the parameter is treated as a boolean (rendered as a checkbox) rather than a float (rendered as a slider).
+
+The `paramNames` map (`std::unordered_map<uint32_t, std::string>`) on `AnimStateMachine` provides the human-readable names. It is populated automatically by `addTransition()` when a parameter name string is provided, and by `loadStateMachine()` when reading sidecar files.
+
+Two callbacks enable runtime interaction:
+- `StateForceSetCallback(int stateIndex)` — force the entity into a specific state (for testing)
+- `ParamChangedCallback(const std::string& paramName, float value)` — update a parameter value from the UI
 
 ---
 

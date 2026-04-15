@@ -638,24 +638,21 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 
 **Animation editor features (phased roadmap)**
 
-The animation events system and state machine are implemented in the engine but have no editor UI yet. Game devs currently set them up programmatically. The phases below add editor tooling in order of impact-to-effort ratio.
+*Phase 1 — Event markers on timeline (DONE)*
+- [x] `AnimationViewState` carries `events` (vector of `EventMarker`) and `firedEvents` (names of events that fired this frame, for flash highlighting).
+- [x] `AnimationPanel::update()` populates event markers from `AnimationClip::events` and fired events from `AnimationEventQueue`.
+- [x] Add/Remove/Edit event callbacks wired in `EditorApp.cpp` (`EventAddedCallback`, `EventRemovedCallback`, `EventEditedCallback`). Add inserts at the current scrubber time; Remove deletes by index; Edit updates name and time.
+- [x] All within `CocoaAnimationView` — no new panels needed.
 
-*Phase 1 — Event markers on timeline (low effort, high value)*
-- [ ] Draw event marker dots/triangles on the existing NSSlider scrubber (custom drawing or NSView overlay above the slider, positioned at `event.time / clip.duration`).
-- [ ] Add an event list (NSTableView) below the scrubber showing name + time for each event in the current clip. Editable inline.
-- [ ] Add/Remove event buttons. "Add" inserts at the current scrubber time with a default name; "Remove" deletes the selected row.
-- [ ] Event flash indicator: briefly highlight the event row when it fires during playback (0.3s yellow background flash).
-- [ ] All within `CocoaAnimationView` — no new panels needed.
+*Phase 2 — State machine parameter panel (DONE)*
+- [x] New section in the Animation panel populated when the selected entity has an `AnimStateMachineComponent`.
+- [x] `AnimationViewState` carries `hasStateMachine`, `currentStateName`, `stateNames`, `currentStateIndex`, and a `params` vector of `ParamInfo` (name, value, isBool).
+- [x] `ParamInfo::isBool` detected by heuristic: if any transition condition on the param uses `BoolTrue`/`BoolFalse`, it is treated as a boolean (checkbox) rather than a float (slider).
+- [x] `paramNames` map on `AnimStateMachine` provides human-readable parameter names for editor display (populated automatically by `addTransition()`).
+- [x] State dropdown to force-set current state (`StateForceSetCallback`).
+- [x] Parameter editing (`ParamChangedCallback`) writes back to `AnimStateMachineComponent::params`.
 
-*Phase 2 — State machine parameter panel (medium effort)*
-- [ ] New section in the Animation panel (or new bottom tab) listing all parameters for the selected entity's `AnimStateMachineComponent`.
-- [ ] Float parameters: NSSlider + value label. Bool parameters: NSButton checkbox.
-- [ ] Current state label showing `machine->states[currentState].name`.
-- [ ] State dropdown to force-set current state (for testing transitions).
-- [ ] Transition list: read-only table showing from→to, conditions, blend duration.
-- [ ] No graph view yet — just a flat list of states and transitions.
-
-*Phase 3 — Visual state machine node graph (high effort, big payoff)*
+*Phase 3 — Visual state machine node graph (NOT STARTED)*
 - [ ] Custom NSView with draggable state nodes (rounded rectangles with clip name + speed).
 - [ ] Bezier curve arrows between states for transitions (drag from edge to create).
 - [ ] Click arrow to edit transition properties in an inspector sidebar.
@@ -663,11 +660,11 @@ The animation events system and state machine are implemented in the engine but 
 - [ ] Zoom/pan with scroll wheel and drag.
 - [ ] This is the industry standard (Unity Animator, Unreal AnimBP) and the ultimate goal.
 
-*Phase 4 — Serialization (sidecar files)*
-- [ ] Save animation events to `<model>.events.json` alongside the GLB file. Auto-load on import.
-- [ ] Save state machine definition to `<model>.statemachine.json`. Auto-load on import.
-- [ ] Scene serializer includes `AnimStateMachineComponent` parameter values and current state.
-- [ ] Round-trip: export scene → load scene → animations and state machines restored.
+*Phase 4 — Serialization (sidecar files) (DONE)*
+- [x] `AnimationSerializer` API: `saveEvents()` / `loadEvents()` for `<model>.events.json`, `saveStateMachine()` / `loadStateMachine()` for `<model>.statemachine.json`.
+- [x] Sidecar files stored alongside the `.glb` with matching base name (e.g., `BrainStem.events.json`, `BrainStem.statemachine.json`).
+- [x] Auto-load on import: `EditorApp.cpp` checks for sidecar files when importing a glTF and calls `loadEvents()` / `loadStateMachine()` if they exist.
+- [x] Clip names and parameter names are used as keys for round-tripping (not integer IDs), so sidecar files remain valid across re-exports.
 
 **Implementation hygiene (§ 18.7 checklist — apply incrementally as code is touched)**
 - [ ] Header hygiene sweep: confirm no `.h` under `editor/` includes `AppKit`, `windows.h`, or `commctrl.h`; Pimpl all platform types; `IEditorPanel`/`IEditorWindow`/`IComponentInspector` headers contain only `<cstdint>` + forward decls.
