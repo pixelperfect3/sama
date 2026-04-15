@@ -819,9 +819,16 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                 [impl_->eventListStack addArrangedSubview:row];
             }
 
-            // Force layout update so the scroll view resizes to fit.
+            // Force the document view to resize to fit the stack content.
+            // NSScrollView doesn't auto-size its documentView from auto-layout,
+            // so we must set the frame explicitly.
             [impl_->eventListStack layoutSubtreeIfNeeded];
-            [impl_->eventScrollView.documentView setNeedsLayout:YES];
+            NSSize fittingSize = impl_->eventListStack.fittingSize;
+            NSView* docView = impl_->eventScrollView.documentView;
+            CGFloat docWidth = docView.frame.size.width;
+            if (docWidth < 100)
+                docWidth = 380;
+            [docView setFrameSize:NSMakeSize(docWidth, fittingSize.height)];
         }
 
         // Update state machine section.
