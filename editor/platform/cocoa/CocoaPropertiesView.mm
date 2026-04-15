@@ -112,6 +112,8 @@
     [menu addItem:[NSMenuItem separatorItem]];
     add(@"Rigid Body", @"rigid_body");
     add(@"Box Collider", @"box_collider");
+    [menu addItem:[NSMenuItem separatorItem]];
+    add(@"State Machine", @"state_machine");
 
     // Show the menu just below the button.
     NSPoint origin = NSMakePoint(0, sender.bounds.size.height + 4);

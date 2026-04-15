@@ -397,6 +397,44 @@ bool EditorApp::Impl::addComponentToSelection(const std::string& type)
         registry.emplace<engine::physics::ColliderComponent>(selE, cc);
         setStatus("Added Box Collider");
     }
+    else if (type == "state_machine")
+    {
+        using namespace engine::animation;
+        if (registry.has<AnimStateMachineComponent>(selE))
+        {
+            setStatus("State Machine already present");
+            return false;
+        }
+        if (!registry.has<AnimatorComponent>(selE))
+        {
+            setStatus("Entity needs AnimatorComponent first (import an animated model)");
+            return false;
+        }
+
+        // Build a default state machine with one state per clip.
+        auto sm = std::make_shared<AnimStateMachine>();
+        const uint32_t clipCount = animationResources.clipCount();
+        for (uint32_t i = 0; i < clipCount; ++i)
+        {
+            const AnimationClip* clip = animationResources.getClip(i);
+            std::string name =
+                (clip && !clip->name.empty()) ? clip->name : "clip_" + std::to_string(i);
+            sm->addState(name, i, true, 1.0f);
+        }
+        // Add a default "speed" parameter.
+        if (clipCount > 0)
+            sm->addTransition(0, 0, 0.3f, "speed", TransitionCondition::Compare::Greater, 999.0f);
+        importedStateMachines.push_back(sm);
+
+        AnimStateMachineComponent smComp;
+        smComp.machine = sm.get();
+        smComp.currentState = 0;
+        smComp.setFloat("speed", 1.0f);
+        registry.emplace<AnimStateMachineComponent>(selE, std::move(smComp));
+        if (animationPanel)
+            animationPanel->markDirty();
+        setStatus("Added State Machine");
+    }
     else
     {
         char buf[128];
