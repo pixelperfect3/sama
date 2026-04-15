@@ -3,6 +3,22 @@
 #import <Cocoa/Cocoa.h>
 
 // ---------------------------------------------------------------------------
+// EventRowView -- a single row in the event list stack view, showing name
+// and time as editable text fields. Defined before the delegate so that
+// the delegate's methods can access its properties.
+// ---------------------------------------------------------------------------
+
+@interface EventRowView : NSStackView
+@property(nonatomic, strong) NSTextField* nameField;
+@property(nonatomic, strong) NSTextField* timeField;
+@property(nonatomic, assign) int eventIndex;
+@property(nonatomic, assign) BOOL isFired;
+@end
+
+@implementation EventRowView
+@end
+
+// ---------------------------------------------------------------------------
 // AnimationViewDelegate -- target for the clip dropdown, transport buttons,
 // scrubber, speed slider and loop checkbox. Holds owning blocks that wrap
 // the C++ callbacks. suppressCallbacks is set during state pushes so we
@@ -17,6 +33,12 @@
 @property(nonatomic, copy) void (^onTimeChanged)(float time);
 @property(nonatomic, copy) void (^onSpeedChanged)(float speed);
 @property(nonatomic, copy) void (^onLoopChanged)(BOOL looping);
+@property(nonatomic, copy) void (^onEventAdded)(float time, NSString* name);
+@property(nonatomic, copy) void (^onEventRemoved)(int index);
+@property(nonatomic, copy) void (^onEventEdited)(int index, float newTime, NSString* newName);
+@property(nonatomic, copy) void (^onEventRowSelected)(int index);
+@property(nonatomic, copy) void (^onStateForceSet)(int stateIndex);
+@property(nonatomic, copy) void (^onParamChanged)(NSString* paramName, float value);
 @property(nonatomic, assign) BOOL suppressCallbacks;
 - (void)clipChanged:(NSPopUpButton*)sender;
 - (void)playClicked:(NSButton*)sender;
@@ -25,6 +47,13 @@
 - (void)scrubberChanged:(NSSlider*)sender;
 - (void)speedChanged:(NSSlider*)sender;
 - (void)loopChanged:(NSButton*)sender;
+- (void)addEventClicked:(NSButton*)sender;
+- (void)removeEventClicked:(NSButton*)sender;
+- (void)eventFieldEdited:(NSTextField*)sender;
+- (void)eventRowClicked:(NSClickGestureRecognizer*)sender;
+- (void)stateDropdownChanged:(NSPopUpButton*)sender;
+- (void)paramSliderChanged:(NSSlider*)sender;
+- (void)paramCheckboxChanged:(NSButton*)sender;
 @end
 
 @implementation AnimationViewDelegate
@@ -77,6 +106,149 @@
     if (_onLoopChanged)
         _onLoopChanged(sender.state == NSControlStateValueOn);
 }
+- (void)addEventClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    // The C++ side will set onEventAdded with the proper time and name.
+    // We pass 0.0f / "event" here; the actual time comes from the C++ wrapper
+    // which reads the current scrubber time before invoking. However, since
+    // the delegate doesn't have direct access to the scrubber time, we use a
+    // sentinel that the setEventAddedCallback wiring overrides. In practice,
+    // the C++ wrapper sets the block to capture the current time.
+    if (_onEventAdded)
+        _onEventAdded(0.0f, @"event");
+    (void)sender;
+}
+- (void)removeEventClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onEventRemoved)
+        _onEventRemoved(-1);  // -1 = selected index; resolved by C++ side.
+    (void)sender;
+}
+- (void)eventFieldEdited:(NSTextField*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (!_onEventEdited)
+        return;
+
+    // Walk up to find the EventRowView parent.
+    NSView* parent = sender.superview;
+    while (parent && ![parent isKindOfClass:[EventRowView class]])
+        parent = parent.superview;
+    if (!parent)
+        return;
+
+    EventRowView* row = (EventRowView*)parent;
+    int idx = row.eventIndex;
+    NSString* newName = row.nameField.stringValue;
+    float newTime = (float)row.timeField.doubleValue;
+    _onEventEdited(idx, newTime, newName);
+}
+- (void)eventRowClicked:(NSClickGestureRecognizer*)sender
+{
+    NSView* view = sender.view;
+    if (![view isKindOfClass:[EventRowView class]])
+        return;
+    EventRowView* row = (EventRowView*)view;
+    if (_onEventRowSelected)
+        _onEventRowSelected(row.eventIndex);
+}
+- (void)stateDropdownChanged:(NSPopUpButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onStateForceSet)
+        _onStateForceSet((int)sender.indexOfSelectedItem);
+}
+- (void)paramSliderChanged:(NSSlider*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onParamChanged)
+    {
+        NSString* paramName = sender.toolTip;
+        if (paramName)
+            _onParamChanged(paramName, (float)sender.doubleValue);
+    }
+}
+- (void)paramCheckboxChanged:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onParamChanged)
+    {
+        NSString* paramName = sender.toolTip;
+        if (paramName)
+        {
+            float value = (sender.state == NSControlStateValueOn) ? 1.0f : 0.0f;
+            _onParamChanged(paramName, value);
+        }
+    }
+}
+@end
+
+// ---------------------------------------------------------------------------
+// EventMarkerView -- draws small inverted triangles above the scrubber
+// at normalized positions corresponding to animation events.
+// ---------------------------------------------------------------------------
+
+@interface EventMarkerView : NSView
+@property(nonatomic, strong) NSArray<NSNumber*>* markerPositions;
+@property(nonatomic, strong) NSSet<NSNumber*>* firedIndices;
+@property(nonatomic, assign) int selectedIndex;
+@end
+
+@implementation EventMarkerView
+
+- (instancetype)initWithFrame:(NSRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self)
+    {
+        _markerPositions = @[];
+        _firedIndices = [NSSet set];
+        _selectedIndex = -1;
+    }
+    return self;
+}
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+    [super drawRect:dirtyRect];
+
+    NSRect bounds = self.bounds;
+    CGFloat markerSize = 6.0;
+    CGFloat halfMarker = markerSize / 2.0;
+
+    for (NSUInteger i = 0; i < _markerPositions.count; ++i)
+    {
+        CGFloat normalized = _markerPositions[i].doubleValue;
+        CGFloat x = bounds.origin.x + normalized * bounds.size.width;
+        CGFloat midY = bounds.size.height / 2.0;
+
+        NSBezierPath* triangle = [NSBezierPath bezierPath];
+        [triangle moveToPoint:NSMakePoint(x - halfMarker, midY + halfMarker)];
+        [triangle lineToPoint:NSMakePoint(x + halfMarker, midY + halfMarker)];
+        [triangle lineToPoint:NSMakePoint(x, midY - halfMarker)];
+        [triangle closePath];
+
+        NSColor* fillColor;
+        if ([_firedIndices containsObject:@(i)])
+            fillColor = [NSColor systemYellowColor];
+        else if ((int)i == _selectedIndex)
+            fillColor = [NSColor systemBlueColor];
+        else
+            fillColor = [NSColor systemGrayColor];
+
+        [fillColor setFill];
+        [triangle fill];
+    }
+}
+
 @end
 
 namespace engine::editor
@@ -101,6 +273,21 @@ struct CocoaAnimationView::Impl
     NSTextField* speedLabel = nil;
     NSButton* loopCheckbox = nil;
 
+    EventMarkerView* eventMarkerView = nil;
+    NSStackView* eventListStack = nil;
+    NSButton* addEventButton = nil;
+    NSButton* removeEventButton = nil;
+    NSScrollView* eventScrollView = nil;
+    int selectedEventIndex = -1;
+    int eventCounter = 0;  // for generating default event names
+    float currentScrubberTime = 0.0f;
+
+    // State machine section.
+    NSStackView* smSectionStack = nil;
+    NSTextField* smStateLabel = nil;
+    NSPopUpButton* smStateDropdown = nil;
+    NSStackView* smParamStack = nil;
+
     AnimationViewDelegate* delegate = nil;
 
     ClipSelectedCallback clipSelectedCb;
@@ -110,6 +297,11 @@ struct CocoaAnimationView::Impl
     TimeChangedCallback timeChangedCb;
     SpeedChangedCallback speedChangedCb;
     LoopChangedCallback loopChangedCb;
+    EventAddedCallback eventAddedCb;
+    EventRemovedCallback eventRemovedCb;
+    EventEditedCallback eventEditedCb;
+    StateForceSetCallback stateForceSetCb;
+    ParamChangedCallback paramChangedCb;
 };
 
 CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
@@ -120,6 +312,12 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         impl_->containerView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
         impl_->delegate = [[AnimationViewDelegate alloc] init];
+
+        // Wire row-selection to update the selected event index.
+        auto* implPtr = impl_.get();
+        impl_->delegate.onEventRowSelected = ^(int index) {
+          implPtr->selectedEventIndex = index;
+        };
 
         // Top row: status label + clip dropdown.
         impl_->statusLabel =
@@ -228,9 +426,124 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         speedRow.alignment = NSLayoutAttributeCenterY;
         speedRow.spacing = 6.0;
 
+        // Event marker overlay (sits below the scrubber row).
+        impl_->eventMarkerView = [[EventMarkerView alloc] initWithFrame:NSMakeRect(0, 0, 400, 14)];
+        impl_->eventMarkerView.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->eventMarkerView
+            addConstraint:[NSLayoutConstraint constraintWithItem:impl_->eventMarkerView
+                                                       attribute:NSLayoutAttributeHeight
+                                                       relatedBy:NSLayoutRelationEqual
+                                                          toItem:nil
+                                                       attribute:NSLayoutAttributeNotAnAttribute
+                                                      multiplier:1.0
+                                                        constant:14.0]];
+
+        // Event list header: "Events" label + add/remove buttons.
+        NSTextField* eventsCaption = [NSTextField labelWithString:@"Events"];
+        eventsCaption.font = [NSFont boldSystemFontOfSize:11.0];
+        eventsCaption.textColor = [NSColor labelColor];
+
+        impl_->addEventButton = [NSButton buttonWithTitle:@"+" target:nil action:nil];
+        impl_->addEventButton.bezelStyle = NSBezelStyleRounded;
+        impl_->addEventButton.controlSize = NSControlSizeSmall;
+        impl_->addEventButton.font = [NSFont systemFontOfSize:11.0];
+        impl_->addEventButton.enabled = NO;
+
+        impl_->removeEventButton = [NSButton buttonWithTitle:@"\u2212" target:nil action:nil];
+        impl_->removeEventButton.bezelStyle = NSBezelStyleRounded;
+        impl_->removeEventButton.controlSize = NSControlSizeSmall;
+        impl_->removeEventButton.font = [NSFont systemFontOfSize:11.0];
+        impl_->removeEventButton.enabled = NO;
+
+        NSStackView* eventHeaderRow = [NSStackView
+            stackViewWithViews:@[ eventsCaption, impl_->addEventButton, impl_->removeEventButton ]];
+        eventHeaderRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        eventHeaderRow.alignment = NSLayoutAttributeCenterY;
+        eventHeaderRow.spacing = 4.0;
+
+        // Event list: a stack view inside a scroll view.
+        impl_->eventListStack = [[NSStackView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
+        impl_->eventListStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->eventListStack.alignment = NSLayoutAttributeLeading;
+        impl_->eventListStack.spacing = 2.0;
+        impl_->eventListStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSView* eventListContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
+        eventListContainer.translatesAutoresizingMaskIntoConstraints = NO;
+        [eventListContainer addSubview:impl_->eventListStack];
+        [NSLayoutConstraint activateConstraints:@[
+            [impl_->eventListStack.topAnchor constraintEqualToAnchor:eventListContainer.topAnchor],
+            [impl_->eventListStack.leadingAnchor
+                constraintEqualToAnchor:eventListContainer.leadingAnchor],
+            [impl_->eventListStack.trailingAnchor
+                constraintEqualToAnchor:eventListContainer.trailingAnchor],
+            [impl_->eventListStack.bottomAnchor
+                constraintEqualToAnchor:eventListContainer.bottomAnchor],
+        ]];
+
+        impl_->eventScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 400, 80)];
+        impl_->eventScrollView.translatesAutoresizingMaskIntoConstraints = NO;
+        impl_->eventScrollView.hasVerticalScroller = YES;
+        impl_->eventScrollView.hasHorizontalScroller = NO;
+        impl_->eventScrollView.autohidesScrollers = YES;
+        impl_->eventScrollView.borderType = NSBezelBorder;
+        impl_->eventScrollView.documentView = eventListContainer;
+        [impl_->eventScrollView
+            addConstraint:[NSLayoutConstraint constraintWithItem:impl_->eventScrollView
+                                                       attribute:NSLayoutAttributeHeight
+                                                       relatedBy:NSLayoutRelationEqual
+                                                          toItem:nil
+                                                       attribute:NSLayoutAttributeNotAnAttribute
+                                                      multiplier:1.0
+                                                        constant:80.0]];
+
+        // State Machine section (hidden by default; shown when hasStateMachine).
+        NSTextField* smCaption = [NSTextField labelWithString:@"State Machine"];
+        smCaption.font = [NSFont boldSystemFontOfSize:11.0];
+        smCaption.textColor = [NSColor labelColor];
+
+        NSTextField* smStateCaptionLabel = [NSTextField labelWithString:@"State:"];
+        smStateCaptionLabel.font = [NSFont systemFontOfSize:11.0];
+        smStateCaptionLabel.textColor = [NSColor labelColor];
+
+        impl_->smStateLabel = [NSTextField labelWithString:@"(none)"];
+        impl_->smStateLabel.font = [NSFont systemFontOfSize:11.0];
+        impl_->smStateLabel.textColor = [NSColor secondaryLabelColor];
+
+        NSStackView* smStateLabelRow =
+            [NSStackView stackViewWithViews:@[ smStateCaptionLabel, impl_->smStateLabel ]];
+        smStateLabelRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        smStateLabelRow.alignment = NSLayoutAttributeCenterY;
+        smStateLabelRow.spacing = 4.0;
+
+        impl_->smStateDropdown = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 200, 22)
+                                                            pullsDown:NO];
+        impl_->smStateDropdown.controlSize = NSControlSizeSmall;
+        impl_->smStateDropdown.font = [NSFont systemFontOfSize:11.0];
+        impl_->smStateDropdown.target = impl_->delegate;
+        impl_->smStateDropdown.action = @selector(stateDropdownChanged:);
+        [impl_->smStateDropdown addItemWithTitle:@"(none)"];
+        impl_->smStateDropdown.enabled = NO;
+
+        impl_->smParamStack = [[NSStackView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
+        impl_->smParamStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smParamStack.alignment = NSLayoutAttributeLeading;
+        impl_->smParamStack.spacing = 4.0;
+        impl_->smParamStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+        impl_->smSectionStack = [NSStackView stackViewWithViews:@[
+            smCaption, smStateLabelRow, impl_->smStateDropdown, impl_->smParamStack
+        ]];
+        impl_->smSectionStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smSectionStack.alignment = NSLayoutAttributeLeading;
+        impl_->smSectionStack.spacing = 4.0;
+        impl_->smSectionStack.hidden = YES;
+
         // Root vertical stack.
-        impl_->rootStack =
-            [NSStackView stackViewWithViews:@[ topRow, transportRow, scrubberRow, speedRow ]];
+        impl_->rootStack = [NSStackView stackViewWithViews:@[
+            topRow, transportRow, scrubberRow, impl_->eventMarkerView, speedRow, eventHeaderRow,
+            impl_->eventScrollView, impl_->smSectionStack
+        ]];
         impl_->rootStack.orientation = NSUserInterfaceLayoutOrientationVertical;
         impl_->rootStack.alignment = NSLayoutAttributeLeading;
         impl_->rootStack.spacing = 6.0;
@@ -246,6 +559,16 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             [impl_->rootStack.trailingAnchor
                 constraintLessThanOrEqualToAnchor:impl_->containerView.trailingAnchor
                                          constant:-8],
+            // Make the event marker view stretch to match the scrubber width.
+            [impl_->eventMarkerView.leadingAnchor
+                constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
+            [impl_->eventMarkerView.trailingAnchor
+                constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
+            // Make the event scroll view stretch too.
+            [impl_->eventScrollView.leadingAnchor
+                constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
+            [impl_->eventScrollView.trailingAnchor
+                constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
         ]];
     }
 }
@@ -266,6 +589,15 @@ CocoaAnimationView::~CocoaAnimationView()
         impl_->speedSlider = nil;
         impl_->speedLabel = nil;
         impl_->loopCheckbox = nil;
+        impl_->eventMarkerView = nil;
+        impl_->eventListStack = nil;
+        impl_->addEventButton = nil;
+        impl_->removeEventButton = nil;
+        impl_->eventScrollView = nil;
+        impl_->smSectionStack = nil;
+        impl_->smStateLabel = nil;
+        impl_->smStateDropdown = nil;
+        impl_->smParamStack = nil;
         impl_->delegate = nil;
     }
 }
@@ -365,6 +697,249 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
         impl_->scrubber.enabled = enabled;
         impl_->speedSlider.enabled = enabled;
         impl_->loopCheckbox.enabled = enabled;
+        impl_->addEventButton.enabled = enabled;
+        impl_->removeEventButton.enabled = enabled;
+
+        // Track current scrubber time for the add-event button.
+        impl_->currentScrubberTime = s.currentTime;
+
+        // Build a set of fired event names for flash highlighting.
+        NSMutableSet<NSString*>* firedNames = [NSMutableSet set];
+        for (const auto& f : s.firedEvents)
+            [firedNames addObject:[NSString stringWithUTF8String:f.c_str()]];
+
+        // Update event marker overlay.
+        {
+            NSMutableArray<NSNumber*>* positions = [NSMutableArray array];
+            NSMutableSet<NSNumber*>* firedIdx = [NSMutableSet set];
+            const float dur = (s.duration > 0.0f) ? s.duration : 1.0f;
+            for (size_t i = 0; i < s.events.size(); ++i)
+            {
+                float normalized = s.events[i].time / dur;
+                [positions addObject:@(normalized)];
+                NSString* eName = [NSString stringWithUTF8String:s.events[i].name.c_str()];
+                if ([firedNames containsObject:eName])
+                    [firedIdx addObject:@(i)];
+            }
+            impl_->eventMarkerView.markerPositions = positions;
+            impl_->eventMarkerView.firedIndices = firedIdx;
+            impl_->eventMarkerView.selectedIndex = impl_->selectedEventIndex;
+            [impl_->eventMarkerView setNeedsDisplay:YES];
+        }
+
+        // Update event list rows.
+        {
+            // Remove existing rows.
+            NSArray<NSView*>* existing = [impl_->eventListStack.arrangedSubviews copy];
+            for (NSView* v in existing)
+            {
+                [impl_->eventListStack removeArrangedSubview:v];
+                [v removeFromSuperview];
+            }
+
+            // Weak-capture impl for edit callbacks.
+            auto* implPtr = impl_.get();
+
+            for (size_t i = 0; i < s.events.size(); ++i)
+            {
+                EventRowView* row = [[EventRowView alloc] initWithFrame:NSMakeRect(0, 0, 380, 22)];
+                row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                row.alignment = NSLayoutAttributeCenterY;
+                row.spacing = 6.0;
+                row.eventIndex = (int)i;
+
+                NSString* eName = [NSString stringWithUTF8String:s.events[i].name.c_str()];
+                BOOL fired = [firedNames containsObject:eName];
+                row.isFired = fired;
+
+                // Name field (editable).
+                NSTextField* nameField =
+                    [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 150, 20)];
+                nameField.stringValue = eName;
+                nameField.font = [NSFont systemFontOfSize:11.0];
+                nameField.bordered = YES;
+                nameField.bezeled = YES;
+                nameField.editable = YES;
+                nameField.selectable = YES;
+                nameField.bezelStyle = NSTextFieldRoundedBezel;
+                nameField.controlSize = NSControlSizeSmall;
+                if (fired)
+                    nameField.textColor = [NSColor systemYellowColor];
+                else
+                    nameField.textColor = [NSColor labelColor];
+                [nameField setContentHuggingPriority:200
+                                      forOrientation:NSLayoutConstraintOrientationHorizontal];
+                row.nameField = nameField;
+
+                // Time field (editable).
+                NSTextField* timeField =
+                    [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 60, 20)];
+                timeField.stringValue = [NSString stringWithFormat:@"%.3f", s.events[i].time];
+                timeField.font = [NSFont monospacedDigitSystemFontOfSize:10.0
+                                                                  weight:NSFontWeightRegular];
+                timeField.bordered = YES;
+                timeField.bezeled = YES;
+                timeField.editable = YES;
+                timeField.selectable = YES;
+                timeField.bezelStyle = NSTextFieldRoundedBezel;
+                timeField.controlSize = NSControlSizeSmall;
+                if (fired)
+                    timeField.textColor = [NSColor systemYellowColor];
+                else
+                    timeField.textColor = [NSColor secondaryLabelColor];
+                [timeField setContentHuggingPriority:750
+                                      forOrientation:NSLayoutConstraintOrientationHorizontal];
+                row.timeField = timeField;
+
+                // Wire up editing via target/action on the delegate.
+                nameField.target = implPtr->delegate;
+                nameField.tag = (int)i;
+                timeField.target = implPtr->delegate;
+                timeField.tag = (int)i;
+                nameField.action = @selector(eventFieldEdited:);
+                timeField.action = @selector(eventFieldEdited:);
+
+                // Highlight the selected row.
+                if ((int)i == implPtr->selectedEventIndex)
+                {
+                    row.wantsLayer = YES;
+                    row.layer.backgroundColor = [NSColor selectedContentBackgroundColor].CGColor;
+                    row.layer.cornerRadius = 3.0;
+                }
+
+                // Add a click gesture to select this row.
+                NSClickGestureRecognizer* click =
+                    [[NSClickGestureRecognizer alloc] initWithTarget:implPtr->delegate
+                                                              action:@selector(eventRowClicked:)];
+                [row addGestureRecognizer:click];
+
+                [row addArrangedSubview:nameField];
+                [row addArrangedSubview:timeField];
+                [impl_->eventListStack addArrangedSubview:row];
+            }
+        }
+
+        // Update state machine section.
+        impl_->smSectionStack.hidden = !s.hasStateMachine;
+        if (s.hasStateMachine)
+        {
+            // Current state label.
+            NSString* stateStr = s.currentStateName.empty()
+                                     ? @"(none)"
+                                     : [NSString stringWithUTF8String:s.currentStateName.c_str()];
+            impl_->smStateLabel.stringValue = stateStr;
+
+            // State dropdown.
+            {
+                NSMutableArray<NSString*>* stateItems = [NSMutableArray array];
+                for (const auto& sn : s.stateNames)
+                    [stateItems addObject:[NSString stringWithUTF8String:sn.c_str()]];
+
+                BOOL stateListChanged = NO;
+                if ((NSInteger)stateItems.count != impl_->smStateDropdown.numberOfItems)
+                {
+                    stateListChanged = YES;
+                }
+                else
+                {
+                    for (NSInteger i = 0; i < (NSInteger)stateItems.count; ++i)
+                    {
+                        if (![[impl_->smStateDropdown itemTitleAtIndex:i]
+                                isEqualToString:stateItems[i]])
+                        {
+                            stateListChanged = YES;
+                            break;
+                        }
+                    }
+                }
+
+                if (stateListChanged)
+                {
+                    [impl_->smStateDropdown removeAllItems];
+                    if (stateItems.count == 0)
+                        [impl_->smStateDropdown addItemWithTitle:@"(none)"];
+                    else
+                        [impl_->smStateDropdown addItemsWithTitles:stateItems];
+                }
+
+                impl_->smStateDropdown.enabled = (stateItems.count > 0);
+                if (s.currentStateIndex >= 0 &&
+                    s.currentStateIndex < impl_->smStateDropdown.numberOfItems)
+                {
+                    [impl_->smStateDropdown selectItemAtIndex:s.currentStateIndex];
+                }
+            }
+
+            // Parameter rows.
+            {
+                NSArray<NSView*>* existingParams = [impl_->smParamStack.arrangedSubviews copy];
+                for (NSView* v in existingParams)
+                {
+                    [impl_->smParamStack removeArrangedSubview:v];
+                    [v removeFromSuperview];
+                }
+
+                for (const auto& p : s.params)
+                {
+                    NSString* paramName = [NSString stringWithUTF8String:p.name.c_str()];
+
+                    NSTextField* label = [NSTextField labelWithString:paramName];
+                    label.font = [NSFont systemFontOfSize:11.0];
+                    label.textColor = [NSColor labelColor];
+                    [label setContentHuggingPriority:750
+                                      forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+                    if (p.isBool)
+                    {
+                        NSButton* checkbox =
+                            [NSButton checkboxWithTitle:@""
+                                                 target:impl_->delegate
+                                                 action:@selector(paramCheckboxChanged:)];
+                        checkbox.controlSize = NSControlSizeSmall;
+                        checkbox.state =
+                            (p.value > 0.5f) ? NSControlStateValueOn : NSControlStateValueOff;
+                        checkbox.toolTip = paramName;
+
+                        NSStackView* row = [NSStackView stackViewWithViews:@[ label, checkbox ]];
+                        row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                        row.alignment = NSLayoutAttributeCenterY;
+                        row.spacing = 6.0;
+                        [impl_->smParamStack addArrangedSubview:row];
+                    }
+                    else
+                    {
+                        NSSlider* slider =
+                            [NSSlider sliderWithValue:p.value
+                                             minValue:0.0
+                                             maxValue:3.0
+                                               target:impl_->delegate
+                                               action:@selector(paramSliderChanged:)];
+                        slider.controlSize = NSControlSizeSmall;
+                        slider.continuous = YES;
+                        slider.toolTip = paramName;
+                        [slider setContentHuggingPriority:200
+                                           forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+                        NSTextField* valueLabel = [NSTextField
+                            labelWithString:[NSString stringWithFormat:@"%.2f", p.value]];
+                        valueLabel.font =
+                            [NSFont monospacedDigitSystemFontOfSize:10.0
+                                                             weight:NSFontWeightRegular];
+                        valueLabel.textColor = [NSColor secondaryLabelColor];
+                        [valueLabel
+                            setContentHuggingPriority:750
+                                       forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+                        NSStackView* row =
+                            [NSStackView stackViewWithViews:@[ label, slider, valueLabel ]];
+                        row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                        row.alignment = NSLayoutAttributeCenterY;
+                        row.spacing = 6.0;
+                        [impl_->smParamStack addArrangedSubview:row];
+                    }
+                }
+            }
+        }
 
         impl_->delegate.suppressCallbacks = NO;
     }
@@ -437,6 +1012,74 @@ void CocoaAnimationView::setLoopChangedCallback(LoopChangedCallback cb)
     impl_->delegate.onLoopChanged = ^(BOOL looping) {
       if (*captured)
           (*captured)(looping);
+    };
+}
+
+void CocoaAnimationView::setEventAddedCallback(EventAddedCallback cb)
+{
+    impl_->eventAddedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+
+    // The delegate's addEventClicked: calls onEventAdded with a sentinel
+    // time of 0.0f. We override the block to use the real scrubber time
+    // and generate a unique default name.
+    impl_->delegate.onEventAdded = ^(float /*unusedTime*/, NSString* /*unusedName*/) {
+      float time = implPtr->currentScrubberTime;
+      std::string name = "event_" + std::to_string(implPtr->eventCounter++);
+      if (implPtr->eventAddedCb)
+          implPtr->eventAddedCb(time, name);
+    };
+
+    impl_->addEventButton.target = impl_->delegate;
+    impl_->addEventButton.action = @selector(addEventClicked:);
+}
+
+void CocoaAnimationView::setEventRemovedCallback(EventRemovedCallback cb)
+{
+    impl_->eventRemovedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+
+    // The delegate's removeEventClicked: calls onEventRemoved with -1.
+    // We resolve -1 to the actual selected event index here.
+    impl_->delegate.onEventRemoved = ^(int index) {
+      int resolvedIndex = (index < 0) ? implPtr->selectedEventIndex : index;
+      if (resolvedIndex >= 0 && implPtr->eventRemovedCb)
+          implPtr->eventRemovedCb(resolvedIndex);
+      implPtr->selectedEventIndex = -1;
+    };
+
+    impl_->removeEventButton.target = impl_->delegate;
+    impl_->removeEventButton.action = @selector(removeEventClicked:);
+}
+
+void CocoaAnimationView::setEventEditedCallback(EventEditedCallback cb)
+{
+    impl_->eventEditedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+
+    impl_->delegate.onEventEdited = ^(int index, float newTime, NSString* newName) {
+      if (implPtr->eventEditedCb)
+          implPtr->eventEditedCb(index, newTime, std::string([newName UTF8String]));
+    };
+}
+
+void CocoaAnimationView::setStateForceSetCallback(StateForceSetCallback cb)
+{
+    impl_->stateForceSetCb = std::move(cb);
+    auto* captured = &impl_->stateForceSetCb;
+    impl_->delegate.onStateForceSet = ^(int stateIndex) {
+      if (*captured)
+          (*captured)(stateIndex);
+    };
+}
+
+void CocoaAnimationView::setParamChangedCallback(ParamChangedCallback cb)
+{
+    impl_->paramChangedCb = std::move(cb);
+    auto* captured = &impl_->paramChangedCb;
+    impl_->delegate.onParamChanged = ^(NSString* paramName, float value) {
+      if (*captured)
+          (*captured)(std::string([paramName UTF8String]), value);
     };
 }
 

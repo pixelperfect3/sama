@@ -39,8 +39,11 @@ void AnimStateMachine::addTransition(uint32_t fromState, uint32_t toState, float
     if (fromState >= states.size())
         return;
 
+    uint32_t hash = fnv1aHash(param);
+    paramNames[hash] = param;
+
     TransitionCondition cond;
-    cond.paramHash = fnv1aHash(param);
+    cond.paramHash = hash;
     cond.compare = compare;
     cond.threshold = threshold;
 

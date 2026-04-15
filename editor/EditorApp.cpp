@@ -40,6 +40,7 @@
 #include "editor/undo/CreateEntityCommand.h"
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
+#include "engine/animation/AnimStateMachine.h"
 #include "engine/animation/AnimationClip.h"
 #include "engine/animation/AnimationComponents.h"
 #include "engine/animation/AnimationResources.h"
@@ -1800,6 +1801,143 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         if (impl_->animationPanel)
                             impl_->animationPanel->markDirty();
                     }
+                });
+
+            animView->setEventAddedCallback(
+                [this, getAnim](float time, const std::string& name)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        auto* clip = impl_->animationResources.getClipMut(a->clipId);
+                        if (clip)
+                        {
+                            clip->addEvent(time, name);
+                            if (impl_->animationPanel)
+                                impl_->animationPanel->markDirty();
+                        }
+                    }
+                });
+
+            animView->setEventRemovedCallback(
+                [this, getAnim](int eventIndex)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        auto* clip = impl_->animationResources.getClipMut(a->clipId);
+                        if (clip && eventIndex >= 0 &&
+                            static_cast<size_t>(eventIndex) < clip->events.size())
+                        {
+                            clip->events.erase(clip->events.begin() + eventIndex);
+                            if (impl_->animationPanel)
+                                impl_->animationPanel->markDirty();
+                        }
+                    }
+                });
+
+            animView->setEventEditedCallback(
+                [this, getAnim](int eventIndex, float newTime, const std::string& newName)
+                {
+                    if (auto* a = getAnim())
+                    {
+                        auto* clip = impl_->animationResources.getClipMut(a->clipId);
+                        if (clip && eventIndex >= 0 &&
+                            static_cast<size_t>(eventIndex) < clip->events.size())
+                        {
+                            auto& evt = clip->events[eventIndex];
+                            evt.name = newName;
+                            evt.nameHash = animation::fnv1a(newName.c_str());
+                            evt.time = newTime;
+                            // Re-sort events by time.
+                            std::sort(clip->events.begin(), clip->events.end(),
+                                      [](const animation::AnimationEvent& a,
+                                         const animation::AnimationEvent& b)
+                                      { return a.time < b.time; });
+                            if (impl_->animationPanel)
+                                impl_->animationPanel->markDirty();
+                        }
+                    }
+                });
+
+            animView->setStateForceSetCallback(
+                [this, getAnim](int stateIndex)
+                {
+                    using engine::animation::AnimStateMachineComponent;
+                    ecs::EntityID e = impl_->editorState.primarySelection();
+                    if (e == ecs::INVALID_ENTITY)
+                        return;
+                    auto* smComp = impl_->registry.get<AnimStateMachineComponent>(e);
+                    if (!smComp || !smComp->machine)
+                        return;
+                    if (stateIndex < 0 ||
+                        static_cast<size_t>(stateIndex) >= smComp->machine->states.size())
+                        return;
+
+                    smComp->currentState = static_cast<uint32_t>(stateIndex);
+
+                    // Sync AnimatorComponent to match the new state.
+                    if (auto* a = getAnim())
+                    {
+                        const auto& st = smComp->machine->states[stateIndex];
+                        a->clipId = st.clipId;
+                        a->speed = st.speed;
+                        a->playbackTime = 0.0f;
+                        if (st.loop)
+                            a->flags |= AnimatorComponent::kFlagLooping;
+                        else
+                            a->flags &= ~AnimatorComponent::kFlagLooping;
+                        a->flags |= AnimatorComponent::kFlagSampleOnce;
+                    }
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setParamChangedCallback(
+                [this](const std::string& paramName, float value)
+                {
+                    using engine::animation::AnimStateMachineComponent;
+                    ecs::EntityID e = impl_->editorState.primarySelection();
+                    if (e == ecs::INVALID_ENTITY)
+                        return;
+                    auto* smComp = impl_->registry.get<AnimStateMachineComponent>(e);
+                    if (!smComp)
+                        return;
+
+                    // Determine if this param is a bool by checking conditions.
+                    bool isBool = false;
+                    if (smComp->machine)
+                    {
+                        uint32_t hash = animation::fnv1aHash(paramName);
+                        for (const auto& st : smComp->machine->states)
+                        {
+                            for (const auto& tr : st.transitions)
+                            {
+                                for (const auto& cond : tr.conditions)
+                                {
+                                    if (cond.paramHash == hash &&
+                                        (cond.compare ==
+                                             animation::TransitionCondition::Compare::BoolTrue ||
+                                         cond.compare ==
+                                             animation::TransitionCondition::Compare::BoolFalse))
+                                    {
+                                        isBool = true;
+                                        break;
+                                    }
+                                }
+                                if (isBool)
+                                    break;
+                            }
+                            if (isBool)
+                                break;
+                        }
+                    }
+
+                    if (isBool)
+                        smComp->setBool(paramName, value > 0.5f);
+                    else
+                        smComp->setFloat(paramName, value);
+
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
                 });
         }
     }

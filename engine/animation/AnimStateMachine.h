@@ -66,6 +66,11 @@ struct AnimStateMachine
     std::vector<AnimState> states;
     uint32_t defaultState = 0;  // index of initial state
 
+    // Parameter name registry: hash -> original name string.
+    // Populated automatically by addTransition() so the editor can display
+    // human-readable parameter names.
+    std::unordered_map<uint32_t, std::string> paramNames;
+
     // Builder API
     uint32_t addState(const std::string& name, uint32_t clipId, bool loop = true,
                       float speed = 1.0f);

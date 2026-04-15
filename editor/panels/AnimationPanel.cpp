@@ -2,8 +2,10 @@
 
 #include "editor/EditorState.h"
 #include "editor/platform/cocoa/CocoaAnimationView.h"
+#include "engine/animation/AnimStateMachine.h"
 #include "engine/animation/AnimationClip.h"
 #include "engine/animation/AnimationComponents.h"
+#include "engine/animation/AnimationEventQueue.h"
 #include "engine/animation/AnimationResources.h"
 #include "engine/ecs/Registry.h"
 
@@ -92,6 +94,98 @@ void AnimationPanel::update(float /*dt*/)
         s.playing = (flags & AnimatorComponent::kFlagPlaying) != 0;
         s.looping = (flags & AnimatorComponent::kFlagLooping) != 0;
         s.assetLabel = "entity";  // glTF asset label not tracked yet in Phase 1
+
+        // Populate event markers from the current clip.
+        if (currentClip)
+        {
+            s.events.reserve(currentClip->events.size());
+            for (const auto& evt : currentClip->events)
+            {
+                EventMarker marker;
+                marker.name = evt.name;
+                marker.time = evt.time;
+                s.events.push_back(std::move(marker));
+            }
+        }
+
+        // Populate fired events from AnimationEventQueue (if present).
+        if (currentClip)
+        {
+            const auto* queue = registry_.get<AnimationEventQueue>(entity);
+            if (queue)
+            {
+                for (const auto& rec : queue->events)
+                {
+                    // Resolve hash back to name by scanning clip events.
+                    for (const auto& evt : currentClip->events)
+                    {
+                        if (evt.nameHash == rec.nameHash)
+                        {
+                            s.firedEvents.push_back(evt.name);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Populate state machine data if the entity has one.
+    if (entity != ecs::INVALID_ENTITY)
+    {
+        const auto* smComp = registry_.get<AnimStateMachineComponent>(entity);
+        if (smComp && smComp->machine)
+        {
+            s.hasStateMachine = true;
+            const auto* machine = smComp->machine;
+
+            // State names.
+            s.stateNames.reserve(machine->states.size());
+            for (const auto& st : machine->states)
+                s.stateNames.push_back(st.name);
+
+            // Current state.
+            s.currentStateIndex = static_cast<int>(smComp->currentState);
+            if (smComp->currentState < machine->states.size())
+                s.currentStateName = machine->states[smComp->currentState].name;
+
+            // Parameters: build from the machine's paramNames registry,
+            // reading current values from the component's params map.
+            for (const auto& [hash, name] : machine->paramNames)
+            {
+                AnimationViewState::ParamInfo pi;
+                pi.name = name;
+
+                auto it = smComp->params.find(hash);
+                pi.value = (it != smComp->params.end()) ? it->second : 0.0f;
+
+                // Heuristic: if any transition uses BoolTrue/BoolFalse
+                // compare on this param, treat it as a boolean.
+                bool isBool = false;
+                for (const auto& st : machine->states)
+                {
+                    for (const auto& tr : st.transitions)
+                    {
+                        for (const auto& cond : tr.conditions)
+                        {
+                            if (cond.paramHash == hash &&
+                                (cond.compare == TransitionCondition::Compare::BoolTrue ||
+                                 cond.compare == TransitionCondition::Compare::BoolFalse))
+                            {
+                                isBool = true;
+                                break;
+                            }
+                        }
+                        if (isBool)
+                            break;
+                    }
+                    if (isBool)
+                        break;
+                }
+                pi.isBool = isBool;
+                s.params.push_back(std::move(pi));
+            }
+        }
     }
 
     view_->setState(s);
