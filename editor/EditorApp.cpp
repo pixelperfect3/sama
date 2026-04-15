@@ -1987,6 +1987,30 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         impl_->animationPanel->markDirty();
                 });
 
+            // Sync AnimatorComponent to match the state machine's current state.
+            auto syncAnimatorToCurrentState = [this]()
+            {
+                using engine::animation::AnimStateMachineComponent;
+                using engine::animation::AnimatorComponent;
+                ecs::EntityID e = impl_->editorState.primarySelection();
+                if (e == ecs::INVALID_ENTITY)
+                    return;
+                auto* smComp = impl_->registry.get<AnimStateMachineComponent>(e);
+                auto* ac = impl_->registry.get<AnimatorComponent>(e);
+                if (!smComp || !smComp->machine || !ac)
+                    return;
+                if (smComp->currentState >= smComp->machine->states.size())
+                    return;
+                const auto& st = smComp->machine->states[smComp->currentState];
+                ac->clipId = st.clipId;
+                ac->speed = st.speed;
+                if (st.loop)
+                    ac->flags |= AnimatorComponent::kFlagLooping;
+                else
+                    ac->flags &= ~AnimatorComponent::kFlagLooping;
+                ac->flags |= AnimatorComponent::kFlagSampleOnce;
+            };
+
             // Helper to find (or create) a mutable AnimStateMachine for the
             // selected entity. Returns nullptr if entity has no state machine.
             auto getMutableMachine = [this]() -> engine::animation::AnimStateMachine*
@@ -2016,7 +2040,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 });
 
             animView->setStateAddedCallback(
-                [this, getMutableMachine]()
+                [this, getMutableMachine, syncAnimatorToCurrentState]()
                 {
                     auto* machine = getMutableMachine();
                     if (!machine)
@@ -2024,12 +2048,13 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                     uint32_t clipId = 0;
                     std::string name = "State_" + std::to_string(machine->states.size());
                     machine->addState(name, clipId, true, 1.0f);
+                    syncAnimatorToCurrentState();
                     if (impl_->animationPanel)
                         impl_->animationPanel->markDirty();
                 });
 
             animView->setStateRemovedCallback(
-                [this, getMutableMachine](int stateIndex)
+                [this, getMutableMachine, syncAnimatorToCurrentState](int stateIndex)
                 {
                     auto* machine = getMutableMachine();
                     if (!machine)
@@ -2075,6 +2100,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                             smComp->currentState = 0;
                     }
 
+                    syncAnimatorToCurrentState();
                     if (impl_->animationPanel)
                     {
                         impl_->animationPanel->setSelectedState(-1);
@@ -2083,8 +2109,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 });
 
             animView->setStateEditedCallback(
-                [this, getMutableMachine](int stateIndex, const std::string& name, int clipIndex,
-                                          float speed, bool loop)
+                [this, getMutableMachine, syncAnimatorToCurrentState](
+                    int stateIndex, const std::string& name, int clipIndex, float speed, bool loop)
                 {
                     auto* machine = getMutableMachine();
                     if (!machine)
@@ -2093,8 +2119,6 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         return;
                     auto& st = machine->states[stateIndex];
 
-                    // Partial updates: only apply fields that have non-sentinel
-                    // values.
                     if (!name.empty())
                     {
                         st.name = name;
@@ -2104,11 +2128,10 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         st.clipId = static_cast<uint32_t>(clipIndex);
                     if (speed >= 0.0f)
                         st.speed = speed;
-                    // Loop is always set (no good sentinel for bool).
-                    // Only apply if name is empty (meaning this was a loop-only
-                    // edit) or speed < 0 (loop-only edit).
-                    if (name.empty() && clipIndex < 0 && speed < 0.0f)
-                        st.loop = loop;
+                    st.loop = loop;
+
+                    // If the edited state is the current state, sync the animator.
+                    syncAnimatorToCurrentState();
 
                     if (impl_->animationPanel)
                         impl_->animationPanel->markDirty();
