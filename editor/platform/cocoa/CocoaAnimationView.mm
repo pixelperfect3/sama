@@ -497,7 +497,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
 
         impl_->smParamStack = [[NSStackView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
         impl_->smParamStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        impl_->smParamStack.alignment = NSLayoutAttributeLeading;
+        impl_->smParamStack.alignment = NSLayoutAttributeWidth;
         impl_->smParamStack.spacing = 4.0;
         impl_->smParamStack.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -505,7 +505,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             smCaption, smStateLabelRow, impl_->smStateDropdown, impl_->smParamStack
         ]];
         impl_->smSectionStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        impl_->smSectionStack.alignment = NSLayoutAttributeLeading;
+        impl_->smSectionStack.alignment = NSLayoutAttributeWidth;
         impl_->smSectionStack.spacing = 4.0;
         impl_->smSectionStack.hidden = YES;
 
@@ -515,7 +515,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             impl_->eventListStack, impl_->smSectionStack
         ]];
         impl_->rootStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        impl_->rootStack.alignment = NSLayoutAttributeLeading;
+        impl_->rootStack.alignment = NSLayoutAttributeWidth;
         impl_->rootStack.spacing = 6.0;
         impl_->rootStack.translatesAutoresizingMaskIntoConstraints = NO;
 
