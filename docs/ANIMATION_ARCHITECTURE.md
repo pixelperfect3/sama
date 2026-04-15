@@ -677,7 +677,7 @@ The state machine provides a declarative way to manage animation transitions. A 
 ### Architecture
 
 - **`AnimStateMachine`** (shared, not per-entity): Contains a vector of `AnimState` entries, each with a clip ID, speed, loop flag, and a list of `StateTransition` rules. Built via a builder API: `addState()`, `addTransition()`, `addTransitionWithExitTime()`.
-- **`AnimStateMachineComponent`** (per-entity): Points to the shared machine, tracks `currentState` and `pendingState`, and holds a `std::unordered_map<uint32_t, float>` for float/bool parameters.
+- **`AnimStateMachineComponent`** (per-entity): Points to the shared machine, tracks `currentState`, and holds a `std::unordered_map<uint32_t, float>` for float/bool parameters.
 - **`AnimStateMachineSystem`**: Runs before `AnimationSystem` each frame. Evaluates transitions on the current state in order; the first transition whose conditions are all met is taken. Drives `AnimatorComponent` by setting `clipId`, `flags`, and blend state.
 
 ### Transitions

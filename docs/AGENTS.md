@@ -1507,7 +1507,7 @@ int main()
 | `AnimatorComponent` | `clipId`, `nextClipId`, `playbackTime`, `prevPlaybackTime`, `speed`, `blendFactor`, `blendDuration`, `blendElapsed`, `flags` | Animation playback state (36 bytes). `prevPlaybackTime` tracks time at frame start for event detection. |
 | `SkinComponent` | `boneMatrixOffset`, `boneCount` (both uint32) | Offset into per-frame bone matrix buffer. |
 | `AnimationEventQueue` | `events` (vector of AnimationEventRecord) | Per-entity queue of animation events that fired this frame. Game code polls and clears. |
-| `AnimStateMachineComponent` | `machine` (const AnimStateMachine*), `currentState`, `pendingState`, `params` (unordered_map) | Per-entity state machine runtime state. Set parameters via `setFloat()`/`setBool()`. |
+| `AnimStateMachineComponent` | `machine` (const AnimStateMachine*), `currentState`, `params` (unordered_map) | Per-entity state machine runtime state. Set parameters via `setFloat()`/`setBool()`. |
 | `PoseComponent` | `pose` (Pose*) | Arena-allocated FK pose, valid for one frame. |
 | `IkChainsComponent` | `chains` (InlinedVector of IkChainDef) | IK chain definitions (up to 4 inline). |
 | `IkTargetsComponent` | `targets` (InlinedVector of IkTarget) | World-space IK targets (parallel to chains). |

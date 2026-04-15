@@ -82,10 +82,9 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                 }
 
                 // Fire animation events for the interval we just advanced through.
-                const AnimationClip* evtClip = animRes.getClip(animComp.clipId);
-                if (evtClip && !evtClip->events.empty())
+                if (clip && !clip->events.empty())
                 {
-                    fireEvents(reg, entity, *evtClip, prevTime, animComp.playbackTime, isLooping);
+                    fireEvents(reg, entity, *clip, prevTime, animComp.playbackTime, isLooping);
                 }
             }
 
@@ -109,8 +108,8 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                 return;  // no valid clip
             }
 
-            // Handle blending if active.
-            Pose finalPose = poseA;
+            // Handle blending if active; otherwise avoid the copy entirely.
+            Pose finalPose;
             if (animComp.flags & AnimatorComponent::kFlagBlending)
             {
                 const AnimationClip* clipB = animRes.getClip(animComp.nextClipId);
@@ -141,6 +140,14 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
                         blendPoses(poseA, poseB, animComp.blendFactor, finalPose);
                     }
                 }
+                else
+                {
+                    finalPose = std::move(poseA);
+                }
+            }
+            else
+            {
+                finalPose = std::move(poseA);
             }
 
             // Compute final bone matrices.
@@ -221,10 +228,9 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                 }
 
                 // Fire animation events for the interval we just advanced through.
-                const AnimationClip* evtClip = animRes.getClip(animComp.clipId);
-                if (evtClip && !evtClip->events.empty())
+                if (clip && !clip->events.empty())
                 {
-                    fireEvents(reg, entity, *evtClip, prevTime, animComp.playbackTime, isLooping);
+                    fireEvents(reg, entity, *clip, prevTime, animComp.playbackTime, isLooping);
                 }
             }
 
@@ -246,8 +252,8 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                 return;
             }
 
-            // Handle blending if active.
-            Pose finalPose = poseA;
+            // Handle blending if active; otherwise avoid the copy entirely.
+            Pose finalPose;
             if (animComp.flags & AnimatorComponent::kFlagBlending)
             {
                 const AnimationClip* clipB = animRes.getClip(animComp.nextClipId);
@@ -275,6 +281,14 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                         blendPoses(poseA, poseB, animComp.blendFactor, finalPose);
                     }
                 }
+                else
+                {
+                    finalPose = std::move(poseA);
+                }
+            }
+            else
+            {
+                finalPose = std::move(poseA);
             }
 
             // Store the pose in PoseComponent for IK to modify.

@@ -64,7 +64,6 @@ EntityID createAnimEntity(Registry& reg, const AnimStateMachine& machine, uint32
     AnimStateMachineComponent smComp;
     smComp.machine = &machine;
     smComp.currentState = machine.defaultState;
-    smComp.pendingState = UINT32_MAX;
     reg.emplace<AnimStateMachineComponent>(e, std::move(smComp));
 
     return e;

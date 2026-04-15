@@ -69,17 +69,17 @@ void AnimStateMachine::addTransitionWithExitTime(uint32_t fromState, uint32_t to
 // AnimStateMachineComponent parameter accessors
 // ---------------------------------------------------------------------------
 
-void AnimStateMachineComponent::setFloat(const std::string& name, float value)
+void AnimStateMachineComponent::setFloat(std::string_view name, float value)
 {
     params[fnv1aHash(name)] = value;
 }
 
-void AnimStateMachineComponent::setBool(const std::string& name, bool value)
+void AnimStateMachineComponent::setBool(std::string_view name, bool value)
 {
     params[fnv1aHash(name)] = value ? 1.0f : 0.0f;
 }
 
-float AnimStateMachineComponent::getFloat(const std::string& name) const
+float AnimStateMachineComponent::getFloat(std::string_view name) const
 {
     auto it = params.find(fnv1aHash(name));
     if (it != params.end())
@@ -87,7 +87,7 @@ float AnimStateMachineComponent::getFloat(const std::string& name) const
     return 0.0f;
 }
 
-bool AnimStateMachineComponent::getBool(const std::string& name) const
+bool AnimStateMachineComponent::getBool(std::string_view name) const
 {
     auto it = params.find(fnv1aHash(name));
     if (it != params.end())

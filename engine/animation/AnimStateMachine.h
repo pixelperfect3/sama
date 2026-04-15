@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -9,7 +10,7 @@ namespace engine::animation
 {
 
 // FNV-1a hash for parameter names.
-inline uint32_t fnv1aHash(const std::string& str)
+inline uint32_t fnv1aHash(std::string_view str)
 {
     uint32_t hash = 2166136261u;
     for (char c : str)
@@ -85,16 +86,15 @@ struct AnimStateMachineComponent
 {
     const AnimStateMachine* machine = nullptr;  // shared definition (not owned)
     uint32_t currentState = 0;
-    uint32_t pendingState = UINT32_MAX;  // UINT32_MAX = no pending transition
 
     // Parameter storage — flat map for speed.
     // Game code sets parameters; the system evaluates conditions against them.
     std::unordered_map<uint32_t, float> params;  // paramHash -> value
 
-    void setFloat(const std::string& name, float value);
-    void setBool(const std::string& name, bool value);  // stored as 1.0/0.0
-    float getFloat(const std::string& name) const;
-    bool getBool(const std::string& name) const;
+    void setFloat(std::string_view name, float value);
+    void setBool(std::string_view name, bool value);  // stored as 1.0/0.0
+    float getFloat(std::string_view name) const;
+    bool getBool(std::string_view name) const;
 };
 
 }  // namespace engine::animation
