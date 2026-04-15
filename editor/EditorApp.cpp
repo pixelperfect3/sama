@@ -44,6 +44,7 @@
 #include "engine/animation/AnimStateMachine.h"
 #include "engine/animation/AnimationClip.h"
 #include "engine/animation/AnimationComponents.h"
+#include "engine/animation/AnimationEventQueue.h"
 #include "engine/animation/AnimationResources.h"
 #include "engine/animation/AnimationSerializer.h"
 #include "engine/animation/AnimationSystem.h"
@@ -3354,6 +3355,10 @@ void EditorApp::run()
         // skinned mesh pose. Entities without kFlagPlaying simply don't
         // advance their time — the kFlagSampleOnce path lets the scrubber
         // force a fresh sample while paused.
+        // Clear per-entity event queues from last frame so markers reset.
+        impl_->registry.view<engine::animation::AnimationEventQueue>().each(
+            [](ecs::EntityID, engine::animation::AnimationEventQueue& q) { q.clear(); });
+
         impl_->animationSystem.update(impl_->registry, dt, impl_->animationResources,
                                       impl_->frameArena->resource());
         if (impl_->animationPanel)
