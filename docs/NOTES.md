@@ -652,13 +652,15 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 - [x] State dropdown to force-set current state (`StateForceSetCallback`).
 - [x] Parameter editing (`ParamChangedCallback`) writes back to `AnimStateMachineComponent::params`.
 
-*Phase 3 — Visual state machine node graph (NOT STARTED)*
-- [ ] Custom NSView with draggable state nodes (rounded rectangles with clip name + speed).
-- [ ] Bezier curve arrows between states for transitions (drag from edge to create).
-- [ ] Click arrow to edit transition properties in an inspector sidebar.
-- [ ] Current state highlighted green, active blend arrow pulses.
-- [ ] Zoom/pan with scroll wheel and drag.
-- [ ] This is the industry standard (Unity Animator, Unreal AnimBP) and the ultimate goal.
+*Phase 3 — Visual state machine node graph (DONE)*
+- [x] `StateMachineGraphView` custom NSView in CocoaAnimationView.mm (Pimpl, no AppKit in header).
+- [x] State nodes as rounded rectangles (120x50px) with name + clip. Green border = active state, blue = selected. Draggable repositioning.
+- [x] Bezier curve transition arrows with arrowheads. Self-transitions as loops. Condition summary labels with background pills.
+- [x] Click node to select, double-click to force-set current state, click arrow to select transition.
+- [x] Right-click context menus: "Delete" on state, "Add State" on empty area.
+- [x] Scroll wheel zoom (0.5x–2.0x, toward cursor), Option-drag to pan.
+- [x] Auto-layout: grid arrangement on first display, positions preserved across updates.
+- [x] Fully synced with list-based editor — same callbacks, same selection state, both update via setState.
 
 *Phase 4 — Serialization (sidecar files) (DONE)*
 - [x] `AnimationSerializer` API: `saveEvents()` / `loadEvents()` for `<model>.events.json`, `saveStateMachine()` / `loadStateMachine()` for `<model>.statemachine.json`.
