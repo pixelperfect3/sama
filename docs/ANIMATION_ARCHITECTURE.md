@@ -13,7 +13,7 @@ Skeletal animation adds the ability to deform meshes at runtime using a bone hie
 - **Pose**: The evaluated state of all joints at a specific point in time -- an array of local TRS transforms.
 - **Skinning**: The GPU process of blending bone matrices per vertex using bone indices and weights to deform the mesh.
 
-The architecture follows the engine's existing patterns: sparse-set ECS components for animation state, a dedicated `AnimationSystem` that runs each frame before `TransformSystem`, CPU-side pose evaluation with GPU-side vertex skinning via `u_model[]` (bgfx's built-in bone matrix array), and glTF 2.0 as the sole import path using the already-integrated cgltf parser.
+The architecture follows the engine's existing patterns: sparse-set ECS components for animation state, a dedicated `AnimationSystem` that runs each frame (after `TransformSystem` so that `WorldTransformComponent` is up to date), CPU-side pose evaluation with GPU-side vertex skinning via `u_model[]` (bgfx's built-in bone matrix array), and glTF 2.0 as the sole import path using the already-integrated cgltf parser.
 
 ---
 
@@ -28,24 +28,28 @@ All CPU-side animation data lives in `engine/animation/`. These are plain data t
 namespace engine::animation
 {
 
+struct JointRestPose
+{
+    math::Vec3 position{0.0f};
+    math::Quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    math::Vec3 scale{1.0f};
+};
+
 struct Joint                              // offset  size
 {
-    math::Mat4 inverseBindMatrix{1.0f};   //  0      64  mesh space → bone-local space
+    math::Mat4 inverseBindMatrix{1.0f};   //  0      64  mesh space -> bone-local space
     int32_t parentIndex = -1;             // 64       4  -1 = root joint (no parent)
     uint32_t nameHash = 0;               // 68       4  FNV-1a hash of joint name
-    uint8_t _pad[8] = {};               // 72       8  trailing alignment padding
+    uint8_t _pad[8] = {};                // 72       8  trailing alignment padding
 };  // total: 80 bytes (aligned to 16 for Mat4)
 static_assert(sizeof(Joint) == 80);
 
 struct Skeleton
 {
-    std::vector<Joint> joints;  // ordered such that parent always precedes child
+    std::vector<Joint> joints;             // ordered such that parent always precedes child
+    std::vector<JointRestPose> restPoses;  // bind/rest pose per joint (parallel to joints)
 
 #if !defined(NDEBUG)
-    // Debug-only: human-readable joint names, parallel to joints[].
-    // Populated by GltfLoader from glTF node names. Compiled out in
-    // release builds (NDEBUG is defined by CMake/Xcode/MSVC/NDK in
-    // Release mode — it's the C++ standard macro used by <cassert>).
     std::vector<std::string> debugJointNames;
 #endif
 
@@ -54,8 +58,6 @@ struct Skeleton
         return static_cast<uint32_t>(joints.size());
     }
 
-    // Find joint by name hash. Returns index or -1 if not found.
-    // Linear scan — fine for <128 joints, called at setup time (not per-frame).
     [[nodiscard]] int32_t findJoint(uint32_t hash) const noexcept
     {
         for (uint32_t i = 0; i < joints.size(); ++i)
@@ -66,6 +68,8 @@ struct Skeleton
 
 }  // namespace engine::animation
 ```
+
+**Rest pose rationale:** The `restPoses` vector stores the TRS transform of each joint as authored in the glTF file's node hierarchy. These are extracted from the glTF node's `translation`, `rotation`, and `scale` properties during loading. Previously, joints without animation channels defaulted to identity (position=0, rotation=identity, scale=1), which is incorrect for most skeletons -- identity assumes every joint sits at the origin with no rotation, producing collapsed or distorted meshes for any joint that lacks keyframes. With rest poses, `sampleClip()` initializes each joint to its bind pose before applying animated channels, so partially-animated clips (e.g., a face-only animation on a full-body skeleton) produce correct results.
 
 **Joint layout rationale:**
 - No `std::string` in Joint — avoids per-joint heap allocation. Joint names are stored as a 32-bit FNV-1a hash, which is sufficient for gameplay lookups (attach weapon to hand bone, IK targets, ragdoll mapping).
@@ -99,11 +103,23 @@ struct JointChannel
     std::vector<Keyframe<math::Vec3>> scales;
 };
 
+// A named event marker within an animation clip.
+struct AnimationEvent
+{
+    float time = 0.0f;      // timestamp in seconds
+    uint32_t nameHash = 0;  // FNV-1a hash of event name for fast comparison
+    std::string name;       // human-readable name (e.g., "footstep_left")
+};
+
 struct AnimationClip
 {
     std::string name;
     float duration = 0.0f;           // total length in seconds
     std::vector<JointChannel> channels;
+    std::vector<AnimationEvent> events;  // sorted by time
+
+    // Insert an event in sorted order by time and compute its name hash.
+    void addEvent(float time, const std::string& eventName);
 };
 
 }  // namespace engine::animation
@@ -157,18 +173,28 @@ References a `Skeleton` stored in a shared resource table (analogous to `RenderR
 ```cpp
 struct AnimatorComponent                // offset  size
 {
+    static constexpr uint8_t kFlagLooping   = 0x01;
+    static constexpr uint8_t kFlagPlaying   = 0x02;
+    static constexpr uint8_t kFlagBlending  = 0x04;
+    static constexpr uint8_t kFlagSampleOnce = 0x08;  // editor scrub: sample one frame while paused
+
     uint32_t clipId;                    //  0       4  -- current clip index
     uint32_t nextClipId;                //  4       4  -- blend target clip (UINT32_MAX = none)
     float playbackTime;                 //  8       4  -- current time in seconds
-    float speed;                        // 12       4  -- playback rate multiplier
-    float blendFactor;                  // 16       4  -- 0.0 = current, 1.0 = fully blended to next
-    float blendDuration;               // 20       4  -- total crossfade duration
-    float blendElapsed;                // 24       4  -- elapsed crossfade time
-    uint8_t flags;                      // 28       1  -- bit 0: looping, bit 1: playing, bit 2: blending
-    uint8_t _pad[3];                    // 29       3
-};  // total: 32 bytes
-static_assert(sizeof(AnimatorComponent) == 32);
+    float prevPlaybackTime;             // 12       4  -- time at start of this frame (for event detection)
+    float speed;                        // 16       4  -- playback rate multiplier
+    float blendFactor;                  // 20       4  -- 0.0 = current, 1.0 = fully blended
+    float blendDuration;               // 24       4  -- total crossfade duration
+    float blendElapsed;                // 28       4  -- elapsed crossfade time
+    uint8_t flags;                      // 32       1  -- see kFlag* constants above
+    uint8_t _pad[3];                    // 33       3
+};  // total: 36 bytes
+static_assert(sizeof(AnimatorComponent) == 36);
 ```
+
+**`prevPlaybackTime` rationale:** Added to support animation event detection. The system needs to know both the previous and current playback time each frame to fire events that fall within the interval `(prevTime, newTime]`. Without it, there is no reliable way to detect which events were crossed during the frame. The 4-byte cost (32 -> 36 bytes) is negligible for the per-entity animation state.
+
+**`kFlagSampleOnce` rationale:** The editor animation panel allows scrubbing while paused. Setting `kFlagSampleOnce` causes `AnimationSystem` to re-evaluate the pose at the current `playbackTime` without advancing time. The flag is consumed (cleared) after one frame, so it does not fire events repeatedly. This prevents the editor from polluting the event queue during scrubbing.
 
 ### 3.3 SkinComponent
 
@@ -187,7 +213,7 @@ The `boneMatrixOffset` indexes into a frame-local array of `mat4` values that `A
 
 ## 4. AnimationSystem
 
-A new system in `engine/animation/AnimationSystem.h`. In the DAG, it declares `Reads = TypeList<SkeletonComponent>` and `Writes = TypeList<AnimatorComponent, SkinComponent>`. It must execute before `TransformSystem` and before `DrawCallBuildSystem`.
+A new system in `engine/animation/AnimationSystem.h`. In the DAG, it declares `Reads = TypeList<SkeletonComponent>` and `Writes = TypeList<AnimatorComponent, SkinComponent, AnimationEventQueue>`. It must execute after `TransformSystem` (needs `WorldTransformComponent`) and before `DrawCallBuildSystem`.
 
 ### 4.1 Per-Frame Update
 
@@ -202,18 +228,27 @@ AnimationSystem::update(Registry& reg, float deltaTime,
     boneBuffer.reserve(estimatedTotalBones);  // e.g. visibleSkinCount * 64
 
     for each entity with (SkeletonComponent, AnimatorComponent, SkinComponent):
-        1. Advance playbackTime by deltaTime * speed
-        2. Handle looping (wrap) or clamping
-        3. Sample the current AnimationClip at playbackTime → Pose A
-        4. If blending: sample next clip at playbackTime → Pose B,
+        1. Record prevTime = playbackTime
+        2. Advance playbackTime by deltaTime * speed (if kFlagPlaying is set)
+        3. Handle looping (wrap) or clamping
+        4. Fire animation events for interval (prevTime, newTime]
+           - Handle loop wrap-around (two-range collection)
+           - Push events to AnimationEventQueue component
+           - Invoke global EventCallback if set
+           - Suppressed during kFlagSampleOnce (editor scrub)
+        5. Update prevPlaybackTime = playbackTime
+        6. Sample the current AnimationClip at playbackTime → Pose A
+           - Joint poses initialized from Skeleton::restPoses (not identity)
+        7. If blending: sample next clip at playbackTime → Pose B,
            advance blendElapsed, compute blendFactor = blendElapsed / blendDuration
            Pose = lerp(A, B, blendFactor) per joint (mix position/scale, slerp rotation)
            If blendFactor >= 1.0: promote next clip to current, clear blend state
-        5. Compute final bone matrices:
+        8. Compute final bone matrices:
            - Forward pass over joints (parent-first ordering guaranteed by Skeleton):
              worldTransform[i] = worldTransform[parent[i]] * localTRS(pose[i])
-           - finalMatrix[i] = worldTransform[i] * inverseBindMatrix[i]
-        6. Record boneMatrixOffset = boneBuffer.size()
+           - Read entity's WorldTransformComponent::matrix as entityWorld
+           - finalMatrix[i] = entityWorld * worldTransform[i] * inverseBindMatrix[i]
+        9. Record boneMatrixOffset = boneBuffer.size()
            Append finalMatrix[0..boneCount-1] to boneBuffer
            Write offset into SkinComponent::boneMatrixOffset
 
@@ -221,6 +256,10 @@ AnimationSystem::update(Registry& reg, float deltaTime,
     // It stays valid until frameArena.reset() at frame end.
 }
 ```
+
+**Entity world transform in bone matrices:** The `entityWorld` matrix (from `WorldTransformComponent`) is multiplied into every bone matrix so that skinned meshes render at the entity's scene-graph position. Without this, all skinned meshes would render at the world origin regardless of their `TransformComponent`. This requires `TransformSystem` to run before `AnimationSystem` in the frame loop.
+
+**Two-phase update (IK support):** `AnimationSystem` also provides `updatePoses()` and `computeBoneMatrices()` as separate methods. When IK is used, the frame loop calls `updatePoses()` first (which stores the FK pose in `PoseComponent`), then `IkSystem::update()` modifies the pose, then `computeBoneMatrices()` computes the final bone matrices from the (potentially IK-modified) pose.
 
 ### 4.2 Bone Matrix Buffer
 
@@ -502,16 +541,22 @@ For shadow passes (`submitShadowDrawCalls`): skinned meshes also need bone matri
 
 ```
 engine/animation/
-    Skeleton.h             -- Joint, Skeleton structs
-    AnimationClip.h        -- Keyframe<T>, JointChannel, AnimationClip
+    Skeleton.h             -- Joint, JointRestPose, Skeleton structs
+    AnimationClip.h        -- Keyframe<T>, JointChannel, AnimationEvent, AnimationClip
     Pose.h                 -- JointPose, Pose
     AnimationSampler.h     -- sampleClip(), blendPoses() free functions
     AnimationSampler.cpp
-    AnimationSystem.h      -- AnimationSystem class
+    AnimationSystem.h      -- AnimationSystem class (update, updatePoses, computeBoneMatrices)
     AnimationSystem.cpp
     AnimationComponents.h  -- SkeletonComponent, AnimatorComponent, SkinComponent
+    AnimationEventQueue.h  -- AnimationEventRecord, AnimationEventQueue component
     AnimationResources.h   -- shared skeleton/clip storage (analogous to RenderResources)
     AnimationResources.cpp
+    AnimStateMachine.h     -- AnimState, StateTransition, TransitionCondition, AnimStateMachine
+    AnimStateMachineSystem.h -- AnimStateMachineSystem (drives AnimatorComponent via state machine)
+    Hash.h                 -- fnv1a() hash function for event/parameter names
+    IkComponents.h         -- IkChainDef, IkTarget, IkChainsComponent, IkTargetsComponent, PoseComponent
+    IkSystem.h             -- IkSystem class (Two-Bone, CCD, FABRIK solvers)
 ```
 
 New/modified shader files:
@@ -583,19 +628,77 @@ The `Skeleton::joints` array is topologically sorted, so the forward pass that c
 
 ## 13. Implementation Sequence
 
-| Phase | Description | Dependencies |
-|-------|-------------|--------------|
-| A | Data structures: `Skeleton`, `AnimationClip`, `Pose`, `AnimationSampler` | None |
-| B | ECS components: `SkeletonComponent`, `AnimatorComponent`, `SkinComponent` | Phase A |
-| C | `AnimationSystem`: pose sampling, blending, bone matrix computation | Phases A, B |
-| D | glTF integration: extend `GltfLoader` to extract skins and animations | Phases A, cgltf |
-| E | Vertex format: add `boneIndices`/`boneWeights` to `MeshData`, `skinningLayout()`, `Mesh::skinningVbh` | Phase D |
-| F | GPU skinning: `vs_pbr_skinned.sc`, `vs_shadow_skinned.sc`, `varying_skinned.def.sc`, CMake shader compilation | Phase E |
-| G | Renderer integration: `DrawCallBuildSystem` skinned path, `BGFX_CONFIG_MAX_BONES=128` | Phases C, E, F |
-| H | `GltfSceneSpawner` extension: attach animation components to skinned entities | Phases B, D, G |
-| I | Tests and demo app | All above |
+| Phase | Description | Dependencies | Status |
+|-------|-------------|--------------|--------|
+| A | Data structures: `Skeleton`, `AnimationClip`, `Pose`, `AnimationSampler` | None | Done |
+| B | ECS components: `SkeletonComponent`, `AnimatorComponent`, `SkinComponent` | Phase A | Done |
+| C | `AnimationSystem`: pose sampling, blending, bone matrix computation | Phases A, B | Done |
+| D | glTF integration: extend `GltfLoader` to extract skins and animations | Phases A, cgltf | Done |
+| E | Vertex format: add `boneIndices`/`boneWeights` to `MeshData`, `skinningLayout()`, `Mesh::skinningVbh` | Phase D | Done |
+| F | GPU skinning: `vs_pbr_skinned.sc`, `vs_shadow_skinned.sc`, `varying_skinned.def.sc`, CMake shader compilation | Phase E | Done |
+| G | Renderer integration: `DrawCallBuildSystem` skinned path, `BGFX_CONFIG_MAX_BONES=128` | Phases C, E, F | Done |
+| H | `GltfSceneSpawner` extension: attach animation components to skinned entities | Phases B, D, G | Done |
+| I | Tests and demo app | All above | Done |
+| J | Skeleton rest poses: `JointRestPose`, rest pose extraction from glTF, `sampleClip` uses rest poses as defaults | Phase D | Done |
+| K | Animation events: `AnimationEvent`, `AnimationEventQueue`, `EventCallback`, event firing in AnimationSystem | Phase C | Done |
+| L | Animation state machine: `AnimStateMachine`, `AnimStateMachineSystem`, condition-based transitions | Phases C, K | Done |
+| M | IK system: Two-Bone, CCD, FABRIK solvers, `IkSystem`, `PoseComponent`, two-phase update | Phase C | Done |
+| N | Bone matrix world transform: multiply `WorldTransformComponent` into bone matrices | Phase C | Done |
+| O | glTF loader improvements: non-indexed meshes, default normals/UVs, joint-only node skipping, node names | Phase D | Done |
+| P | Editor animation panel: clip selector, transport controls, scrubber, speed, loop | Phase C | Done |
 
-Phases A-C are pure CPU with no rendering dependency and can be developed and tested immediately. Phase D extends existing code (GltfLoader) with additive changes. Phases E-G touch the rendering pipeline. Phase H wires everything together.
+All phases are complete.
+
+---
+
+## 14. Animation Events
+
+Animation events are named markers placed at specific times within an `AnimationClip`. When playback crosses an event marker, `AnimationSystem` fires it by writing an `AnimationEventRecord` to the entity's `AnimationEventQueue` component and invoking a global `EventCallback` if one is set.
+
+### Event Flow
+
+1. **Author:** Call `clip.addEvent(0.3f, "footstep_left")` to insert a sorted event at t=0.3s. The name is hashed via FNV-1a for fast runtime comparison.
+2. **Fire:** During `AnimationSystem::update()`, the system computes `(prevTime, newTime]` and collects all events in that interval. For looping clips that wrap around, two ranges are checked: `(prevTime, duration]` and `(-epsilon, newTime]`.
+3. **Poll:** Game code reads `AnimationEventQueue` each frame via `queue.has(nameHash)` or iterates `queue.events`. The queue is not automatically cleared -- game code clears it when consumed.
+4. **Callback:** `animSys.setEventCallback(...)` registers a global callback invoked synchronously during `update()` for every event that fires.
+
+### Design Decisions
+
+- **Polling queue + callback (not just one):** Game code that checks events once per frame uses the queue. Systems that need immediate reaction (e.g., audio footstep triggers) use the callback. Both coexist because they serve different consumption patterns.
+- **Suppressed during `kFlagSampleOnce`:** When the editor scrubs the timeline, `kFlagPlaying` is not set, so time does not advance and no events fire. This prevents scrubbing from spamming footstep sounds or spawning projectiles.
+- **Events stored on the clip, not externally:** glTF does not natively support animation events, so they are added programmatically. Storing them directly on `AnimationClip` (via `addEvent()`) keeps the data local and avoids a parallel lookup table.
+
+---
+
+## 15. Animation State Machine
+
+The state machine provides a declarative way to manage animation transitions. A shared `AnimStateMachine` definition (one per character archetype) is paired with a per-entity `AnimStateMachineComponent` that holds runtime state and parameters.
+
+### Architecture
+
+- **`AnimStateMachine`** (shared, not per-entity): Contains a vector of `AnimState` entries, each with a clip ID, speed, loop flag, and a list of `StateTransition` rules. Built via a builder API: `addState()`, `addTransition()`, `addTransitionWithExitTime()`.
+- **`AnimStateMachineComponent`** (per-entity): Points to the shared machine, tracks `currentState` and `pendingState`, and holds a `std::unordered_map<uint32_t, float>` for float/bool parameters.
+- **`AnimStateMachineSystem`**: Runs before `AnimationSystem` each frame. Evaluates transitions on the current state in order; the first transition whose conditions are all met is taken. Drives `AnimatorComponent` by setting `clipId`, `flags`, and blend state.
+
+### Transitions
+
+- **Conditions:** Each `StateTransition` has a list of `TransitionCondition` entries. All must be true for the transition to fire. Conditions compare a parameter (by name hash) against a threshold using `Compare::Greater`, `Less`, `Equal`, `NotEqual`, `BoolTrue`, or `BoolFalse`.
+- **Exit time:** `addTransitionWithExitTime(from, to, blendDuration, exitTime)` creates a transition that waits until playback reaches `exitTime` (normalized 0..1) before transitioning. Useful for "play attack animation to 80% completion, then return to idle."
+- **Blend duration:** Every transition specifies a crossfade duration in seconds. The system sets up the blend on `AnimatorComponent` and `AnimationSystem` handles the actual pose interpolation.
+
+---
+
+## 16. glTF Loader Improvements
+
+Several improvements to `GltfLoader` and `GltfSceneSpawner` were made alongside the animation system:
+
+- **Non-indexed mesh support:** Meshes without an index buffer now generate sequential indices `{0, 1, 2, ...}` automatically, rather than failing to load.
+- **Default normals:** Meshes without a `NORMAL` attribute get `(0, 1, 0)` normals for every vertex, enabling surface buffer creation.
+- **Default UVs:** Meshes without `TEXCOORD_0` get zero UVs, enabling the surface vertex buffer to be created for meshes that have normals but no UVs.
+- **Joint-only node skipping:** `GltfAsset::Node` and `CpuSceneData::Node` gained an `isJoint` flag. `GltfSceneSpawner` skips joint-only nodes (nodes that are skeleton joints but have no mesh), avoiding the creation of unnecessary empty entities in the ECS.
+- **Node names:** `GltfSceneSpawner` now assigns a `NameComponent` to spawned entities using the glTF node name, making hierarchy debugging much easier.
+- **Imported animations start paused:** `GltfSceneSpawner` sets `kFlagLooping` but not `kFlagPlaying` on imported `AnimatorComponent`. This prevents animations from auto-playing on spawn; game code explicitly starts playback when ready.
+- **Tangent generation:** Works without the original normal accessor by using the generated normals.
 
 ---
 

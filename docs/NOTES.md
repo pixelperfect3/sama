@@ -957,8 +957,41 @@ Header-only camera in `engine/core/OrbitCamera.h` replacing 5 duplicated camera 
 - glTF integration: loads skeleton hierarchy, joint weights, animation clips from GLB
 - animation_demo app with playback controls
 
+### Decisions
+
+**Rest poses (identity was wrong):**
+Joint poses for channels that are not animated defaulted to identity (position=0, rotation=identity, scale=1). For most glTF skeletons this is incorrect -- bones have specific offsets and rotations in their rest pose. The fix: extract each joint's TRS from the glTF node hierarchy during loading and store it in `Skeleton::restPoses` (a `std::vector<JointRestPose>` parallel to `joints`). `sampleClip()` now initializes the output pose from rest poses before applying animated channels. This means partially-animated clips (e.g., a face animation on a full-body skeleton) produce correct results instead of collapsed geometry.
+
+**Non-indexed mesh support and default normals:**
+BrainStem.glb exposed two gaps: (1) some meshes have no index buffer -- the loader now generates sequential indices `{0,1,2,...}` automatically; (2) some meshes lack `NORMAL` and/or `TEXCOORD_0` attributes -- the loader now generates default normals `(0,1,0)` and zero UVs so the surface vertex buffer can still be created. Without these defaults, the skinning vertex buffer (stream 2) could not bind because the surface buffer (stream 1) did not exist, and Metal requires contiguous stream indices.
+
+**Animation events design (polling queue vs callback):**
+Two consumption patterns for animation events: (1) a per-entity `AnimationEventQueue` component that game code polls each frame, suitable for game logic that processes events once per tick; (2) a global `EventCallback` on `AnimationSystem`, invoked synchronously during `update()`, suitable for immediate reactions like audio footstep triggers. Both coexist because neither alone covers all use cases. The polling queue avoids forcing game systems to register callbacks; the callback avoids forcing audio systems to poll every entity. Events are suppressed when `kFlagSampleOnce` is set (editor scrubbing) to prevent scrubbing from spamming side effects.
+
+**State machine design (shared definition + per-entity component):**
+The `AnimStateMachine` struct is shared across all entities of the same archetype (e.g., all soldiers share one state machine definition). Per-entity runtime state (`currentState`, parameters) lives in `AnimStateMachineComponent`. This separation avoids duplicating the state graph for every entity and allows the definition to be built once at setup time. Parameters use `std::unordered_map<uint32_t, float>` keyed by FNV-1a name hash -- flat enough for the expected parameter count (<20 per entity) without the complexity of a custom allocator.
+
+**Joint-only node skipping:**
+glTF skeleton joints are scene nodes, and the original `GltfSceneSpawner` created an ECS entity for every node. For a 60-joint skeleton, this produced 60 empty entities with no mesh -- pure hierarchy noise. The fix: tag each `GltfAsset::Node` with `isJoint = true` during loading (by checking if the node appears in any skin's joint list), and skip joint-only nodes (no mesh) during spawn. Joint entities still get created if they have a mesh attached (e.g., a sword bone that also renders geometry).
+
+**Editor animation panel architecture:**
+The animation panel is an ImGui window that displays a clip dropdown, transport controls (play/pause/stop), a time scrubber, a speed slider, and a loop checkbox. Scrubbing while paused uses `kFlagSampleOnce` -- the panel writes a new `playbackTime` and sets the flag, causing `AnimationSystem` to re-evaluate the pose exactly once without advancing time or firing events. The panel operates on the first entity with an `AnimatorComponent` found via a registry view, which is sufficient for the current single-character workflow.
+
+**Bone matrix world transform:**
+The initial implementation computed bone matrices as `jointWorld * inverseBindMatrix`, which placed all skinned meshes at the world origin regardless of their `TransformComponent`. The fix: read `WorldTransformComponent::matrix` and multiply it in as `entityWorld * jointWorld * inverseBindMatrix`. This requires `TransformSystem` to run before `AnimationSystem` in the frame loop (the original doc said `AnimationSystem` runs before `TransformSystem`, but the dependency is actually the reverse).
+
+**Imported animations start paused:**
+`GltfSceneSpawner` sets `kFlagLooping` but not `kFlagPlaying` on imported `AnimatorComponent`. This prevents animations from auto-playing immediately on spawn, which would be surprising behavior -- the game or editor starts playback explicitly when ready.
+
 ### Status
-- [x] Skeletal animation implemented (Skeleton, AnimationClip, Pose, AnimationSampler, AnimationSystem, GPU skinning, glTF integration — committed)
+- [x] Skeletal animation implemented (Skeleton, AnimationClip, Pose, AnimationSampler, AnimationSystem, GPU skinning, glTF integration -- committed)
+- [x] Skeleton rest poses (JointRestPose, rest pose extraction from glTF, sampleClip uses rest poses -- committed)
+- [x] Animation events (AnimationEvent, AnimationEventQueue, EventCallback, event firing with loop boundary handling -- committed)
+- [x] Animation state machine (AnimStateMachine, AnimStateMachineSystem, condition-based transitions, builder API -- committed)
+- [x] Bone matrix world transform (entityWorld multiplied into bone matrices, TransformSystem runs before AnimationSystem -- committed)
+- [x] glTF loader improvements (non-indexed meshes, default normals/UVs, joint-only node skipping, node names, paused import -- committed)
+- [x] Editor animation panel (clip selector, transport controls, scrubber, speed slider, loop checkbox, kFlagSampleOnce -- committed)
+- [x] IK system (Two-Bone, CCD, FABRIK solvers, IkSystem, two-phase AnimationSystem update -- committed)
 
 ---
 

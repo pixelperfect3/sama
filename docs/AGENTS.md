@@ -640,6 +640,95 @@ reg.view<AnimatorComponent>().each(
 | `kFlagLooping` | `0x01` | Loop when reaching clip end |
 | `kFlagPlaying` | `0x02` | Currently advancing playback |
 | `kFlagBlending` | `0x04` | Crossfading between two clips |
+| `kFlagSampleOnce` | `0x08` | Sample one frame while paused (editor scrub); auto-cleared |
+
+#### Animation events
+
+```cpp
+#include "engine/animation/AnimationClip.h"
+#include "engine/animation/AnimationEventQueue.h"
+#include "engine/animation/AnimationResources.h"
+#include "engine/animation/Hash.h"
+
+// Add events to a clip (sorted insertion by time).
+AnimationClip* clip = animRes.getClipMut(clipId);
+clip->addEvent(0.3f, "footstep_left");
+clip->addEvent(0.8f, "footstep_right");
+
+// Option 1: Poll the event queue each frame (per-entity).
+reg.view<AnimationEventQueue>().each(
+    [](EntityID entity, AnimationEventQueue& queue)
+    {
+        uint32_t footstepHash = engine::animation::fnv1a("footstep_left");
+        if (queue.has(footstepHash))
+        {
+            // Play footstep sound, spawn dust particle, etc.
+        }
+        queue.clear();  // consume events
+    });
+
+// Option 2: Set a global callback (fires synchronously during update).
+animSys.setEventCallback(
+    [](ecs::EntityID entity, const AnimationEvent& event)
+    {
+        printf("Entity %llu fired event: %s at t=%.3f\n",
+               entity, event.name.c_str(), event.time);
+    });
+```
+
+#### Animation state machine
+
+```cpp
+#include "engine/animation/AnimStateMachine.h"
+#include "engine/animation/AnimStateMachineSystem.h"
+
+// Build a shared state machine definition (once at setup).
+AnimStateMachine sm;
+uint32_t idle = sm.addState("Idle", idleClipId, /*loop=*/true);
+uint32_t walk = sm.addState("Walk", walkClipId, /*loop=*/true);
+uint32_t attack = sm.addState("Attack", attackClipId, /*loop=*/false, /*speed=*/1.5f);
+
+// Idle -> Walk when "speed" > 0.5
+sm.addTransition(idle, walk, /*blendDuration=*/0.2f,
+                 "speed", TransitionCondition::Compare::Greater, 0.5f);
+
+// Walk -> Idle when "speed" < 0.1
+sm.addTransition(walk, idle, 0.2f,
+                 "speed", TransitionCondition::Compare::Less, 0.1f);
+
+// Idle -> Attack when "attack" is true
+sm.addTransition(idle, attack, 0.1f,
+                 "attack", TransitionCondition::Compare::BoolTrue);
+
+// Attack -> Idle after 80% of clip plays
+sm.addTransitionWithExitTime(attack, idle, 0.2f, /*exitTime=*/0.8f);
+
+// Attach to an entity.
+AnimStateMachineComponent smComp;
+smComp.machine = &sm;  // shared, not owned
+smComp.currentState = sm.defaultState;
+reg.emplace<AnimStateMachineComponent>(entity, smComp);
+
+// In the frame loop, BEFORE animSys.update():
+AnimStateMachineSystem smSys;
+smSys.update(reg, dt, animRes);
+
+// Set parameters from game logic:
+auto* smc = reg.get<AnimStateMachineComponent>(entity);
+smc->setFloat("speed", playerSpeed);
+smc->setBool("attack", attackButtonPressed);
+```
+
+#### Mutable clip access (AnimationResources)
+
+```cpp
+// Get a mutable pointer to a clip (e.g., to add events after loading).
+AnimationClip* clip = animRes.getClipMut(clipId);
+if (clip)
+{
+    clip->addEvent(0.5f, "impact");
+}
+```
 
 #### Set up IK chains
 
@@ -1118,8 +1207,9 @@ while (eng.beginFrame(dt))
 {
     assets.processUploads();     // drain async asset queue
     physicsSys.update(reg, physics, dt);  // step physics
-    animSys.update(reg, dt, animRes, arena);  // update animations
-    transformSys.update(reg);    // recompute world matrices
+    transformSys.update(reg);    // recompute world matrices (BEFORE animation)
+    smSys.update(reg, dt, animRes);       // state machine (BEFORE animation)
+    animSys.update(reg, dt, animRes, arena);  // update animations (AFTER transform)
 
     eng.renderer().beginFrameDirect();
     // shadow pass, opaque pass, draw calls
@@ -1414,8 +1504,10 @@ int main()
 | Component | Fields | Purpose |
 |-----------|--------|---------|
 | `SkeletonComponent` | `skeletonId` (uint32) | Index into AnimationResources skeleton table. |
-| `AnimatorComponent` | `clipId`, `nextClipId`, `playbackTime`, `speed`, `blendFactor`, `blendDuration`, `blendElapsed`, `flags` | Animation playback state. |
+| `AnimatorComponent` | `clipId`, `nextClipId`, `playbackTime`, `prevPlaybackTime`, `speed`, `blendFactor`, `blendDuration`, `blendElapsed`, `flags` | Animation playback state (36 bytes). `prevPlaybackTime` tracks time at frame start for event detection. |
 | `SkinComponent` | `boneMatrixOffset`, `boneCount` (both uint32) | Offset into per-frame bone matrix buffer. |
+| `AnimationEventQueue` | `events` (vector of AnimationEventRecord) | Per-entity queue of animation events that fired this frame. Game code polls and clears. |
+| `AnimStateMachineComponent` | `machine` (const AnimStateMachine*), `currentState`, `pendingState`, `params` (unordered_map) | Per-entity state machine runtime state. Set parameters via `setFloat()`/`setBool()`. |
 | `PoseComponent` | `pose` (Pose*) | Arena-allocated FK pose, valid for one frame. |
 | `IkChainsComponent` | `chains` (InlinedVector of IkChainDef) | IK chain definitions (up to 4 inline). |
 | `IkTargetsComponent` | `targets` (InlinedVector of IkTarget) | World-space IK targets (parallel to chains). |
@@ -1512,6 +1604,36 @@ unit cube mesh (+-0.5), set `halfExtents = {1.0, 1.0, 1.0}` to match.
 Always call `assets.release(handle)` on shutdown. The handle is ref-counted; release
 decrements it and schedules GPU handle destruction when it reaches zero.
 
+### Animation system ordering
+
+**Symptom:** Skinned mesh renders at the world origin instead of at the entity's position.
+
+`TransformSystem` must run before `AnimationSystem` in the frame loop.
+`AnimationSystem` reads `WorldTransformComponent::matrix` to bake the entity's world
+transform into the bone matrices. If `TransformSystem` hasn't run yet, the world matrix
+is stale or identity, and the skinned mesh renders at the origin.
+
+```cpp
+// CORRECT order:
+transformSys.update(reg);                                    // first
+animSys.update(reg, dt, animRes, eng.frameArena().resource());  // second
+```
+
+### glTF animations start paused
+
+**Symptom:** Loaded glTF model with animations does not animate.
+
+`GltfSceneSpawner` sets `kFlagLooping` but NOT `kFlagPlaying` on imported entities.
+You must explicitly start playback:
+
+```cpp
+reg.view<AnimatorComponent>().each(
+    [](EntityID, AnimatorComponent& ac)
+    {
+        ac.flags |= AnimatorComponent::kFlagPlaying;
+    });
+```
+
 ### UI font asset paths are cwd-relative
 
 **Symptom:** `MsdfFont::loadFromFile()` returns false when the binary is launched from outside the repo root, even though the asset exists.
@@ -1535,8 +1657,11 @@ decrements it and schedules GPU handle destruction when it reaches zero.
 | Physics body not moving | Dirty flag not set after teleporting via `setBodyPosition` | PhysicsSystem writes back transforms with dirty flag; if you manually set position, also set `tc->flags \|= 1`. |
 | Asset stays in Loading state | `processUploads()` not called, or wrong file path | Call `assets.processUploads()` every frame. Check `assets.error(handle)` for path errors. |
 | "No loader registered" error | Forgot to register the loader for the file extension | Call `assets.registerLoader(std::make_unique<GltfLoader>())` and/or `TextureLoader` before loading. |
-| Animation not playing | `kFlagPlaying` not set on `AnimatorComponent` | Set `ac.flags \|= AnimatorComponent::kFlagPlaying`. |
+| Animation not playing | `kFlagPlaying` not set on `AnimatorComponent` | Set `ac.flags \|= AnimatorComponent::kFlagPlaying`. Note: glTF imports start paused (only `kFlagLooping` is set). |
+| Skinned mesh at world origin | `TransformSystem` runs after `AnimationSystem` | `TransformSystem` must run BEFORE `AnimationSystem` so `WorldTransformComponent` is current for bone matrix computation. |
 | Skinned mesh not visible | Missing `updateSkinned` call in draw pass | Call `drawCallSys.updateSkinned(...)` after `drawCallSys.update(...)` with the bone buffer from `animSys.boneBuffer()`. |
+| Animation events not firing | Events suppressed or queue not polled | Events only fire when `kFlagPlaying` is set (not during `kFlagSampleOnce`). Clear `AnimationEventQueue` after consuming. |
+| State machine not transitioning | `AnimStateMachineSystem::update()` not called | Call `smSys.update(reg, dt, animRes)` BEFORE `animSys.update()` each frame. |
 | Shadow not appearing | Shadow pass not submitted, or shadow atlas not bound | Call `eng.shadow().beginCascade(...)` + `submitShadowDrawCalls(...)` before the opaque pass. Pass `eng.shadow().atlasTexture()` in `PbrFrameParams`. |
 | Crash on shutdown | AssetManager destroyed after bgfx context | Ensure AssetManager is constructed after Renderer (LIFO destruction order). Release all handles before shutdown. |
 
