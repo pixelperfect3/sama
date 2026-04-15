@@ -410,7 +410,7 @@ static MenuActionFn s_menuActionCallback = nullptr;
     {
         _leftMinWidth = 150.0;
         _rightMinWidth = 180.0;
-        _bottomMinHeight = 120.0;
+        _bottomMinHeight = 80.0;
     }
     return self;
 }
@@ -713,7 +713,7 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             wrapWithTitle((__bridge NSView*)impl_->propertiesView->nativeView(), @"Properties");
 
         // Build a tabbed bottom panel (Console + Resources).
-        impl_->bottomTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(0, 0, w, 180)];
+        impl_->bottomTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(0, 0, w, 130)];
         impl_->bottomTabView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         impl_->bottomTabView.tabViewType = NSTopTabsBezelBorder;
         impl_->bottomTabView.controlSize = NSControlSizeSmall;
@@ -750,16 +750,16 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         CGFloat rightWidth = 250.0;
         CGFloat centerWidth = w - leftWidth - rightWidth - 2.0;  // 2px for dividers
 
-        [leftView setFrameSize:NSMakeSize(leftWidth, h - 180)];
-        [impl_->metalView setFrameSize:NSMakeSize(centerWidth, h - 180)];
-        [rightView setFrameSize:NSMakeSize(rightWidth, h - 180)];
+        [leftView setFrameSize:NSMakeSize(leftWidth, h - 130)];
+        [impl_->metalView setFrameSize:NSMakeSize(centerWidth, h - 130)];
+        [rightView setFrameSize:NSMakeSize(rightWidth, h - 130)];
 
         // Add top and bottom to vertical split.
         [impl_->verticalSplit addSubview:impl_->horizontalSplit];
         [impl_->verticalSplit addSubview:bottomView];
 
         // Set initial heights.
-        CGFloat bottomHeight = 180.0;
+        CGFloat bottomHeight = 130.0;
         CGFloat topHeight = h - bottomHeight - 1.0;
         [impl_->horizontalSplit setFrameSize:NSMakeSize(w, topHeight)];
         [bottomView setFrameSize:NSMakeSize(w, bottomHeight)];
