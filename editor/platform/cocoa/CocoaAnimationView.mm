@@ -147,10 +147,19 @@ static const CGFloat kMaxZoom = 2.0;
     selectedStateIndex_ = selected;
     selectedTransitionIndex_ = selTrans;
 
+    if (!nodeNames_)
+        nodeNames_ = [NSMutableArray array];
+    if (!nodeClipNames_)
+        nodeClipNames_ = [NSMutableArray array];
+    if (!nodePositions_)
+        nodePositions_ = [NSMutableArray array];
+
     [nodeNames_ removeAllObjects];
-    [nodeNames_ addObjectsFromArray:names];
+    if (names)
+        [nodeNames_ addObjectsFromArray:names];
     [nodeClipNames_ removeAllObjects];
-    [nodeClipNames_ addObjectsFromArray:clipNames];
+    if (clipNames)
+        [nodeClipNames_ addObjectsFromArray:clipNames];
 
     // Auto-layout: arrange in a grid when positions need initialization.
     if (countChanged || !positionsInitialized_ || (int)nodePositions_.count != count)
@@ -176,14 +185,27 @@ static const CGFloat kMaxZoom = 2.0;
                 labels:(NSArray<NSString*>*)labels
        stateTransIdxes:(NSArray<NSNumber*>*)stateTransIdxes
 {
+    if (!transFromState_)
+        transFromState_ = [NSMutableArray array];
+    if (!transToState_)
+        transToState_ = [NSMutableArray array];
+    if (!transCondLabel_)
+        transCondLabel_ = [NSMutableArray array];
+    if (!transStateTransIdx_)
+        transStateTransIdx_ = [NSMutableArray array];
+
     [transFromState_ removeAllObjects];
-    [transFromState_ addObjectsFromArray:from];
+    if (from)
+        [transFromState_ addObjectsFromArray:from];
     [transToState_ removeAllObjects];
-    [transToState_ addObjectsFromArray:to];
+    if (to)
+        [transToState_ addObjectsFromArray:to];
     [transCondLabel_ removeAllObjects];
-    [transCondLabel_ addObjectsFromArray:labels];
+    if (labels)
+        [transCondLabel_ addObjectsFromArray:labels];
     [transStateTransIdx_ removeAllObjects];
-    [transStateTransIdx_ addObjectsFromArray:stateTransIdxes];
+    if (stateTransIdxes)
+        [transStateTransIdx_ addObjectsFromArray:stateTransIdxes];
     [self setNeedsDisplay:YES];
 }
 
