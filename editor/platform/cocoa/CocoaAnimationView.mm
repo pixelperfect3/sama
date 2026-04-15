@@ -698,98 +698,152 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
         }
 
         // Update event list rows.
+        // Only rebuild if the event count changed; otherwise just update
+        // fired/selected state on existing rows to avoid flicker.
         {
-            // Remove existing rows.
-            NSArray<NSView*>* existing = [impl_->eventListStack.arrangedSubviews copy];
-            for (NSView* v in existing)
+            NSArray<NSView*>* existing = impl_->eventListStack.arrangedSubviews;
+            bool needsRebuild = (existing.count != s.events.size());
+            if (!needsRebuild)
             {
-                [impl_->eventListStack removeArrangedSubview:v];
-                [v removeFromSuperview];
+                for (NSUInteger i = 0; i < existing.count; ++i)
+                {
+                    if (![existing[i] isKindOfClass:[EventRowView class]])
+                    {
+                        needsRebuild = true;
+                        break;
+                    }
+                    EventRowView* row = (EventRowView*)existing[i];
+                    NSString* eName = [NSString stringWithUTF8String:s.events[i].name.c_str()];
+                    if (![row.nameField.stringValue isEqualToString:eName])
+                    {
+                        needsRebuild = true;
+                        break;
+                    }
+                }
             }
 
-            // Weak-capture impl for edit callbacks.
-            auto* implPtr = impl_.get();
-
-            for (size_t i = 0; i < s.events.size(); ++i)
+            if (!needsRebuild)
             {
-                EventRowView* row = [[EventRowView alloc] initWithFrame:NSZeroRect];
-                row.translatesAutoresizingMaskIntoConstraints = NO;
-                row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-                row.alignment = NSLayoutAttributeCenterY;
-                row.spacing = 6.0;
-                row.eventIndex = (int)i;
-
-                NSString* eName = [NSString stringWithUTF8String:s.events[i].name.c_str()];
-                BOOL fired = [firedNames containsObject:eName];
-                row.isFired = fired;
-
-                // Name field (editable).
-                NSTextField* nameField =
-                    [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 150, 20)];
-                nameField.stringValue = eName;
-                nameField.font = [NSFont systemFontOfSize:11.0];
-                nameField.bordered = YES;
-                nameField.bezeled = YES;
-                nameField.editable = YES;
-                nameField.selectable = YES;
-                nameField.bezelStyle = NSTextFieldRoundedBezel;
-                nameField.controlSize = NSControlSizeSmall;
-                if (fired)
-                    nameField.textColor = [NSColor systemYellowColor];
-                else
-                    nameField.textColor = [NSColor labelColor];
-                [nameField setContentHuggingPriority:200
-                                      forOrientation:NSLayoutConstraintOrientationHorizontal];
-                row.nameField = nameField;
-
-                // Time field (editable).
-                NSTextField* timeField =
-                    [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 60, 20)];
-                timeField.stringValue = [NSString stringWithFormat:@"%.3f", s.events[i].time];
-                timeField.font = [NSFont monospacedDigitSystemFontOfSize:10.0
-                                                                  weight:NSFontWeightRegular];
-                timeField.bordered = YES;
-                timeField.bezeled = YES;
-                timeField.editable = YES;
-                timeField.selectable = YES;
-                timeField.bezelStyle = NSTextFieldRoundedBezel;
-                timeField.controlSize = NSControlSizeSmall;
-                if (fired)
-                    timeField.textColor = [NSColor systemYellowColor];
-                else
-                    timeField.textColor = [NSColor secondaryLabelColor];
-                [timeField setContentHuggingPriority:750
-                                      forOrientation:NSLayoutConstraintOrientationHorizontal];
-                row.timeField = timeField;
-
-                // Wire up editing via target/action on the delegate.
-                nameField.target = implPtr->delegate;
-                nameField.tag = (int)i;
-                timeField.target = implPtr->delegate;
-                timeField.tag = (int)i;
-                nameField.action = @selector(eventFieldEdited:);
-                timeField.action = @selector(eventFieldEdited:);
-
-                // Highlight the selected row.
-                if ((int)i == implPtr->selectedEventIndex)
+                // Fast path: just update fired/selected highlights.
+                for (NSUInteger i = 0; i < existing.count; ++i)
                 {
-                    row.wantsLayer = YES;
-                    row.layer.backgroundColor = [NSColor selectedContentBackgroundColor].CGColor;
-                    row.layer.cornerRadius = 3.0;
+                    EventRowView* row = (EventRowView*)existing[i];
+                    NSString* eName = [NSString stringWithUTF8String:s.events[i].name.c_str()];
+                    BOOL fired = [firedNames containsObject:eName];
+                    row.isFired = fired;
+                    row.nameField.textColor =
+                        fired ? [NSColor systemYellowColor] : [NSColor labelColor];
+                    row.timeField.textColor =
+                        fired ? [NSColor systemYellowColor] : [NSColor secondaryLabelColor];
+
+                    if ((int)i == impl_->selectedEventIndex)
+                    {
+                        row.wantsLayer = YES;
+                        row.layer.backgroundColor =
+                            [NSColor selectedContentBackgroundColor].CGColor;
+                        row.layer.cornerRadius = 3.0;
+                    }
+                    else
+                    {
+                        row.layer.backgroundColor = [NSColor clearColor].CGColor;
+                    }
+                }
+            }
+            else
+            {
+                // Full rebuild: remove all rows and recreate.
+                NSArray<NSView*>* oldRows = [existing copy];
+                for (NSView* v in oldRows)
+                {
+                    [impl_->eventListStack removeArrangedSubview:v];
+                    [v removeFromSuperview];
                 }
 
-                // Add a click gesture to select this row.
-                NSClickGestureRecognizer* click =
-                    [[NSClickGestureRecognizer alloc] initWithTarget:implPtr->delegate
-                                                              action:@selector(eventRowClicked:)];
-                [row addGestureRecognizer:click];
+                // Weak-capture impl for edit callbacks.
+                auto* implPtr = impl_.get();
 
-                [row addArrangedSubview:nameField];
-                [row addArrangedSubview:timeField];
-                [impl_->eventListStack addArrangedSubview:row];
-            }
+                for (size_t i = 0; i < s.events.size(); ++i)
+                {
+                    EventRowView* row = [[EventRowView alloc] initWithFrame:NSZeroRect];
+                    row.translatesAutoresizingMaskIntoConstraints = NO;
+                    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                    row.alignment = NSLayoutAttributeCenterY;
+                    row.spacing = 6.0;
+                    row.eventIndex = (int)i;
 
-            [impl_->eventListStack layoutSubtreeIfNeeded];
+                    NSString* eName = [NSString stringWithUTF8String:s.events[i].name.c_str()];
+                    BOOL fired = [firedNames containsObject:eName];
+                    row.isFired = fired;
+
+                    // Name field (editable).
+                    NSTextField* nameField =
+                        [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 150, 20)];
+                    nameField.stringValue = eName;
+                    nameField.font = [NSFont systemFontOfSize:11.0];
+                    nameField.bordered = YES;
+                    nameField.bezeled = YES;
+                    nameField.editable = YES;
+                    nameField.selectable = YES;
+                    nameField.bezelStyle = NSTextFieldRoundedBezel;
+                    nameField.controlSize = NSControlSizeSmall;
+                    if (fired)
+                        nameField.textColor = [NSColor systemYellowColor];
+                    else
+                        nameField.textColor = [NSColor labelColor];
+                    [nameField setContentHuggingPriority:200
+                                          forOrientation:NSLayoutConstraintOrientationHorizontal];
+                    row.nameField = nameField;
+
+                    // Time field (editable).
+                    NSTextField* timeField =
+                        [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 60, 20)];
+                    timeField.stringValue = [NSString stringWithFormat:@"%.3f", s.events[i].time];
+                    timeField.font = [NSFont monospacedDigitSystemFontOfSize:10.0
+                                                                      weight:NSFontWeightRegular];
+                    timeField.bordered = YES;
+                    timeField.bezeled = YES;
+                    timeField.editable = YES;
+                    timeField.selectable = YES;
+                    timeField.bezelStyle = NSTextFieldRoundedBezel;
+                    timeField.controlSize = NSControlSizeSmall;
+                    if (fired)
+                        timeField.textColor = [NSColor systemYellowColor];
+                    else
+                        timeField.textColor = [NSColor secondaryLabelColor];
+                    [timeField setContentHuggingPriority:750
+                                          forOrientation:NSLayoutConstraintOrientationHorizontal];
+                    row.timeField = timeField;
+
+                    // Wire up editing via target/action on the delegate.
+                    nameField.target = implPtr->delegate;
+                    nameField.tag = (int)i;
+                    timeField.target = implPtr->delegate;
+                    timeField.tag = (int)i;
+                    nameField.action = @selector(eventFieldEdited:);
+                    timeField.action = @selector(eventFieldEdited:);
+
+                    // Highlight the selected row.
+                    if ((int)i == implPtr->selectedEventIndex)
+                    {
+                        row.wantsLayer = YES;
+                        row.layer.backgroundColor =
+                            [NSColor selectedContentBackgroundColor].CGColor;
+                        row.layer.cornerRadius = 3.0;
+                    }
+
+                    // Add a click gesture to select this row.
+                    NSClickGestureRecognizer* click = [[NSClickGestureRecognizer alloc]
+                        initWithTarget:implPtr->delegate
+                                action:@selector(eventRowClicked:)];
+                    [row addGestureRecognizer:click];
+
+                    [row addArrangedSubview:nameField];
+                    [row addArrangedSubview:timeField];
+                    [impl_->eventListStack addArrangedSubview:row];
+                }
+
+                [impl_->eventListStack layoutSubtreeIfNeeded];
+            }  // end else (full rebuild)
         }
 
         // Update state machine section.
