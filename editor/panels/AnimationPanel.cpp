@@ -185,6 +185,51 @@ void AnimationPanel::update(float /*dt*/)
                 pi.isBool = isBool;
                 s.params.push_back(std::move(pi));
             }
+
+            // Full state info for editing.
+            s.stateInfos.reserve(machine->states.size());
+            for (const auto& st : machine->states)
+            {
+                AnimationViewState::StateInfo si;
+                si.name = st.name;
+
+                // Resolve clip name from clipId.
+                const AnimationClip* clip = animResources_.getClip(st.clipId);
+                si.clipName = clip ? clip->name : ("clip " + std::to_string(st.clipId));
+                si.speed = st.speed;
+                si.loop = st.loop;
+
+                // Transitions.
+                si.transitions.reserve(st.transitions.size());
+                for (const auto& tr : st.transitions)
+                {
+                    AnimationViewState::StateInfo::TransitionInfo ti;
+                    ti.targetState = static_cast<int>(tr.targetState);
+                    if (tr.targetState < machine->states.size())
+                        ti.targetName = machine->states[tr.targetState].name;
+                    else
+                        ti.targetName = "?";
+                    ti.blendDuration = tr.blendDuration;
+                    ti.exitTime = tr.exitTime;
+                    ti.hasExitTime = tr.hasExitTime;
+
+                    // Conditions.
+                    ti.conditions.reserve(tr.conditions.size());
+                    for (const auto& cond : tr.conditions)
+                    {
+                        AnimationViewState::StateInfo::TransitionInfo::ConditionInfo ci;
+                        ci.paramName = cond.paramName;
+                        ci.compare = static_cast<int>(cond.compare);
+                        ci.threshold = cond.threshold;
+                        ti.conditions.push_back(std::move(ci));
+                    }
+                    si.transitions.push_back(std::move(ti));
+                }
+                s.stateInfos.push_back(std::move(si));
+            }
+
+            s.selectedStateIndex = selectedStateIndex_;
+            s.selectedTransitionIndex = selectedTransitionIndex_;
         }
     }
 

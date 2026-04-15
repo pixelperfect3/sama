@@ -1986,6 +1986,283 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                     if (impl_->animationPanel)
                         impl_->animationPanel->markDirty();
                 });
+
+            // Helper to find (or create) a mutable AnimStateMachine for the
+            // selected entity. Returns nullptr if entity has no state machine.
+            auto getMutableMachine = [this]() -> engine::animation::AnimStateMachine*
+            {
+                using engine::animation::AnimStateMachineComponent;
+                ecs::EntityID e = impl_->editorState.primarySelection();
+                if (e == ecs::INVALID_ENTITY)
+                    return nullptr;
+                auto* smComp = impl_->registry.get<AnimStateMachineComponent>(e);
+                if (!smComp || !smComp->machine)
+                    return nullptr;
+                return const_cast<engine::animation::AnimStateMachine*>(smComp->machine);
+            };
+
+            animView->setStateSelectedCallback(
+                [this](int stateIndex)
+                {
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->setSelectedState(stateIndex);
+                });
+
+            animView->setTransitionSelectedCallback(
+                [this](int stateIndex, int transIndex)
+                {
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->setSelectedTransition(stateIndex, transIndex);
+                });
+
+            animView->setStateAddedCallback(
+                [this, getMutableMachine]()
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    uint32_t clipId = 0;
+                    std::string name = "State_" + std::to_string(machine->states.size());
+                    machine->addState(name, clipId, true, 1.0f);
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setStateRemovedCallback(
+                [this, getMutableMachine](int stateIndex)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (stateIndex < 0 || static_cast<size_t>(stateIndex) >= machine->states.size())
+                        return;
+                    // Don't remove the last state.
+                    if (machine->states.size() <= 1)
+                        return;
+
+                    machine->states.erase(machine->states.begin() + stateIndex);
+
+                    // Fix up targetState indices in all transitions.
+                    for (auto& st : machine->states)
+                    {
+                        for (auto it = st.transitions.begin(); it != st.transitions.end();)
+                        {
+                            if (static_cast<int>(it->targetState) == stateIndex)
+                            {
+                                it = st.transitions.erase(it);
+                            }
+                            else
+                            {
+                                if (static_cast<int>(it->targetState) > stateIndex)
+                                    it->targetState--;
+                                ++it;
+                            }
+                        }
+                    }
+
+                    // Fix default state.
+                    if (machine->defaultState >= static_cast<uint32_t>(machine->states.size()))
+                        machine->defaultState = 0;
+
+                    // Fix runtime component currentState.
+                    using engine::animation::AnimStateMachineComponent;
+                    ecs::EntityID e = impl_->editorState.primarySelection();
+                    if (e != ecs::INVALID_ENTITY)
+                    {
+                        auto* smComp = impl_->registry.get<AnimStateMachineComponent>(e);
+                        if (smComp &&
+                            smComp->currentState >= static_cast<uint32_t>(machine->states.size()))
+                            smComp->currentState = 0;
+                    }
+
+                    if (impl_->animationPanel)
+                    {
+                        impl_->animationPanel->setSelectedState(-1);
+                        impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setStateEditedCallback(
+                [this, getMutableMachine](int stateIndex, const std::string& name, int clipIndex,
+                                          float speed, bool loop)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (stateIndex < 0 || static_cast<size_t>(stateIndex) >= machine->states.size())
+                        return;
+                    auto& st = machine->states[stateIndex];
+
+                    // Partial updates: only apply fields that have non-sentinel
+                    // values.
+                    if (!name.empty())
+                    {
+                        st.name = name;
+                        st.nameHash = animation::fnv1aHash(name);
+                    }
+                    if (clipIndex >= 0)
+                        st.clipId = static_cast<uint32_t>(clipIndex);
+                    if (speed >= 0.0f)
+                        st.speed = speed;
+                    // Loop is always set (no good sentinel for bool).
+                    // Only apply if name is empty (meaning this was a loop-only
+                    // edit) or speed < 0 (loop-only edit).
+                    if (name.empty() && clipIndex < 0 && speed < 0.0f)
+                        st.loop = loop;
+
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setTransitionAddedCallback(
+                [this, getMutableMachine](int fromState, int toState, float blendDuration)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (fromState < 0 || static_cast<size_t>(fromState) >= machine->states.size())
+                        return;
+                    // Default target: next state (wrapping).
+                    if (toState < 0)
+                    {
+                        toState = (fromState + 1) % static_cast<int>(machine->states.size());
+                    }
+                    machine->addTransition(static_cast<uint32_t>(fromState),
+                                           static_cast<uint32_t>(toState), blendDuration);
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setTransitionRemovedCallback(
+                [this, getMutableMachine](int fromState, int transIndex)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (fromState < 0 || static_cast<size_t>(fromState) >= machine->states.size())
+                        return;
+                    auto& trans = machine->states[fromState].transitions;
+                    if (transIndex < 0 || static_cast<size_t>(transIndex) >= trans.size())
+                        return;
+                    trans.erase(trans.begin() + transIndex);
+                    if (impl_->animationPanel)
+                    {
+                        impl_->animationPanel->setSelectedTransition(fromState, -1);
+                        impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setTransitionEditedCallback(
+                [this, getMutableMachine](int fromState, int transIndex, int targetState,
+                                          float blendDuration, float exitTime, bool hasExitTime)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (fromState < 0 || static_cast<size_t>(fromState) >= machine->states.size())
+                        return;
+                    auto& trans = machine->states[fromState].transitions;
+                    if (transIndex < 0 || static_cast<size_t>(transIndex) >= trans.size())
+                        return;
+                    auto& tr = trans[transIndex];
+
+                    // Partial updates.
+                    if (targetState >= 0)
+                        tr.targetState = static_cast<uint32_t>(targetState);
+                    if (blendDuration >= 0.0f)
+                        tr.blendDuration = blendDuration;
+                    if (exitTime >= 0.0f)
+                        tr.exitTime = exitTime;
+                    // hasExitTime is a checkbox; apply only when blend and
+                    // exitTime are both sentinel (checkbox-only edit).
+                    if (targetState < 0 && blendDuration < 0.0f && exitTime < 0.0f)
+                        tr.hasExitTime = hasExitTime;
+
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setConditionAddedCallback(
+                [this, getMutableMachine](int fromState, int transIndex, const std::string& param,
+                                          int compare, float threshold)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (fromState < 0 || static_cast<size_t>(fromState) >= machine->states.size())
+                        return;
+                    auto& trans = machine->states[fromState].transitions;
+                    if (transIndex < 0 || static_cast<size_t>(transIndex) >= trans.size())
+                        return;
+                    animation::TransitionCondition cond;
+                    cond.paramName = param;
+                    cond.paramHash = animation::fnv1aHash(param);
+                    cond.compare = static_cast<animation::TransitionCondition::Compare>(compare);
+                    cond.threshold = threshold;
+                    trans[transIndex].conditions.push_back(std::move(cond));
+
+                    // Register param name in machine.
+                    machine->paramNames[animation::fnv1aHash(param)] = param;
+
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setConditionRemovedCallback(
+                [this, getMutableMachine](int fromState, int transIndex, int condIndex)
+                {
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    if (fromState < 0 || static_cast<size_t>(fromState) >= machine->states.size())
+                        return;
+                    auto& trans = machine->states[fromState].transitions;
+                    if (transIndex < 0 || static_cast<size_t>(transIndex) >= trans.size())
+                        return;
+                    auto& conds = trans[transIndex].conditions;
+                    // If condIndex is -1, remove the last condition.
+                    int resolved = (condIndex < 0) ? static_cast<int>(conds.size()) - 1 : condIndex;
+                    if (resolved >= 0 && static_cast<size_t>(resolved) < conds.size())
+                        conds.erase(conds.begin() + resolved);
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
+
+            animView->setParamAddedCallback(
+                [this, getMutableMachine](const std::string& name, bool isBool)
+                {
+                    using engine::animation::AnimStateMachineComponent;
+                    auto* machine = getMutableMachine();
+                    if (!machine)
+                        return;
+                    // Generate a unique name.
+                    std::string paramName = name;
+                    uint32_t hash = animation::fnv1aHash(paramName);
+                    int suffix = 0;
+                    while (machine->paramNames.count(hash))
+                    {
+                        paramName = name + "_" + std::to_string(suffix++);
+                        hash = animation::fnv1aHash(paramName);
+                    }
+                    machine->paramNames[hash] = paramName;
+
+                    // Set initial value on the component.
+                    ecs::EntityID e = impl_->editorState.primarySelection();
+                    if (e != ecs::INVALID_ENTITY)
+                    {
+                        auto* smComp = impl_->registry.get<AnimStateMachineComponent>(e);
+                        if (smComp)
+                        {
+                            if (isBool)
+                                smComp->setBool(paramName, false);
+                            else
+                                smComp->setFloat(paramName, 0.0f);
+                        }
+                    }
+
+                    if (impl_->animationPanel)
+                        impl_->animationPanel->markDirty();
+                });
         }
     }
 

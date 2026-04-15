@@ -70,6 +70,24 @@ private:
     float lastPlaybackTime_ = -1.0f;
     uint8_t lastFlags_ = 0xFFu;
     bool forceRefresh_ = true;
+
+    // State machine editing selection state.
+    int selectedStateIndex_ = -1;
+    int selectedTransitionIndex_ = -1;
+
+public:
+    void setSelectedState(int index)
+    {
+        selectedStateIndex_ = index;
+        selectedTransitionIndex_ = -1;
+        forceRefresh_ = true;
+    }
+    void setSelectedTransition(int stateIndex, int transIndex)
+    {
+        selectedStateIndex_ = stateIndex;
+        selectedTransitionIndex_ = transIndex;
+        forceRefresh_ = true;
+    }
 };
 
 }  // namespace engine::editor

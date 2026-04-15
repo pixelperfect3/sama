@@ -19,6 +19,22 @@
 @end
 
 // ---------------------------------------------------------------------------
+// TaggableView -- simple NSView subclass with a settable integer tag.
+// Used for clickable row containers in the state/transition lists.
+// ---------------------------------------------------------------------------
+
+@interface TaggableView : NSView
+@property(nonatomic, assign) NSInteger viewTag;
+@end
+
+@implementation TaggableView
+- (NSInteger)tag
+{
+    return _viewTag;
+}
+@end
+
+// ---------------------------------------------------------------------------
 // AnimationViewDelegate -- target for the clip dropdown, transport buttons,
 // scrubber, speed slider and loop checkbox. Holds owning blocks that wrap
 // the C++ callbacks. suppressCallbacks is set during state pushes so we
@@ -39,6 +55,20 @@
 @property(nonatomic, copy) void (^onEventRowSelected)(int index);
 @property(nonatomic, copy) void (^onStateForceSet)(int stateIndex);
 @property(nonatomic, copy) void (^onParamChanged)(NSString* paramName, float value);
+@property(nonatomic, copy) void (^onStateAdded)(void);
+@property(nonatomic, copy) void (^onStateRemoved)(int stateIndex);
+@property(nonatomic, copy) void (^onStateEdited)
+    (int stateIndex, NSString* name, int clipIndex, float speed, BOOL loop);
+@property(nonatomic, copy) void (^onTransitionAdded)(int fromState, int toState, float blend);
+@property(nonatomic, copy) void (^onTransitionRemoved)(int fromState, int transIdx);
+@property(nonatomic, copy) void (^onTransitionEdited)
+    (int fromState, int transIdx, int targetState, float blend, float exitTime, BOOL hasExitTime);
+@property(nonatomic, copy) void (^onConditionAdded)
+    (int fromState, int transIdx, NSString* param, int compare, float threshold);
+@property(nonatomic, copy) void (^onConditionRemoved)(int fromState, int transIdx, int condIdx);
+@property(nonatomic, copy) void (^onParamAdded)(NSString* name, BOOL isBool);
+@property(nonatomic, copy) void (^onStateSelected)(int stateIndex);
+@property(nonatomic, copy) void (^onTransitionSelected)(int stateIndex, int transIdx);
 @property(nonatomic, assign) BOOL suppressCallbacks;
 - (void)clipChanged:(NSPopUpButton*)sender;
 - (void)playClicked:(NSButton*)sender;
@@ -54,6 +84,26 @@
 - (void)stateDropdownChanged:(NSPopUpButton*)sender;
 - (void)paramSliderChanged:(NSSlider*)sender;
 - (void)paramCheckboxChanged:(NSButton*)sender;
+- (void)addStateClicked:(NSButton*)sender;
+- (void)removeStateClicked:(NSButton*)sender;
+- (void)stateRowClicked:(NSClickGestureRecognizer*)sender;
+- (void)stateNameEdited:(NSTextField*)sender;
+- (void)stateClipChanged:(NSPopUpButton*)sender;
+- (void)stateSpeedChanged:(NSSlider*)sender;
+- (void)stateLoopChanged:(NSButton*)sender;
+- (void)addTransitionClicked:(NSButton*)sender;
+- (void)removeTransitionClicked:(NSButton*)sender;
+- (void)transitionRowClicked:(NSClickGestureRecognizer*)sender;
+- (void)transTargetChanged:(NSPopUpButton*)sender;
+- (void)transBlendEdited:(NSTextField*)sender;
+- (void)transExitTimeCheckChanged:(NSButton*)sender;
+- (void)transExitTimeEdited:(NSTextField*)sender;
+- (void)addConditionClicked:(NSButton*)sender;
+- (void)removeConditionClicked:(NSButton*)sender;
+- (void)condParamEdited:(NSTextField*)sender;
+- (void)condCompareChanged:(NSPopUpButton*)sender;
+- (void)condThresholdEdited:(NSTextField*)sender;
+- (void)addParamClicked:(NSButton*)sender;
 @end
 
 @implementation AnimationViewDelegate
@@ -189,6 +239,191 @@
         }
     }
 }
+- (void)addStateClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onStateAdded)
+        _onStateAdded();
+    (void)sender;
+}
+- (void)removeStateClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onStateRemoved)
+        _onStateRemoved(-1);  // resolved by C++ side
+    (void)sender;
+}
+- (void)stateRowClicked:(NSClickGestureRecognizer*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    NSView* view = sender.view;
+    int idx = (int)view.tag;
+    if (_onStateSelected)
+        _onStateSelected(idx);
+}
+- (void)stateNameEdited:(NSTextField*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    // Tag encodes the state index.
+    if (_onStateEdited)
+        _onStateEdited((int)sender.tag, sender.stringValue, -1, -1.0f, NO);
+    (void)sender;
+}
+- (void)stateClipChanged:(NSPopUpButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onStateEdited)
+        _onStateEdited((int)sender.tag, nil, (int)sender.indexOfSelectedItem, -1.0f, NO);
+}
+- (void)stateSpeedChanged:(NSSlider*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onStateEdited)
+        _onStateEdited((int)sender.tag, nil, -1, (float)sender.doubleValue, NO);
+}
+- (void)stateLoopChanged:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onStateEdited)
+        _onStateEdited((int)sender.tag, nil, -1, -1.0f, sender.state == NSControlStateValueOn);
+}
+- (void)addTransitionClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTransitionAdded)
+        _onTransitionAdded((int)sender.tag, -1, 0.3f);
+    (void)sender;
+}
+- (void)removeTransitionClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTransitionRemoved)
+        _onTransitionRemoved((int)sender.tag, -1);  // resolved by C++ side
+    (void)sender;
+}
+- (void)transitionRowClicked:(NSClickGestureRecognizer*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    NSView* view = sender.view;
+    // tag encodes stateIndex * 1000 + transIdx
+    int combined = (int)view.tag;
+    int stateIdx = combined / 1000;
+    int transIdx = combined % 1000;
+    if (_onTransitionSelected)
+        _onTransitionSelected(stateIdx, transIdx);
+}
+- (void)transTargetChanged:(NSPopUpButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTransitionEdited)
+    {
+        int combined = (int)sender.tag;
+        int stateIdx = combined / 1000;
+        int transIdx = combined % 1000;
+        _onTransitionEdited(stateIdx, transIdx, (int)sender.indexOfSelectedItem, -1.0f, -1.0f, NO);
+    }
+}
+- (void)transBlendEdited:(NSTextField*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTransitionEdited)
+    {
+        int combined = (int)sender.tag;
+        int stateIdx = combined / 1000;
+        int transIdx = combined % 1000;
+        _onTransitionEdited(stateIdx, transIdx, -1, (float)sender.doubleValue, -1.0f, NO);
+    }
+}
+- (void)transExitTimeCheckChanged:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTransitionEdited)
+    {
+        int combined = (int)sender.tag;
+        int stateIdx = combined / 1000;
+        int transIdx = combined % 1000;
+        BOOL checked = (sender.state == NSControlStateValueOn);
+        _onTransitionEdited(stateIdx, transIdx, -1, -1.0f, -1.0f, checked);
+    }
+}
+- (void)transExitTimeEdited:(NSTextField*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onTransitionEdited)
+    {
+        int combined = (int)sender.tag;
+        int stateIdx = combined / 1000;
+        int transIdx = combined % 1000;
+        _onTransitionEdited(stateIdx, transIdx, -1, -1.0f, (float)sender.doubleValue, NO);
+    }
+}
+- (void)addConditionClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onConditionAdded)
+    {
+        int combined = (int)sender.tag;
+        int stateIdx = combined / 1000;
+        int transIdx = combined % 1000;
+        _onConditionAdded(stateIdx, transIdx, @"param", 0, 0.0f);
+    }
+}
+- (void)removeConditionClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onConditionRemoved)
+    {
+        int combined = (int)sender.tag;
+        int stateIdx = combined / 1000;
+        int transIdx = combined % 1000;
+        _onConditionRemoved(stateIdx, transIdx, -1);  // remove last
+    }
+}
+- (void)condParamEdited:(NSTextField*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    // Not directly re-dispatched; handled via full condition edit flow
+    (void)sender;
+}
+- (void)condCompareChanged:(NSPopUpButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    // Not directly re-dispatched
+    (void)sender;
+}
+- (void)condThresholdEdited:(NSTextField*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    // Not directly re-dispatched
+    (void)sender;
+}
+- (void)addParamClicked:(NSButton*)sender
+{
+    if (_suppressCallbacks)
+        return;
+    if (_onParamAdded)
+        _onParamAdded(@"param", NO);
+    (void)sender;
+}
 @end
 
 // ---------------------------------------------------------------------------
@@ -287,6 +522,44 @@ struct CocoaAnimationView::Impl
     NSPopUpButton* smStateDropdown = nil;
     NSStackView* smParamStack = nil;
 
+    // State machine editing section.
+    NSStackView* smStateListStack = nil;
+    NSButton* addStateButton = nil;
+    NSButton* removeStateButton = nil;
+    int smSelectedStateIndex = -1;
+    int smSelectedTransitionIndex = -1;
+
+    // Selected state properties.
+    NSStackView* smStatePropsStack = nil;
+    NSTextField* smStateNameField = nil;
+    NSPopUpButton* smStateClipDropdown = nil;
+    NSSlider* smStateSpeedSlider = nil;
+    NSTextField* smStateSpeedLabel = nil;
+    NSButton* smStateLoopCheckbox = nil;
+
+    // Transition list for selected state.
+    NSStackView* smTransitionListStack = nil;
+    NSButton* addTransitionButton = nil;
+    NSButton* removeTransitionButton = nil;
+
+    // Transition properties.
+    NSStackView* smTransPropsStack = nil;
+    NSPopUpButton* smTransTargetDropdown = nil;
+    NSTextField* smTransBlendField = nil;
+    NSButton* smTransExitTimeCheck = nil;
+    NSTextField* smTransExitTimeField = nil;
+
+    // Condition list for selected transition.
+    NSStackView* smConditionListStack = nil;
+    NSButton* addConditionButton = nil;
+    NSButton* removeConditionButton = nil;
+
+    // Add parameter button.
+    NSButton* addParamButton = nil;
+
+    // Cached state data for the editing widgets.
+    int lastStateInfoCount = -1;
+
     AnimationViewDelegate* delegate = nil;
 
     ClipSelectedCallback clipSelectedCb;
@@ -301,6 +574,17 @@ struct CocoaAnimationView::Impl
     EventEditedCallback eventEditedCb;
     StateForceSetCallback stateForceSetCb;
     ParamChangedCallback paramChangedCb;
+    StateAddedCallback stateAddedCb;
+    StateRemovedCallback stateRemovedCb;
+    StateEditedCallback stateEditedCb;
+    TransitionAddedCallback transitionAddedCb;
+    TransitionRemovedCallback transitionRemovedCb;
+    TransitionEditedCallback transitionEditedCb;
+    ConditionAddedCallback conditionAddedCb;
+    ConditionRemovedCallback conditionRemovedCb;
+    ParamAddedCallback paramAddedCb;
+    StateSelectedCallback stateSelectedCb;
+    TransitionSelectedCallback transitionSelectedCb;
 };
 
 CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
@@ -501,8 +785,259 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         impl_->smParamStack.spacing = 4.0;
         impl_->smParamStack.translatesAutoresizingMaskIntoConstraints = NO;
 
+        // State list header: "States" label + add/remove buttons.
+        impl_->addStateButton = [NSButton buttonWithTitle:@"+"
+                                                   target:impl_->delegate
+                                                   action:@selector(addStateClicked:)];
+        impl_->addStateButton.bezelStyle = NSBezelStyleRounded;
+        impl_->addStateButton.controlSize = NSControlSizeSmall;
+        impl_->addStateButton.font = [NSFont systemFontOfSize:11.0];
+
+        impl_->removeStateButton = [NSButton buttonWithTitle:@"\u2212"
+                                                      target:impl_->delegate
+                                                      action:@selector(removeStateClicked:)];
+        impl_->removeStateButton.bezelStyle = NSBezelStyleRounded;
+        impl_->removeStateButton.controlSize = NSControlSizeSmall;
+        impl_->removeStateButton.font = [NSFont systemFontOfSize:11.0];
+
+        NSTextField* statesCaption = [NSTextField labelWithString:@"States"];
+        statesCaption.font = [NSFont boldSystemFontOfSize:11.0];
+        statesCaption.textColor = [NSColor labelColor];
+
+        NSStackView* stateHeaderRow = [NSStackView
+            stackViewWithViews:@[ statesCaption, impl_->addStateButton, impl_->removeStateButton ]];
+        stateHeaderRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        stateHeaderRow.alignment = NSLayoutAttributeCenterY;
+        stateHeaderRow.spacing = 4.0;
+
+        impl_->smStateListStack = [[NSStackView alloc] initWithFrame:NSZeroRect];
+        impl_->smStateListStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smStateListStack.alignment = NSLayoutAttributeLeading;
+        impl_->smStateListStack.spacing = 2.0;
+        impl_->smStateListStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+        // State properties section (shown when a state is selected).
+        impl_->smStateNameField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 100, 20)];
+        impl_->smStateNameField.font = [NSFont systemFontOfSize:11.0];
+        impl_->smStateNameField.bordered = YES;
+        impl_->smStateNameField.bezeled = YES;
+        impl_->smStateNameField.editable = YES;
+        impl_->smStateNameField.bezelStyle = NSTextFieldRoundedBezel;
+        impl_->smStateNameField.controlSize = NSControlSizeSmall;
+        impl_->smStateNameField.target = impl_->delegate;
+        impl_->smStateNameField.action = @selector(stateNameEdited:);
+        impl_->smStateNameField.placeholderString = @"Name";
+
+        impl_->smStateClipDropdown = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 120, 22)
+                                                                pullsDown:NO];
+        impl_->smStateClipDropdown.controlSize = NSControlSizeSmall;
+        impl_->smStateClipDropdown.font = [NSFont systemFontOfSize:11.0];
+        impl_->smStateClipDropdown.target = impl_->delegate;
+        impl_->smStateClipDropdown.action = @selector(stateClipChanged:);
+
+        impl_->smStateSpeedSlider = [NSSlider sliderWithValue:1.0
+                                                     minValue:0.0
+                                                     maxValue:3.0
+                                                       target:impl_->delegate
+                                                       action:@selector(stateSpeedChanged:)];
+        impl_->smStateSpeedSlider.controlSize = NSControlSizeSmall;
+        impl_->smStateSpeedSlider.continuous = YES;
+        [impl_->smStateSpeedSlider
+            setContentHuggingPriority:200
+                       forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+        impl_->smStateSpeedLabel = [NSTextField labelWithString:@"1.00"];
+        impl_->smStateSpeedLabel.font =
+            [NSFont monospacedDigitSystemFontOfSize:10.0 weight:NSFontWeightRegular];
+        impl_->smStateSpeedLabel.textColor = [NSColor secondaryLabelColor];
+
+        impl_->smStateLoopCheckbox = [NSButton checkboxWithTitle:@"Loop"
+                                                          target:impl_->delegate
+                                                          action:@selector(stateLoopChanged:)];
+        impl_->smStateLoopCheckbox.controlSize = NSControlSizeSmall;
+        impl_->smStateLoopCheckbox.font = [NSFont systemFontOfSize:11.0];
+
+        NSTextField* nameCaption = [NSTextField labelWithString:@"Name:"];
+        nameCaption.font = [NSFont systemFontOfSize:10.0];
+        nameCaption.textColor = [NSColor secondaryLabelColor];
+        NSTextField* clipCaption = [NSTextField labelWithString:@"Clip:"];
+        clipCaption.font = [NSFont systemFontOfSize:10.0];
+        clipCaption.textColor = [NSColor secondaryLabelColor];
+        NSTextField* spdCaption = [NSTextField labelWithString:@"Speed:"];
+        spdCaption.font = [NSFont systemFontOfSize:10.0];
+        spdCaption.textColor = [NSColor secondaryLabelColor];
+
+        NSStackView* statePropsRow1 = [NSStackView stackViewWithViews:@[
+            nameCaption, impl_->smStateNameField, clipCaption, impl_->smStateClipDropdown
+        ]];
+        statePropsRow1.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        statePropsRow1.alignment = NSLayoutAttributeCenterY;
+        statePropsRow1.spacing = 4.0;
+
+        NSStackView* statePropsRow2 = [NSStackView stackViewWithViews:@[
+            spdCaption, impl_->smStateSpeedSlider, impl_->smStateSpeedLabel,
+            impl_->smStateLoopCheckbox
+        ]];
+        statePropsRow2.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        statePropsRow2.alignment = NSLayoutAttributeCenterY;
+        statePropsRow2.spacing = 4.0;
+
+        impl_->smStatePropsStack =
+            [NSStackView stackViewWithViews:@[ statePropsRow1, statePropsRow2 ]];
+        impl_->smStatePropsStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smStatePropsStack.alignment = NSLayoutAttributeLeading;
+        impl_->smStatePropsStack.spacing = 4.0;
+        impl_->smStatePropsStack.hidden = YES;
+
+        // Transition list section.
+        NSTextField* transCaption = [NSTextField labelWithString:@"Transitions"];
+        transCaption.font = [NSFont boldSystemFontOfSize:11.0];
+        transCaption.textColor = [NSColor labelColor];
+
+        impl_->addTransitionButton = [NSButton buttonWithTitle:@"+"
+                                                        target:impl_->delegate
+                                                        action:@selector(addTransitionClicked:)];
+        impl_->addTransitionButton.bezelStyle = NSBezelStyleRounded;
+        impl_->addTransitionButton.controlSize = NSControlSizeSmall;
+        impl_->addTransitionButton.font = [NSFont systemFontOfSize:11.0];
+
+        impl_->removeTransitionButton =
+            [NSButton buttonWithTitle:@"\u2212"
+                               target:impl_->delegate
+                               action:@selector(removeTransitionClicked:)];
+        impl_->removeTransitionButton.bezelStyle = NSBezelStyleRounded;
+        impl_->removeTransitionButton.controlSize = NSControlSizeSmall;
+        impl_->removeTransitionButton.font = [NSFont systemFontOfSize:11.0];
+
+        NSStackView* transHeaderRow = [NSStackView stackViewWithViews:@[
+            transCaption, impl_->addTransitionButton, impl_->removeTransitionButton
+        ]];
+        transHeaderRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        transHeaderRow.alignment = NSLayoutAttributeCenterY;
+        transHeaderRow.spacing = 4.0;
+
+        impl_->smTransitionListStack = [[NSStackView alloc] initWithFrame:NSZeroRect];
+        impl_->smTransitionListStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smTransitionListStack.alignment = NSLayoutAttributeLeading;
+        impl_->smTransitionListStack.spacing = 2.0;
+        impl_->smTransitionListStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+        // Transition properties section.
+        NSTextField* tgtCaption = [NSTextField labelWithString:@"Target:"];
+        tgtCaption.font = [NSFont systemFontOfSize:10.0];
+        tgtCaption.textColor = [NSColor secondaryLabelColor];
+
+        impl_->smTransTargetDropdown =
+            [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 120, 22) pullsDown:NO];
+        impl_->smTransTargetDropdown.controlSize = NSControlSizeSmall;
+        impl_->smTransTargetDropdown.font = [NSFont systemFontOfSize:11.0];
+        impl_->smTransTargetDropdown.target = impl_->delegate;
+        impl_->smTransTargetDropdown.action = @selector(transTargetChanged:);
+
+        NSTextField* blendCaption = [NSTextField labelWithString:@"Blend:"];
+        blendCaption.font = [NSFont systemFontOfSize:10.0];
+        blendCaption.textColor = [NSColor secondaryLabelColor];
+
+        impl_->smTransBlendField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 50, 20)];
+        impl_->smTransBlendField.font = [NSFont systemFontOfSize:11.0];
+        impl_->smTransBlendField.bordered = YES;
+        impl_->smTransBlendField.bezeled = YES;
+        impl_->smTransBlendField.editable = YES;
+        impl_->smTransBlendField.bezelStyle = NSTextFieldRoundedBezel;
+        impl_->smTransBlendField.controlSize = NSControlSizeSmall;
+        impl_->smTransBlendField.target = impl_->delegate;
+        impl_->smTransBlendField.action = @selector(transBlendEdited:);
+
+        NSTextField* blendUnit = [NSTextField labelWithString:@"s"];
+        blendUnit.font = [NSFont systemFontOfSize:10.0];
+        blendUnit.textColor = [NSColor secondaryLabelColor];
+
+        impl_->smTransExitTimeCheck =
+            [NSButton checkboxWithTitle:@"Exit time:"
+                                 target:impl_->delegate
+                                 action:@selector(transExitTimeCheckChanged:)];
+        impl_->smTransExitTimeCheck.controlSize = NSControlSizeSmall;
+        impl_->smTransExitTimeCheck.font = [NSFont systemFontOfSize:11.0];
+
+        impl_->smTransExitTimeField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 50, 20)];
+        impl_->smTransExitTimeField.font = [NSFont systemFontOfSize:11.0];
+        impl_->smTransExitTimeField.bordered = YES;
+        impl_->smTransExitTimeField.bezeled = YES;
+        impl_->smTransExitTimeField.editable = YES;
+        impl_->smTransExitTimeField.bezelStyle = NSTextFieldRoundedBezel;
+        impl_->smTransExitTimeField.controlSize = NSControlSizeSmall;
+        impl_->smTransExitTimeField.target = impl_->delegate;
+        impl_->smTransExitTimeField.action = @selector(transExitTimeEdited:);
+        impl_->smTransExitTimeField.enabled = NO;
+
+        NSStackView* transPropsRow1 = [NSStackView stackViewWithViews:@[
+            tgtCaption, impl_->smTransTargetDropdown, blendCaption, impl_->smTransBlendField,
+            blendUnit
+        ]];
+        transPropsRow1.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        transPropsRow1.alignment = NSLayoutAttributeCenterY;
+        transPropsRow1.spacing = 4.0;
+
+        NSStackView* transPropsRow2 = [NSStackView
+            stackViewWithViews:@[ impl_->smTransExitTimeCheck, impl_->smTransExitTimeField ]];
+        transPropsRow2.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        transPropsRow2.alignment = NSLayoutAttributeCenterY;
+        transPropsRow2.spacing = 4.0;
+
+        // Condition list section.
+        NSTextField* condCaption = [NSTextField labelWithString:@"Conditions"];
+        condCaption.font = [NSFont boldSystemFontOfSize:10.0];
+        condCaption.textColor = [NSColor labelColor];
+
+        impl_->addConditionButton = [NSButton buttonWithTitle:@"+"
+                                                       target:impl_->delegate
+                                                       action:@selector(addConditionClicked:)];
+        impl_->addConditionButton.bezelStyle = NSBezelStyleRounded;
+        impl_->addConditionButton.controlSize = NSControlSizeSmall;
+        impl_->addConditionButton.font = [NSFont systemFontOfSize:11.0];
+
+        impl_->removeConditionButton =
+            [NSButton buttonWithTitle:@"\u2212"
+                               target:impl_->delegate
+                               action:@selector(removeConditionClicked:)];
+        impl_->removeConditionButton.bezelStyle = NSBezelStyleRounded;
+        impl_->removeConditionButton.controlSize = NSControlSizeSmall;
+        impl_->removeConditionButton.font = [NSFont systemFontOfSize:11.0];
+
+        NSStackView* condHeaderRow = [NSStackView stackViewWithViews:@[
+            condCaption, impl_->addConditionButton, impl_->removeConditionButton
+        ]];
+        condHeaderRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        condHeaderRow.alignment = NSLayoutAttributeCenterY;
+        condHeaderRow.spacing = 4.0;
+
+        impl_->smConditionListStack = [[NSStackView alloc] initWithFrame:NSZeroRect];
+        impl_->smConditionListStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smConditionListStack.alignment = NSLayoutAttributeLeading;
+        impl_->smConditionListStack.spacing = 2.0;
+        impl_->smConditionListStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+        impl_->smTransPropsStack = [NSStackView stackViewWithViews:@[
+            transPropsRow1, transPropsRow2, condHeaderRow, impl_->smConditionListStack
+        ]];
+        impl_->smTransPropsStack.orientation = NSUserInterfaceLayoutOrientationVertical;
+        impl_->smTransPropsStack.alignment = NSLayoutAttributeLeading;
+        impl_->smTransPropsStack.spacing = 4.0;
+        impl_->smTransPropsStack.hidden = YES;
+
+        // Add parameter button.
+        impl_->addParamButton = [NSButton buttonWithTitle:@"+ Parameter"
+                                                   target:impl_->delegate
+                                                   action:@selector(addParamClicked:)];
+        impl_->addParamButton.bezelStyle = NSBezelStyleRounded;
+        impl_->addParamButton.controlSize = NSControlSizeSmall;
+        impl_->addParamButton.font = [NSFont systemFontOfSize:11.0];
+
         impl_->smSectionStack = [NSStackView stackViewWithViews:@[
-            smCaption, smStateLabelRow, impl_->smStateDropdown, impl_->smParamStack
+            smCaption, smStateLabelRow, impl_->smStateDropdown, stateHeaderRow,
+            impl_->smStateListStack, impl_->smStatePropsStack, transHeaderRow,
+            impl_->smTransitionListStack, impl_->smTransPropsStack, impl_->addParamButton,
+            impl_->smParamStack
         ]];
         impl_->smSectionStack.orientation = NSUserInterfaceLayoutOrientationVertical;
         impl_->smSectionStack.alignment = NSLayoutAttributeLeading;
@@ -547,6 +1082,18 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
                 constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
             [impl_->smParamStack.trailingAnchor
                 constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
+            [impl_->smStateListStack.leadingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
+            [impl_->smStateListStack.trailingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
+            [impl_->smTransitionListStack.leadingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
+            [impl_->smTransitionListStack.trailingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
+            [impl_->smConditionListStack.leadingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
+            [impl_->smConditionListStack.trailingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
         ]];
     }
 }
@@ -575,6 +1122,27 @@ CocoaAnimationView::~CocoaAnimationView()
         impl_->smStateLabel = nil;
         impl_->smStateDropdown = nil;
         impl_->smParamStack = nil;
+        impl_->smStateListStack = nil;
+        impl_->addStateButton = nil;
+        impl_->removeStateButton = nil;
+        impl_->smStatePropsStack = nil;
+        impl_->smStateNameField = nil;
+        impl_->smStateClipDropdown = nil;
+        impl_->smStateSpeedSlider = nil;
+        impl_->smStateSpeedLabel = nil;
+        impl_->smStateLoopCheckbox = nil;
+        impl_->smTransitionListStack = nil;
+        impl_->addTransitionButton = nil;
+        impl_->removeTransitionButton = nil;
+        impl_->smTransPropsStack = nil;
+        impl_->smTransTargetDropdown = nil;
+        impl_->smTransBlendField = nil;
+        impl_->smTransExitTimeCheck = nil;
+        impl_->smTransExitTimeField = nil;
+        impl_->smConditionListStack = nil;
+        impl_->addConditionButton = nil;
+        impl_->removeConditionButton = nil;
+        impl_->addParamButton = nil;
         impl_->delegate = nil;
     }
 }
@@ -973,6 +1541,364 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                     }
                 }
             }
+
+            // State list rows.
+            {
+                int selState = s.selectedStateIndex;
+                impl_->smSelectedStateIndex = selState;
+
+                // Always rebuild the state list (state counts are small).
+                NSArray<NSView*>* oldStateRows = [impl_->smStateListStack.arrangedSubviews copy];
+                for (NSView* v in oldStateRows)
+                {
+                    [impl_->smStateListStack removeArrangedSubview:v];
+                    [v removeFromSuperview];
+                }
+
+                for (size_t i = 0; i < s.stateInfos.size(); ++i)
+                {
+                    const auto& si = s.stateInfos[i];
+                    NSString* bullet = ((int)i == selState) ? @"\u25CF" : @"\u25CB";
+                    NSString* loopStr = si.loop ? @"loop" : @"once";
+                    NSString* rowText = [NSString
+                        stringWithFormat:@"%@ %s  (%s, %.1fx, %@)", bullet, si.name.c_str(),
+                                         si.clipName.c_str(), si.speed, loopStr];
+
+                    NSTextField* rowLabel = [NSTextField labelWithString:rowText];
+                    rowLabel.font = [NSFont systemFontOfSize:11.0];
+                    rowLabel.textColor = ((int)i == s.currentStateIndex)
+                                             ? [NSColor systemGreenColor]
+                                             : [NSColor labelColor];
+
+                    TaggableView* rowContainer = [[TaggableView alloc] initWithFrame:NSZeroRect];
+                    rowContainer.translatesAutoresizingMaskIntoConstraints = NO;
+                    rowContainer.viewTag = (int)i;
+                    [rowContainer addSubview:rowLabel];
+                    rowLabel.translatesAutoresizingMaskIntoConstraints = NO;
+                    [NSLayoutConstraint activateConstraints:@[
+                        [rowLabel.leadingAnchor constraintEqualToAnchor:rowContainer.leadingAnchor
+                                                               constant:4],
+                        [rowLabel.trailingAnchor constraintEqualToAnchor:rowContainer.trailingAnchor
+                                                                constant:-4],
+                        [rowLabel.topAnchor constraintEqualToAnchor:rowContainer.topAnchor
+                                                           constant:1],
+                        [rowLabel.bottomAnchor constraintEqualToAnchor:rowContainer.bottomAnchor
+                                                              constant:-1],
+                    ]];
+
+                    if ((int)i == selState)
+                    {
+                        rowContainer.wantsLayer = YES;
+                        rowContainer.layer.backgroundColor =
+                            [NSColor selectedContentBackgroundColor].CGColor;
+                        rowContainer.layer.cornerRadius = 3.0;
+                    }
+
+                    NSClickGestureRecognizer* click = [[NSClickGestureRecognizer alloc]
+                        initWithTarget:impl_->delegate
+                                action:@selector(stateRowClicked:)];
+                    [rowContainer addGestureRecognizer:click];
+
+                    [impl_->smStateListStack addArrangedSubview:rowContainer];
+                }
+
+                // Update the remove-state button tag.
+                impl_->removeStateButton.tag = selState;
+            }
+
+            // State properties (when a state is selected).
+            {
+                int selState = s.selectedStateIndex;
+                impl_->smStatePropsStack.hidden = (selState < 0);
+                if (selState >= 0 && (size_t)selState < s.stateInfos.size())
+                {
+                    const auto& si = s.stateInfos[selState];
+                    impl_->smStateNameField.stringValue =
+                        [NSString stringWithUTF8String:si.name.c_str()];
+                    impl_->smStateNameField.tag = selState;
+
+                    // Populate clip dropdown.
+                    [impl_->smStateClipDropdown removeAllItems];
+                    for (const auto& cn : s.clipNames)
+                    {
+                        [impl_->smStateClipDropdown
+                            addItemWithTitle:[NSString stringWithUTF8String:cn.c_str()]];
+                    }
+                    // Select matching clip.
+                    NSString* clipName = [NSString stringWithUTF8String:si.clipName.c_str()];
+                    NSInteger clipIdx = [impl_->smStateClipDropdown indexOfItemWithTitle:clipName];
+                    if (clipIdx >= 0)
+                        [impl_->smStateClipDropdown selectItemAtIndex:clipIdx];
+                    impl_->smStateClipDropdown.tag = selState;
+
+                    impl_->smStateSpeedSlider.doubleValue = si.speed;
+                    impl_->smStateSpeedSlider.tag = selState;
+                    impl_->smStateSpeedLabel.stringValue =
+                        [NSString stringWithFormat:@"%.2f", si.speed];
+
+                    impl_->smStateLoopCheckbox.state =
+                        si.loop ? NSControlStateValueOn : NSControlStateValueOff;
+                    impl_->smStateLoopCheckbox.tag = selState;
+                }
+            }
+
+            // Transition list for selected state.
+            {
+                int selState = s.selectedStateIndex;
+                int selTrans = s.selectedTransitionIndex;
+                impl_->smSelectedTransitionIndex = selTrans;
+
+                // Set tags for add/remove buttons.
+                impl_->addTransitionButton.tag = selState;
+                impl_->removeTransitionButton.tag = selState;
+
+                NSArray<NSView*>* oldTransRows =
+                    [impl_->smTransitionListStack.arrangedSubviews copy];
+                for (NSView* v in oldTransRows)
+                {
+                    [impl_->smTransitionListStack removeArrangedSubview:v];
+                    [v removeFromSuperview];
+                }
+
+                if (selState >= 0 && (size_t)selState < s.stateInfos.size())
+                {
+                    const auto& si = s.stateInfos[selState];
+                    for (size_t ti = 0; ti < si.transitions.size(); ++ti)
+                    {
+                        const auto& tr = si.transitions[ti];
+                        NSMutableString* condStr = [NSMutableString string];
+                        for (size_t ci = 0; ci < tr.conditions.size(); ++ci)
+                        {
+                            const auto& cond = tr.conditions[ci];
+                            static const char* compareNames[] = {
+                                ">", "<", "==", "!=", "true", "false"};
+                            int cmpIdx = cond.compare;
+                            if (cmpIdx < 0 || cmpIdx > 5)
+                                cmpIdx = 0;
+                            if (ci > 0)
+                                [condStr appendString:@", "];
+                            if (cmpIdx >= 4)
+                            {
+                                [condStr appendFormat:@"%s %s", cond.paramName.c_str(),
+                                                      compareNames[cmpIdx]];
+                            }
+                            else
+                            {
+                                [condStr appendFormat:@"%s %s %.1f", cond.paramName.c_str(),
+                                                      compareNames[cmpIdx], cond.threshold];
+                            }
+                        }
+
+                        NSString* rowText;
+                        if (condStr.length > 0)
+                        {
+                            rowText = [NSString
+                                stringWithFormat:@"\u2192 %s (blend: %.1fs) when %@",
+                                                 tr.targetName.c_str(), tr.blendDuration, condStr];
+                        }
+                        else
+                        {
+                            rowText =
+                                [NSString stringWithFormat:@"\u2192 %s (blend: %.1fs)",
+                                                           tr.targetName.c_str(), tr.blendDuration];
+                        }
+
+                        NSTextField* label = [NSTextField labelWithString:rowText];
+                        label.font = [NSFont systemFontOfSize:11.0];
+                        label.textColor = [NSColor labelColor];
+
+                        TaggableView* rowContainer =
+                            [[TaggableView alloc] initWithFrame:NSZeroRect];
+                        rowContainer.translatesAutoresizingMaskIntoConstraints = NO;
+                        rowContainer.viewTag = selState * 1000 + (int)ti;
+                        [rowContainer addSubview:label];
+                        label.translatesAutoresizingMaskIntoConstraints = NO;
+                        [NSLayoutConstraint activateConstraints:@[
+                            [label.leadingAnchor constraintEqualToAnchor:rowContainer.leadingAnchor
+                                                                constant:8],
+                            [label.trailingAnchor
+                                constraintEqualToAnchor:rowContainer.trailingAnchor
+                                               constant:-4],
+                            [label.topAnchor constraintEqualToAnchor:rowContainer.topAnchor
+                                                            constant:1],
+                            [label.bottomAnchor constraintEqualToAnchor:rowContainer.bottomAnchor
+                                                               constant:-1],
+                        ]];
+
+                        if ((int)ti == selTrans)
+                        {
+                            rowContainer.wantsLayer = YES;
+                            rowContainer.layer.backgroundColor =
+                                [NSColor selectedContentBackgroundColor].CGColor;
+                            rowContainer.layer.cornerRadius = 3.0;
+                        }
+
+                        NSClickGestureRecognizer* click = [[NSClickGestureRecognizer alloc]
+                            initWithTarget:impl_->delegate
+                                    action:@selector(transitionRowClicked:)];
+                        [rowContainer addGestureRecognizer:click];
+
+                        [impl_->smTransitionListStack addArrangedSubview:rowContainer];
+                    }
+                }
+            }
+
+            // Transition properties (when a transition is selected).
+            {
+                int selState = s.selectedStateIndex;
+                int selTrans = s.selectedTransitionIndex;
+                bool showTransProps =
+                    (selState >= 0 && (size_t)selState < s.stateInfos.size() && selTrans >= 0 &&
+                     (size_t)selTrans < s.stateInfos[selState].transitions.size());
+                impl_->smTransPropsStack.hidden = !showTransProps;
+
+                if (showTransProps)
+                {
+                    const auto& tr = s.stateInfos[selState].transitions[selTrans];
+                    int combined = selState * 1000 + selTrans;
+
+                    // Target dropdown.
+                    [impl_->smTransTargetDropdown removeAllItems];
+                    for (const auto& sn : s.stateNames)
+                    {
+                        [impl_->smTransTargetDropdown
+                            addItemWithTitle:[NSString stringWithUTF8String:sn.c_str()]];
+                    }
+                    if (tr.targetState >= 0 &&
+                        tr.targetState < (int)impl_->smTransTargetDropdown.numberOfItems)
+                    {
+                        [impl_->smTransTargetDropdown selectItemAtIndex:tr.targetState];
+                    }
+                    impl_->smTransTargetDropdown.tag = combined;
+
+                    impl_->smTransBlendField.stringValue =
+                        [NSString stringWithFormat:@"%.2f", tr.blendDuration];
+                    impl_->smTransBlendField.tag = combined;
+
+                    impl_->smTransExitTimeCheck.state =
+                        tr.hasExitTime ? NSControlStateValueOn : NSControlStateValueOff;
+                    impl_->smTransExitTimeCheck.tag = combined;
+
+                    impl_->smTransExitTimeField.stringValue =
+                        [NSString stringWithFormat:@"%.2f", tr.exitTime];
+                    impl_->smTransExitTimeField.tag = combined;
+                    impl_->smTransExitTimeField.enabled = tr.hasExitTime;
+
+                    // Condition tags.
+                    impl_->addConditionButton.tag = combined;
+                    impl_->removeConditionButton.tag = combined;
+
+                    // Condition list rows.
+                    NSArray<NSView*>* oldCondRows =
+                        [impl_->smConditionListStack.arrangedSubviews copy];
+                    for (NSView* v in oldCondRows)
+                    {
+                        [impl_->smConditionListStack removeArrangedSubview:v];
+                        [v removeFromSuperview];
+                    }
+
+                    for (size_t ci = 0; ci < tr.conditions.size(); ++ci)
+                    {
+                        const auto& cond = tr.conditions[ci];
+
+                        NSTextField* paramField =
+                            [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 80, 20)];
+                        paramField.stringValue =
+                            [NSString stringWithUTF8String:cond.paramName.c_str()];
+                        paramField.font = [NSFont systemFontOfSize:11.0];
+                        paramField.bordered = YES;
+                        paramField.bezeled = YES;
+                        paramField.editable = YES;
+                        paramField.bezelStyle = NSTextFieldRoundedBezel;
+                        paramField.controlSize = NSControlSizeSmall;
+
+                        NSPopUpButton* compareBtn =
+                            [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 80, 22)
+                                                       pullsDown:NO];
+                        compareBtn.controlSize = NSControlSizeSmall;
+                        compareBtn.font = [NSFont systemFontOfSize:11.0];
+                        [compareBtn addItemsWithTitles:@[
+                            @">", @"<", @"==", @"!=", @"BoolTrue", @"BoolFalse"
+                        ]];
+                        if (cond.compare >= 0 && cond.compare < 6)
+                            [compareBtn selectItemAtIndex:cond.compare];
+
+                        NSTextField* threshField =
+                            [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 50, 20)];
+                        threshField.stringValue =
+                            [NSString stringWithFormat:@"%.2f", cond.threshold];
+                        threshField.font = [NSFont systemFontOfSize:11.0];
+                        threshField.bordered = YES;
+                        threshField.bezeled = YES;
+                        threshField.editable = YES;
+                        threshField.bezelStyle = NSTextFieldRoundedBezel;
+                        threshField.controlSize = NSControlSizeSmall;
+
+                        // Wire up editing: when any of these three change, fire
+                        // the condition edited callback with all three values.
+                        // We use a block-based approach capturing all three.
+                        auto* implPtr = impl_.get();
+                        int condIdx = (int)ci;
+                        auto fireCondEdit = ^{
+                          if (implPtr->conditionAddedCb)
+                          {
+                              // We actually use the onConditionAdded with
+                              // remove + re-add pattern, but simpler to just
+                              // wire individually. For now the user edits
+                              // condition fields then hits enter; we re-add.
+                          }
+                        };
+                        (void)fireCondEdit;
+
+                        // Wire all three to fire a combined condition-edited
+                        // callback when any field commits. We use the
+                        // conditionRemovedCb + conditionAddedCb pattern:
+                        // remove old condition, add new one.
+                        __block NSTextField* pf = paramField;
+                        __block NSPopUpButton* cb = compareBtn;
+                        __block NSTextField* tf = threshField;
+                        int sIdx = selState;
+                        int tIdx = selTrans;
+
+                        // Use a single action for all three that re-adds.
+                        auto makeCondAction = ^{
+                          if (implPtr->conditionRemovedCb)
+                              implPtr->conditionRemovedCb(sIdx, tIdx, condIdx);
+                          if (implPtr->conditionAddedCb)
+                          {
+                              std::string pName([pf.stringValue UTF8String]);
+                              int comp = (int)cb.indexOfSelectedItem;
+                              float thresh = (float)tf.doubleValue;
+                              implPtr->conditionAddedCb(sIdx, tIdx, pName, comp, thresh);
+                          }
+                        };
+
+                        paramField.target = implPtr->delegate;
+                        paramField.action = @selector(condParamEdited:);
+                        paramField.tag = sIdx * 100000 + tIdx * 100 + condIdx;
+
+                        compareBtn.target = implPtr->delegate;
+                        compareBtn.action = @selector(condCompareChanged:);
+                        compareBtn.tag = sIdx * 100000 + tIdx * 100 + condIdx;
+
+                        threshField.target = implPtr->delegate;
+                        threshField.action = @selector(condThresholdEdited:);
+                        threshField.tag = sIdx * 100000 + tIdx * 100 + condIdx;
+
+                        // Store the combined action block on the row for use by
+                        // delegate methods (not used currently; editing is done
+                        // via remove+add in the callbacks).
+                        (void)makeCondAction;
+
+                        NSStackView* condRow = [NSStackView
+                            stackViewWithViews:@[ paramField, compareBtn, threshField ]];
+                        condRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+                        condRow.alignment = NSLayoutAttributeCenterY;
+                        condRow.spacing = 4.0;
+                        [impl_->smConditionListStack addArrangedSubview:condRow];
+                    }
+                }
+            }
         }
 
         impl_->delegate.suppressCallbacks = NO;
@@ -1114,6 +2040,127 @@ void CocoaAnimationView::setParamChangedCallback(ParamChangedCallback cb)
     impl_->delegate.onParamChanged = ^(NSString* paramName, float value) {
       if (*captured)
           (*captured)(std::string([paramName UTF8String]), value);
+    };
+}
+
+void CocoaAnimationView::setStateAddedCallback(StateAddedCallback cb)
+{
+    impl_->stateAddedCb = std::move(cb);
+    auto* captured = &impl_->stateAddedCb;
+    impl_->delegate.onStateAdded = ^{
+      if (*captured)
+          (*captured)();
+    };
+}
+
+void CocoaAnimationView::setStateRemovedCallback(StateRemovedCallback cb)
+{
+    impl_->stateRemovedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+    impl_->delegate.onStateRemoved = ^(int index) {
+      int resolved = (index < 0) ? implPtr->smSelectedStateIndex : index;
+      if (resolved >= 0 && implPtr->stateRemovedCb)
+          implPtr->stateRemovedCb(resolved);
+    };
+}
+
+void CocoaAnimationView::setStateEditedCallback(StateEditedCallback cb)
+{
+    impl_->stateEditedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+    impl_->delegate.onStateEdited =
+        ^(int stateIndex, NSString* name, int clipIndex, float speed, BOOL loop) {
+          if (!implPtr->stateEditedCb)
+              return;
+          // The delegate fires partial edits (name-only, clip-only, etc.)
+          // with sentinel values for unchanged fields.
+          std::string nameStr = name ? std::string([name UTF8String]) : "";
+          implPtr->stateEditedCb(stateIndex, nameStr, clipIndex, speed, loop);
+        };
+}
+
+void CocoaAnimationView::setTransitionAddedCallback(TransitionAddedCallback cb)
+{
+    impl_->transitionAddedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+    impl_->delegate.onTransitionAdded = ^(int fromState, int toState, float blend) {
+      if (fromState < 0)
+          fromState = implPtr->smSelectedStateIndex;
+      if (implPtr->transitionAddedCb)
+          implPtr->transitionAddedCb(fromState, toState, blend);
+    };
+}
+
+void CocoaAnimationView::setTransitionRemovedCallback(TransitionRemovedCallback cb)
+{
+    impl_->transitionRemovedCb = std::move(cb);
+    auto* implPtr = impl_.get();
+    impl_->delegate.onTransitionRemoved = ^(int fromState, int transIdx) {
+      int resolved = (transIdx < 0) ? implPtr->smSelectedTransitionIndex : transIdx;
+      if (resolved >= 0 && implPtr->transitionRemovedCb)
+          implPtr->transitionRemovedCb(fromState, resolved);
+    };
+}
+
+void CocoaAnimationView::setTransitionEditedCallback(TransitionEditedCallback cb)
+{
+    impl_->transitionEditedCb = std::move(cb);
+    auto* captured = &impl_->transitionEditedCb;
+    impl_->delegate.onTransitionEdited = ^(int fromState, int transIdx, int targetState,
+                                           float blend, float exitTime, BOOL hasExitTime) {
+      if (*captured)
+          (*captured)(fromState, transIdx, targetState, blend, exitTime, hasExitTime);
+    };
+}
+
+void CocoaAnimationView::setConditionAddedCallback(ConditionAddedCallback cb)
+{
+    impl_->conditionAddedCb = std::move(cb);
+    auto* captured = &impl_->conditionAddedCb;
+    impl_->delegate.onConditionAdded =
+        ^(int fromState, int transIdx, NSString* param, int compare, float threshold) {
+          if (*captured)
+              (*captured)(fromState, transIdx, std::string([param UTF8String]), compare, threshold);
+        };
+}
+
+void CocoaAnimationView::setConditionRemovedCallback(ConditionRemovedCallback cb)
+{
+    impl_->conditionRemovedCb = std::move(cb);
+    auto* captured = &impl_->conditionRemovedCb;
+    impl_->delegate.onConditionRemoved = ^(int fromState, int transIdx, int condIdx) {
+      if (*captured)
+          (*captured)(fromState, transIdx, condIdx);
+    };
+}
+
+void CocoaAnimationView::setParamAddedCallback(ParamAddedCallback cb)
+{
+    impl_->paramAddedCb = std::move(cb);
+    auto* captured = &impl_->paramAddedCb;
+    impl_->delegate.onParamAdded = ^(NSString* name, BOOL isBool) {
+      if (*captured)
+          (*captured)(std::string([name UTF8String]), isBool);
+    };
+}
+
+void CocoaAnimationView::setStateSelectedCallback(StateSelectedCallback cb)
+{
+    impl_->stateSelectedCb = std::move(cb);
+    auto* captured = &impl_->stateSelectedCb;
+    impl_->delegate.onStateSelected = ^(int stateIndex) {
+      if (*captured)
+          (*captured)(stateIndex);
+    };
+}
+
+void CocoaAnimationView::setTransitionSelectedCallback(TransitionSelectedCallback cb)
+{
+    impl_->transitionSelectedCb = std::move(cb);
+    auto* captured = &impl_->transitionSelectedCb;
+    impl_->delegate.onTransitionSelected = ^(int stateIndex, int transIdx) {
+      if (*captured)
+          (*captured)(stateIndex, transIdx);
     };
 }
 

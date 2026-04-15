@@ -47,6 +47,34 @@ struct AnimationViewState
     };
     std::vector<ParamInfo> params;
     bool hasStateMachine = false;
+
+    // Full state machine editing data.
+    struct StateInfo
+    {
+        std::string name;
+        std::string clipName;
+        float speed = 1.0f;
+        bool loop = true;
+        struct TransitionInfo
+        {
+            int targetState = 0;
+            std::string targetName;
+            float blendDuration = 0.3f;
+            float exitTime = 0.0f;
+            bool hasExitTime = false;
+            struct ConditionInfo
+            {
+                std::string paramName;
+                int compare = 0;  // index into Compare enum
+                float threshold = 0.0f;
+            };
+            std::vector<ConditionInfo> conditions;
+        };
+        std::vector<TransitionInfo> transitions;
+    };
+    std::vector<StateInfo> stateInfos;
+    int selectedStateIndex = -1;
+    int selectedTransitionIndex = -1;
 };
 
 // ---------------------------------------------------------------------------
@@ -83,6 +111,24 @@ public:
         std::function<void(int eventIndex, float newTime, const std::string& newName)>;
     using StateForceSetCallback = std::function<void(int stateIndex)>;
     using ParamChangedCallback = std::function<void(const std::string& paramName, float value)>;
+    using StateAddedCallback = std::function<void()>;
+    using StateRemovedCallback = std::function<void(int stateIndex)>;
+    using StateEditedCallback = std::function<void(int stateIndex, const std::string& name,
+                                                   int clipIndex, float speed, bool loop)>;
+    using TransitionAddedCallback =
+        std::function<void(int fromState, int toState, float blendDuration)>;
+    using TransitionRemovedCallback = std::function<void(int fromState, int transitionIndex)>;
+    using TransitionEditedCallback =
+        std::function<void(int fromState, int transitionIndex, int targetState, float blendDuration,
+                           float exitTime, bool hasExitTime)>;
+    using ConditionAddedCallback =
+        std::function<void(int fromState, int transitionIndex, const std::string& param,
+                           int compare, float threshold)>;
+    using ConditionRemovedCallback =
+        std::function<void(int fromState, int transitionIndex, int conditionIndex)>;
+    using ParamAddedCallback = std::function<void(const std::string& name, bool isBool)>;
+    using StateSelectedCallback = std::function<void(int stateIndex)>;
+    using TransitionSelectedCallback = std::function<void(int stateIndex, int transitionIndex)>;
 
     void setClipSelectedCallback(ClipSelectedCallback cb);
     void setPlayCallback(PlayCallback cb);
@@ -96,6 +142,17 @@ public:
     void setEventEditedCallback(EventEditedCallback cb);
     void setStateForceSetCallback(StateForceSetCallback cb);
     void setParamChangedCallback(ParamChangedCallback cb);
+    void setStateAddedCallback(StateAddedCallback cb);
+    void setStateRemovedCallback(StateRemovedCallback cb);
+    void setStateEditedCallback(StateEditedCallback cb);
+    void setTransitionAddedCallback(TransitionAddedCallback cb);
+    void setTransitionRemovedCallback(TransitionRemovedCallback cb);
+    void setTransitionEditedCallback(TransitionEditedCallback cb);
+    void setConditionAddedCallback(ConditionAddedCallback cb);
+    void setConditionRemovedCallback(ConditionRemovedCallback cb);
+    void setParamAddedCallback(ParamAddedCallback cb);
+    void setStateSelectedCallback(StateSelectedCallback cb);
+    void setTransitionSelectedCallback(TransitionSelectedCallback cb);
 
 private:
     struct Impl;
