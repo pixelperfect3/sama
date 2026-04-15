@@ -2039,6 +2039,26 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                         impl_->animationPanel->setSelectedTransition(stateIndex, transIndex);
                 });
 
+            animView->setStateSelectedCallback(
+                [this](int stateIndex)
+                {
+                    if (impl_->animationPanel)
+                    {
+                        impl_->animationPanel->setSelectedState(stateIndex);
+                        impl_->animationPanel->markDirty();
+                    }
+                });
+
+            animView->setTransitionSelectedCallback(
+                [this](int stateIndex, int transIndex)
+                {
+                    if (impl_->animationPanel)
+                    {
+                        impl_->animationPanel->setSelectedTransition(stateIndex, transIndex);
+                        impl_->animationPanel->markDirty();
+                    }
+                });
+
             animView->setStateAddedCallback(
                 [this, getMutableMachine, syncAnimatorToCurrentState]()
                 {
