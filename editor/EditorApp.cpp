@@ -42,6 +42,7 @@
 #include "editor/undo/DeleteEntityCommand.h"
 #include "editor/undo/SetTransformCommand.h"
 #include "engine/animation/AnimStateMachine.h"
+#include "engine/animation/AnimStateMachineSystem.h"
 #include "engine/animation/AnimationClip.h"
 #include "engine/animation/AnimationComponents.h"
 #include "engine/animation/AnimationEventQueue.h"
@@ -161,6 +162,7 @@ struct EditorApp::Impl
     // Skeletal animation runtime + editor panel.
     engine::animation::AnimationResources animationResources;
     engine::animation::AnimationSystem animationSystem;
+    engine::animation::AnimStateMachineSystem stateMachineSystem;
     std::unique_ptr<AnimationPanel> animationPanel;
 
     // Imported state machines (kept alive so AnimStateMachineComponent can
@@ -2768,6 +2770,9 @@ void EditorApp::run()
                                         *sm, impl_->animationResources, smPath))
                                 {
                                     impl_->importedStateMachines.push_back(sm);
+                                    // Attach to all newly spawned entities that have
+                                    // AnimatorComponent (deferred until after entity discovery
+                                    // below; store pointer for now).
                                     EditorLog::instance().info("Loaded state machine sidecar");
                                 }
                             }
@@ -2796,6 +2801,29 @@ void EditorApp::run()
                                                        : filename + " [" + std::to_string(i) + "]";
                                 impl_->registry.emplace<engine::scene::NameComponent>(
                                     newEntities[i], engine::scene::NameComponent{name});
+                            }
+                        }
+
+                        // Attach loaded state machine to animated entities.
+                        if (!impl_->importedStateMachines.empty())
+                        {
+                            auto* sm = impl_->importedStateMachines.back().get();
+                            for (EntityID e : newEntities)
+                            {
+                                if (impl_->registry.has<engine::animation::AnimatorComponent>(e) &&
+                                    !impl_->registry
+                                         .has<engine::animation::AnimStateMachineComponent>(e))
+                                {
+                                    engine::animation::AnimStateMachineComponent smComp;
+                                    smComp.machine = sm;
+                                    smComp.currentState = sm->defaultState;
+                                    // Initialize all known parameters to defaults.
+                                    for (const auto& [hash, name] : sm->paramNames)
+                                        smComp.params[hash] = 0.0f;
+                                    impl_->registry
+                                        .emplace<engine::animation::AnimStateMachineComponent>(
+                                            e, std::move(smComp));
+                                }
                             }
                         }
 
@@ -3355,6 +3383,9 @@ void EditorApp::run()
         // skinned mesh pose. Entities without kFlagPlaying simply don't
         // advance their time — the kFlagSampleOnce path lets the scrubber
         // force a fresh sample while paused.
+        // State machine transitions (before animation so clip changes take effect).
+        impl_->stateMachineSystem.update(impl_->registry, dt, impl_->animationResources);
+
         // Clear per-entity event queues from last frame so markers reset.
         impl_->registry.view<engine::animation::AnimationEventQueue>().each(
             [](ecs::EntityID, engine::animation::AnimationEventQueue& q) { q.clear(); });
