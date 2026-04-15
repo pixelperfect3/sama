@@ -742,7 +742,8 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
 
             for (size_t i = 0; i < s.events.size(); ++i)
             {
-                EventRowView* row = [[EventRowView alloc] initWithFrame:NSMakeRect(0, 0, 380, 22)];
+                EventRowView* row = [[EventRowView alloc] initWithFrame:NSZeroRect];
+                row.translatesAutoresizingMaskIntoConstraints = NO;
                 row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
                 row.alignment = NSLayoutAttributeCenterY;
                 row.spacing = 6.0;
@@ -817,6 +818,10 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                 [row addArrangedSubview:timeField];
                 [impl_->eventListStack addArrangedSubview:row];
             }
+
+            // Force layout update so the scroll view resizes to fit.
+            [impl_->eventListStack layoutSubtreeIfNeeded];
+            [impl_->eventScrollView.documentView setNeedsLayout:YES];
         }
 
         // Update state machine section.
