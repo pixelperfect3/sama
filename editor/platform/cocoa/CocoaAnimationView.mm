@@ -497,7 +497,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
 
         impl_->smParamStack = [[NSStackView alloc] initWithFrame:NSMakeRect(0, 0, 400, 0)];
         impl_->smParamStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        impl_->smParamStack.alignment = NSLayoutAttributeWidth;
+        impl_->smParamStack.alignment = NSLayoutAttributeLeading;
         impl_->smParamStack.spacing = 4.0;
         impl_->smParamStack.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -505,7 +505,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             smCaption, smStateLabelRow, impl_->smStateDropdown, impl_->smParamStack
         ]];
         impl_->smSectionStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        impl_->smSectionStack.alignment = NSLayoutAttributeWidth;
+        impl_->smSectionStack.alignment = NSLayoutAttributeLeading;
         impl_->smSectionStack.spacing = 4.0;
         impl_->smSectionStack.hidden = YES;
 
@@ -515,7 +515,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             impl_->eventListStack, impl_->smSectionStack
         ]];
         impl_->rootStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-        impl_->rootStack.alignment = NSLayoutAttributeWidth;
+        impl_->rootStack.alignment = NSLayoutAttributeLeading;
         impl_->rootStack.spacing = 6.0;
         impl_->rootStack.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -527,19 +527,26 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
                 constraintEqualToAnchor:impl_->containerView.leadingAnchor
                                constant:8],
             [impl_->rootStack.trailingAnchor
-                constraintLessThanOrEqualToAnchor:impl_->containerView.trailingAnchor
-                                         constant:-8],
-            // Align the event marker view with the scrubber track so
-            // triangle positions match the slider's visual range.
+                constraintEqualToAnchor:impl_->containerView.trailingAnchor
+                               constant:-8],
+            // Align the event marker view with the scrubber track.
             [impl_->eventMarkerView.leadingAnchor
                 constraintEqualToAnchor:impl_->scrubber.leadingAnchor],
             [impl_->eventMarkerView.trailingAnchor
                 constraintEqualToAnchor:impl_->scrubber.trailingAnchor],
-            // Make the event list stretch too.
+            // Stretch child stacks to fill width.
             [impl_->eventListStack.leadingAnchor
                 constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
             [impl_->eventListStack.trailingAnchor
                 constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
+            [impl_->smSectionStack.leadingAnchor
+                constraintEqualToAnchor:impl_->rootStack.leadingAnchor],
+            [impl_->smSectionStack.trailingAnchor
+                constraintEqualToAnchor:impl_->rootStack.trailingAnchor],
+            [impl_->smParamStack.leadingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
+            [impl_->smParamStack.trailingAnchor
+                constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
         ]];
     }
 }
