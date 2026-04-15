@@ -433,6 +433,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
         NSStackView* currentSectionStack = nil;
         int sectionIndex = 0;
         bool sawFirstHeader = false;
+        NSMutableArray<NSTextField*>* editableFields = [NSMutableArray array];
 
         for (const auto& field : fields)
         {
@@ -534,6 +535,7 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
                     NSTextField* valueField = makeEditableField(field.value, field.fieldId, nil);
                     valueField.tag = field.fieldId;
                     valueField.delegate = impl_->delegate;
+                    [editableFields addObject:valueField];
 
                     [row addArrangedSubview:label];
                     [row addArrangedSubview:valueField];
@@ -756,6 +758,13 @@ void CocoaPropertiesView::setProperties(const std::vector<PropertyField>& fields
             [impl_->stackView addArrangedSubview:addButton];
             impl_->fieldViews.push_back((__bridge NSView*)(__bridge void*)addButton);
         }
+
+        // Wire Tab key navigation: each editable field's nextKeyView
+        // points to the next one, and the last wraps to the first.
+        for (NSUInteger i = 0; i + 1 < editableFields.count; ++i)
+            editableFields[i].nextKeyView = editableFields[i + 1];
+        if (editableFields.count > 1)
+            editableFields.lastObject.nextKeyView = editableFields[0];
 
         // Force layout update on the document view.
         NSView* docView = impl_->scrollView.documentView;
