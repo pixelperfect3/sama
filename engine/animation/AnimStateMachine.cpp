@@ -44,6 +44,7 @@ void AnimStateMachine::addTransition(uint32_t fromState, uint32_t toState, float
 
     TransitionCondition cond;
     cond.paramHash = hash;
+    cond.paramName = param;
     cond.compare = compare;
     cond.threshold = threshold;
 

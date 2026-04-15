@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -44,6 +45,7 @@
 #include "engine/animation/AnimationClip.h"
 #include "engine/animation/AnimationComponents.h"
 #include "engine/animation/AnimationResources.h"
+#include "engine/animation/AnimationSerializer.h"
 #include "engine/animation/AnimationSystem.h"
 #include "engine/assets/CubemapLoader.h"
 #include "engine/assets/EnvironmentAssetSerializer.h"
@@ -159,6 +161,10 @@ struct EditorApp::Impl
     engine::animation::AnimationResources animationResources;
     engine::animation::AnimationSystem animationSystem;
     std::unique_ptr<AnimationPanel> animationPanel;
+
+    // Imported state machines (kept alive so AnimStateMachineComponent can
+    // hold a raw pointer into them).
+    std::vector<std::shared_ptr<engine::animation::AnimStateMachine>> importedStateMachines;
 
     // Gizmo
     std::unique_ptr<TransformGizmo> gizmo;
@@ -2696,6 +2702,37 @@ void EditorApp::run()
 
                         engine::assets::GltfSceneSpawner::spawn(
                             *asset, impl_->registry, impl_->resources, impl_->animationResources);
+
+                        // Auto-load sidecar files (events / state machine).
+                        {
+                            std::string basePath = path;
+                            auto dotPos = basePath.rfind('.');
+                            if (dotPos != std::string::npos)
+                                basePath = basePath.substr(0, dotPos);
+
+                            std::string eventsPath = basePath + ".events.json";
+                            std::string smPath = basePath + ".statemachine.json";
+
+                            if (std::ifstream(eventsPath).good())
+                            {
+                                if (engine::animation::loadEvents(impl_->animationResources,
+                                                                  eventsPath))
+                                {
+                                    EditorLog::instance().info("Loaded animation events sidecar");
+                                }
+                            }
+
+                            if (std::ifstream(smPath).good())
+                            {
+                                auto sm = std::make_shared<engine::animation::AnimStateMachine>();
+                                if (engine::animation::loadStateMachine(
+                                        *sm, impl_->animationResources, smPath))
+                                {
+                                    impl_->importedStateMachines.push_back(sm);
+                                    EditorLog::instance().info("Loaded state machine sidecar");
+                                }
+                            }
+                        }
 
                         // Find newly spawned entities and add NameComponents.
                         std::vector<EntityID> newEntities;

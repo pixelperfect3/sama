@@ -25,6 +25,7 @@ inline uint32_t fnv1aHash(std::string_view str)
 struct TransitionCondition
 {
     uint32_t paramHash = 0;  // FNV-1a hash of parameter name
+    std::string paramName;   // human-readable parameter name (for serialization)
 
     enum class Compare : uint8_t
     {
