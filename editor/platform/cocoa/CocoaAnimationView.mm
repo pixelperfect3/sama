@@ -1735,8 +1735,8 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         }
 
         impl_->smSectionStack = [NSStackView stackViewWithViews:@[
-            smCaption, impl_->smGraphView, smStateLabelRow, impl_->smStateDropdown, stateHeaderRow,
-            impl_->smStateListStack, impl_->smStatePropsStack, transHeaderRow,
+            smCaption, /* impl_->smGraphView, */ smStateLabelRow, impl_->smStateDropdown,
+            stateHeaderRow, impl_->smStateListStack, impl_->smStatePropsStack, transHeaderRow,
             impl_->smTransitionListStack, impl_->smTransPropsStack, impl_->addParamButton,
             impl_->smParamStack
         ]];
@@ -2187,12 +2187,10 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                     [gNames addObject:[NSString stringWithUTF8String:si.name.c_str()]];
                     [gClips addObject:[NSString stringWithUTF8String:si.clipName.c_str()]];
                 }
-                [impl_->smGraphView setStateCount:(int)s.stateInfos.size()
-                                            names:gNames
-                                        clipNames:gClips
-                                     currentState:s.currentStateIndex
-                                    selectedState:s.selectedStateIndex
-                               selectedTransition:s.selectedTransitionIndex];
+                // Graph view disabled pending memory corruption fix.
+                // [impl_->smGraphView setStateCount:...]
+                (void)gNames;
+                (void)gClips;
 
                 // Build flat transition arrays for the graph view.
                 NSMutableArray<NSNumber*>* tFrom = [NSMutableArray array];
@@ -2235,10 +2233,12 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                         [tCombined addObject:@((int)si * 1000 + (int)ti)];
                     }
                 }
-                [impl_->smGraphView setTransitions:tFrom
-                                                to:tTo
-                                            labels:tLabels
-                                   stateTransIdxes:tCombined];
+                // Graph view disabled pending memory corruption fix.
+                // [impl_->smGraphView setTransitions:...]
+                (void)tFrom;
+                (void)tTo;
+                (void)tLabels;
+                (void)tCombined;
             }
 
             // Parameter rows.
