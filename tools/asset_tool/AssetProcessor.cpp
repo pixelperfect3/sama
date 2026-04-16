@@ -172,6 +172,18 @@ int AssetProcessor::run()
             {
                 fs::path src = fs::path(args_.inputDir) / entry.source;
                 fs::path dst = fs::path(args_.outputDir) / entry.output;
+
+                // Verify destination is inside outputDir (prevent path traversal)
+                fs::path canonicalDst = fs::weakly_canonical(dst);
+                fs::path canonicalOut = fs::weakly_canonical(args_.outputDir);
+                auto mismatch =
+                    std::mismatch(canonicalOut.begin(), canonicalOut.end(), canonicalDst.begin());
+                if (mismatch.first != canonicalOut.end())
+                {
+                    std::cerr << "Error: output path escapes output directory: " << dst << "\n";
+                    continue;
+                }
+
                 fs::create_directories(dst.parent_path());
 
                 std::error_code ec;
@@ -295,7 +307,11 @@ bool AssetProcessor::writeManifest()
     auto now = std::chrono::system_clock::now();
     auto timeT = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &timeT);
+#else
     gmtime_r(&timeT, &tm);
+#endif
     char timeBuf[32];
     std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%dT%H:%M:%SZ", &tm);
 

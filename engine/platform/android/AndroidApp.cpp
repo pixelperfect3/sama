@@ -27,6 +27,8 @@ struct AndroidAppState
 static void handleAppCmd(struct android_app* app, int32_t cmd)
 {
     auto* state = static_cast<AndroidAppState*>(app->userData);
+    if (!state)
+        return;
 
     switch (cmd)
     {
@@ -34,9 +36,22 @@ static void handleAppCmd(struct android_app* app, int32_t cmd)
             LOGI("APP_CMD_INIT_WINDOW");
             if (app->window != nullptr)
             {
-                state->width = static_cast<uint32_t>(ANativeWindow_getWidth(app->window));
-                state->height = static_cast<uint32_t>(ANativeWindow_getHeight(app->window));
-                state->windowReady = true;
+                int32_t w = ANativeWindow_getWidth(app->window);
+                int32_t h = ANativeWindow_getHeight(app->window);
+                if (w > 0 && h > 0)
+                {
+                    state->width = static_cast<uint32_t>(w);
+                    state->height = static_cast<uint32_t>(h);
+                    state->windowReady = true;
+                }
+                else
+                {
+                    LOGE("Invalid window dimensions: %dx%d", w, h);
+                }
+            }
+            else
+            {
+                LOGE("APP_CMD_INIT_WINDOW received but app->window is null");
             }
             break;
 
@@ -96,8 +111,8 @@ static bool initBgfx(struct android_app* app, AndroidAppState& state)
 
 void runAndroidApp(struct android_app* app)
 {
-    AndroidAppState state;
-    app->userData = &state;
+    auto* state = new AndroidAppState();
+    app->userData = state;
     app->onAppCmd = handleAppCmd;
 
     LOGI("Sama Engine — Android bootstrap starting");
@@ -108,7 +123,7 @@ void runAndroidApp(struct android_app* app)
         // render), poll without blocking when rendering is active.
         int events;
         struct android_poll_source* source;
-        int timeout = (state.windowReady && state.focused) ? 0 : -1;
+        int timeout = (state->windowReady && state->focused) ? 0 : -1;
 
         while (ALooper_pollAll(timeout, nullptr, &events, reinterpret_cast<void**>(&source)) >= 0)
         {
@@ -129,9 +144,9 @@ void runAndroidApp(struct android_app* app)
         }
 
         // Initialize bgfx once the window is available.
-        if (state.windowReady && !state.bgfxInitialized)
+        if (state->windowReady && !state->bgfxInitialized)
         {
-            if (!initBgfx(app, state))
+            if (!initBgfx(app, *state))
             {
                 LOGE("Failed to initialize bgfx — exiting");
                 break;
@@ -139,7 +154,7 @@ void runAndroidApp(struct android_app* app)
         }
 
         // Render a frame (clear-color only for Phase A).
-        if (state.bgfxInitialized && state.windowReady && state.focused)
+        if (state->bgfxInitialized && state->windowReady && state->focused)
         {
             bgfx::touch(0);
             bgfx::frame();
@@ -147,11 +162,14 @@ void runAndroidApp(struct android_app* app)
     }
 
     // Clean up.
-    if (state.bgfxInitialized)
+    if (state->bgfxInitialized)
     {
         bgfx::shutdown();
-        state.bgfxInitialized = false;
+        state->bgfxInitialized = false;
     }
+
+    app->userData = nullptr;
+    delete state;
 
     LOGI("Sama Engine — Android bootstrap exiting");
 }

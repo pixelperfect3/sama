@@ -15,6 +15,8 @@ ShaderProcessor::ShaderProcessor(const CliArgs& args, const TierConfig& tier)
 
 std::string ShaderProcessor::shaderType(const std::string& filename) const
 {
+    if (filename.length() < 3)
+        return "unknown";
     if (filename.substr(0, 3) == "vs_")
         return "vertex";
     if (filename.substr(0, 3) == "fs_")
@@ -60,7 +62,7 @@ std::vector<AssetEntry> ShaderProcessor::discover()
         std::string filename = p.path().filename().string();
 
         // Skip varying definition files
-        if (filename.find("varying") != std::string::npos)
+        if (filename == "varying.def.sc")
             continue;
 
         std::string type = shaderType(filename);

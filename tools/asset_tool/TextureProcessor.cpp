@@ -111,7 +111,7 @@ void TextureProcessor::processAll(const std::vector<AssetEntry>& entries)
         // 4. Wrap the .astc data in a KTX container
 
         // Copy source file to output (preserving data for now)
-        fs::path actualDst = fs::path(args_.outputDir) / entry.source;
+        fs::path actualDst = fs::path(args_.outputDir) / entry.output;
         fs::create_directories(actualDst.parent_path());
 
         std::error_code ec;

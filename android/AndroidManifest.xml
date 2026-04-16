@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.sama.engine">
 
-    <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="true"/>
-    <uses-feature android:glEsVersion="0x00030001" android:required="false"/>
+    <uses-feature android:name="android.hardware.vulkan" android:required="true"/>
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
 
     <application
         android:hasCode="false"

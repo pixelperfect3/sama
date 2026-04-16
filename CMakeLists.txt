@@ -26,6 +26,9 @@ option(SAMA_ANDROID      "Build for Android (NDK cross-compilation)" OFF)
 # When building for Android, force off desktop-only targets.
 if(SAMA_ANDROID)
     set(_SAMA_IS_TOP_LEVEL OFF)
+    if(NOT CMAKE_ANDROID_NDK)
+        message(FATAL_ERROR "CMAKE_ANDROID_NDK not set")
+    endif()
 endif()
 
 option(SAMA_BUILD_DEMOS  "Build demo applications"        ${_SAMA_IS_TOP_LEVEL})
@@ -1179,18 +1182,14 @@ if(SAMA_ANDROID)
 
     # sama_android — shared library loaded by NativeActivity.
     add_library(sama_android SHARED
-        engine/platform/android/AndroidApp.cpp
+        $<TARGET_OBJECTS:engine_android>
     )
     target_include_directories(sama_android PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(sama_android PRIVATE
-        native_app_glue
-        engine_rendering
+        engine_android
         engine_scene
         engine_ecs
-        engine_memory
         engine_io
-        android
-        log
     )
     # Ensure ANativeActivity_onCreate is not stripped from the shared library.
     set_target_properties(sama_android PROPERTIES
