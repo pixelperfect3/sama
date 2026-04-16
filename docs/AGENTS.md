@@ -940,6 +940,35 @@ if (input.isActionPressed("jump", actions))   { /* jump */ }
 float h = input.axisValue("horizontal", actions);  // -1, 0, or +1
 ```
 
+#### Gyroscope / accelerometer
+
+```cpp
+#include "engine/input/InputState.h"
+
+const auto& input = eng.inputState();
+
+if (input.gyro().available)
+{
+    // Angular velocity in radians/sec
+    float pitch = input.gyro().pitchRate;  // rotation around X
+    float yaw   = input.gyro().yawRate;    // rotation around Y
+    float roll  = input.gyro().rollRate;   // rotation around Z
+
+    // Gravity vector (normalized, from accelerometer)
+    float gx = input.gyro().gravityX;
+    float gy = input.gyro().gravityY;
+    float gz = input.gyro().gravityZ;
+
+    // Example: integrate gyro into camera look
+    cameraYaw   += yaw * sensitivity * dt;
+    cameraPitch += pitch * sensitivity * dt;
+}
+```
+
+`GyroState` is populated by platform backends: Android via `ASensorManager` +
+`ASENSOR_TYPE_GYROSCOPE`, iOS via `CMMotionManager`. On desktop (GLFW),
+`available` is always `false`.
+
 ---
 
 ### Camera
@@ -1206,6 +1235,58 @@ if (input.isKeyPressed(engine::input::Key::F))
 Standalone `drawText` commands take the font as a parameter, so you
 just pass `current` directly and pick up the new backend on the next
 frame.
+
+---
+
+### Asset Pipeline CLI (`sama-asset-tool`)
+
+Process assets for Android/iOS builds with tier-based quality settings.
+
+```bash
+# Process all assets for Android mid-tier
+sama-asset-tool --input assets/ --output build/android/mid/assets/ --target android --tier mid
+
+# Preview what would be processed (no file writes)
+sama-asset-tool --input assets/ --output out/ --tier low --dry-run --verbose
+
+# Show help
+sama-asset-tool --help
+```
+
+**Tiers:**
+
+| Tier | Max texture size | ASTC block |
+|------|-----------------|------------|
+| `low` | 512px | 8x8 |
+| `mid` | 1024px | 6x6 |
+| `high` | 2048px | 4x4 |
+
+**Output:** Processed assets + `manifest.json` listing all entries with type, format,
+dimensions, and source/output paths.
+
+**Note:** ASTC encoding is currently stubbed (the `astc-codec` library is decode-only).
+Textures are copied to the output directory. Full ASTC compression requires the
+`astcenc` CLI tool.
+
+Source: `tools/asset_tool/` (AssetProcessor, TextureProcessor, ShaderProcessor).
+
+---
+
+### Animation Editor (Graph View)
+
+The editor's animation panel includes a visual state machine node graph
+(`StateMachineGraphView`, `editor/platform/cocoa/StateMachineGraphView.h/.mm`).
+When an entity with `AnimStateMachineComponent` is selected:
+
+- State nodes render as rounded rectangles (120x50px) with name + clip label
+- Green border = active state, blue = selected, draggable repositioning
+- Bezier curve transition arrows with condition labels
+- Click to select, double-click to force-set state, right-click for context menus
+- Scroll wheel zoom (0.5x-2.0x), Option-drag to pan
+- Auto-layout on first display (200x100 grid spacing)
+- Fully synced with the list-based parameter panel
+
+The animation panel is wrapped in `NSScrollView` for overflow content.
 
 ---
 
@@ -1585,6 +1666,12 @@ int main()
 |-----------|--------|---------|
 | `AudioSourceComponent` | `clipId`, `busHandle`, `volume`, `minDistance`, `maxDistance`, `pitch`, `category` (SoundCategory), `flags` | Sound emitter. Flags: bit0=loop, bit1=spatial, bit2=autoPlay, bit3=playing. |
 | `AudioListenerComponent` | `priority` (uint8) | Marks entity as the audio listener. Highest priority wins. |
+
+### Input Data (`engine::input`)
+
+| Struct | Fields | Purpose |
+|--------|--------|---------|
+| `GyroState` | `pitchRate`, `yawRate`, `rollRate` (float, rad/s), `gravityX/Y/Z` (float, normalized), `available` (bool) | Gyroscope angular velocity and accelerometer gravity vector. Access via `inputState.gyro()`. `available` is false on desktop (GLFW). |
 
 ---
 

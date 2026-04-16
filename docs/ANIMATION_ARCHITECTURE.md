@@ -651,8 +651,14 @@ The `Skeleton::joints` array is topologically sorted, so the forward pass that c
 | Q | Editor event markers: event list, add/remove/edit, fired-event flash | Phase P, K | Done |
 | R | Editor state machine panel: parameter display, state dropdown, force-set, param editing | Phase P, L | Done |
 | S | Animation serialization: sidecar JSON files for events and state machines, auto-load on import | Phases K, L | Done |
+| T | Visual state machine node graph: `StateMachineGraphView` NSView with draggable nodes, Bezier transitions, zoom/pan | Phase R | Done |
 
-All phases except the visual state machine node graph (Phase 3 in the editor roadmap) are complete.
+All phases are complete, including the visual state machine node graph (Phase 3 in the editor roadmap).
+
+**Phase 3 — Visual State Machine Node Graph:**
+`StateMachineGraphView` (`editor/platform/cocoa/StateMachineGraphView.h/.mm`) renders states as draggable rounded rectangles (120x50px, 200x100 grid spacing) with Bezier curve transition arrows. Green border = active state, blue = selected. Supports click-to-select, double-click to force-set state, right-click context menus (Add State / Delete), scroll wheel zoom (0.5x-2.0x), and Option-drag to pan. Fully synced with the list-based parameter panel via shared callbacks.
+
+**ObjC++ ARC workaround:** All mutable state is stored on a separate `SMGraphStorage` NSObject rather than as direct ivars on the `StateMachineGraphView` NSView subclass. This avoids an ARC bug where Objective-C object ivars in `@implementation` blocks compiled as ObjC++ are not properly retained/released.
 
 ---
 

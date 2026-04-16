@@ -462,8 +462,18 @@ namespace engine::io
   input.bind("Jump", Key::Space) / input.bind("Jump", GamepadButton::A)
   ```
 
+### Gyro Input API
+- `GyroState` struct added to `InputState` (`engine/input/InputState.h`)
+  - `pitchRate`, `yawRate`, `rollRate` — angular velocity in radians/sec (X, Y, Z axes)
+  - `gravityX`, `gravityY`, `gravityZ` — normalized gravity vector from accelerometer
+  - `available` — true if the device has a gyroscope
+- Accessed via `state.gyro()` (const ref) — platform backends populate `state.gyro_`
+- Platform-agnostic API: Android uses `ASensorManager` + `ASENSOR_TYPE_GYROSCOPE`, iOS can use `CMMotionManager`
+- 3 tests in `tests/input/TestGyroInput.cpp` (`[input][gyro]` tag)
+
 ### Status
 - [x] Input implemented (GLFW backend, InputSystem, InputState, key/mouse/touch abstraction — committed)
+- [x] Gyro input API (GyroState struct, 3 tests — committed)
 
 ---
 
@@ -653,14 +663,19 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 - [x] Parameter editing (`ParamChangedCallback`) writes back to `AnimStateMachineComponent::params`.
 
 *Phase 3 — Visual state machine node graph (DONE)*
-- [x] `StateMachineGraphView` custom NSView in CocoaAnimationView.mm (Pimpl, no AppKit in header).
+- [x] `StateMachineGraphView` extracted to separate `editor/platform/cocoa/StateMachineGraphView.h/.mm` with `StateMachineGraphViewDelegate` protocol.
 - [x] State nodes as rounded rectangles (120x50px) with name + clip. Green border = active state, blue = selected. Draggable repositioning.
 - [x] Bezier curve transition arrows with arrowheads. Self-transitions as loops. Condition summary labels with background pills.
 - [x] Click node to select, double-click to force-set current state, click arrow to select transition.
 - [x] Right-click context menus: "Delete" on state, "Add State" on empty area.
-- [x] Scroll wheel zoom (0.5x–2.0x, toward cursor), Option-drag to pan.
-- [x] Auto-layout: grid arrangement on first display, positions preserved across updates.
+- [x] Scroll wheel zoom (0.5x-2.0x, toward cursor), Option-drag to pan.
+- [x] Auto-layout: grid arrangement on first display (200x100 node spacing), positions preserved across updates.
 - [x] Fully synced with list-based editor — same callbacks, same selection state, both update via setState.
+- [x] `SMGraphStorage` NSObject workaround for ObjC++ ARC ivar corruption.
+  - **Known issue:** ObjC++ ARC does not properly manage Objective-C ivars declared inside `@implementation` blocks of NSView subclasses when the file is compiled as ObjC++. NSMutableArray/NSString ivars can be silently over-released or not retained.
+  - **Workaround:** All mutable state (`nodePositions`, `nodeNames`, `nodeClipNames`, `transFromState`, `transToState`, etc.) is stored on a separate `SMGraphStorage` NSObject with `@property` declarations. The NSView holds a single `SMGraphStorage* _s` ivar. ARC correctly manages properties on a standalone NSObject, avoiding the corruption.
+  - **GraphViewDelegateAdapter:** Delegate is stored as `void* _graphDelegateRaw` (raw pointer) to avoid ARC retaining the delegate.
+- [x] Animation panel wrapped in `NSScrollView` for overflow content — vertical scrollbar auto-hides, container view hosts all sub-panels (transport controls, event markers, state machine, graph view).
 
 *Phase 4 — Serialization (sidecar files) (DONE)*
 - [x] `AnimationSerializer` API: `saveEvents()` / `loadEvents()` for `<model>.events.json`, `saveStateMachine()` / `loadStateMachine()` for `<model>.statemachine.json`.
