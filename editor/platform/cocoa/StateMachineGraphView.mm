@@ -2,8 +2,8 @@
 
 static const CGFloat kNodeWidth = 120.0;
 static const CGFloat kNodeHeight = 50.0;
-static const CGFloat kNodeSpacingX = 160.0;
-static const CGFloat kNodeSpacingY = 80.0;
+static const CGFloat kNodeSpacingX = 200.0;
+static const CGFloat kNodeSpacingY = 100.0;
 static const CGFloat kNodeCornerRadius = 8.0;
 static const CGFloat kArrowHeadSize = 8.0;
 static const CGFloat kMinZoom = 0.5;

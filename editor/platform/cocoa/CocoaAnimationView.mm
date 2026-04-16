@@ -41,48 +41,45 @@
 // ---------------------------------------------------------------------------
 
 @interface GraphViewDelegateAdapter : NSObject <StateMachineGraphViewDelegate>
-{
-    @public
-    void (^_stateSelectedBlock)(int stateIndex);
-    void (^_transitionSelectedBlock)(int stateIndex, int transIndex);
-    void (^_stateForceSetBlock)(int stateIndex);
-    void (^_stateAddedBlock)(void);
-    void (^_stateRemovedBlock)(int stateIndex);
-}
+@property(nonatomic, copy) void (^stateSelectedBlock)(int stateIndex);
+@property(nonatomic, copy) void (^transitionSelectedBlock)(int stateIndex, int transIndex);
+@property(nonatomic, copy) void (^stateForceSetBlock)(int stateIndex);
+@property(nonatomic, copy) void (^stateAddedBlock)(void);
+@property(nonatomic, copy) void (^stateRemovedBlock)(int stateIndex);
 @end
 
 @implementation GraphViewDelegateAdapter
 
 - (void)graphView:(StateMachineGraphView*)view didSelectState:(int)stateIndex
 {
-    if (_stateSelectedBlock)
-        _stateSelectedBlock(stateIndex);
+    if (self.stateSelectedBlock)
+        self.stateSelectedBlock(stateIndex);
 }
 
 - (void)graphView:(StateMachineGraphView*)view
     didSelectTransition:(int)stateIndex
         transitionIndex:(int)transIndex
 {
-    if (_transitionSelectedBlock)
-        _transitionSelectedBlock(stateIndex, transIndex);
+    if (self.transitionSelectedBlock)
+        self.transitionSelectedBlock(stateIndex, transIndex);
 }
 
 - (void)graphView:(StateMachineGraphView*)view didForceSetState:(int)stateIndex
 {
-    if (_stateForceSetBlock)
-        _stateForceSetBlock(stateIndex);
+    if (self.stateForceSetBlock)
+        self.stateForceSetBlock(stateIndex);
 }
 
 - (void)graphViewDidRequestAddState:(StateMachineGraphView*)view
 {
-    if (_stateAddedBlock)
-        _stateAddedBlock();
+    if (self.stateAddedBlock)
+        self.stateAddedBlock();
 }
 
 - (void)graphView:(StateMachineGraphView*)view didRequestRemoveState:(int)stateIndex
 {
-    if (_stateRemovedBlock)
-        _stateRemovedBlock(stateIndex);
+    if (self.stateRemovedBlock)
+        self.stateRemovedBlock(stateIndex);
 }
 
 @end
@@ -1107,23 +1104,23 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
         {
             auto* implPtr = impl_.get();
             impl_->smGraphDelegate = [[GraphViewDelegateAdapter alloc] init];
-            impl_->smGraphDelegate->_stateSelectedBlock = ^(int stateIndex) {
+            impl_->smGraphDelegate.stateSelectedBlock = ^(int stateIndex) {
               if (implPtr->stateSelectedCb)
                   implPtr->stateSelectedCb(stateIndex);
             };
-            impl_->smGraphDelegate->_transitionSelectedBlock = ^(int stateIndex, int transIndex) {
+            impl_->smGraphDelegate.transitionSelectedBlock = ^(int stateIndex, int transIndex) {
               if (implPtr->transitionSelectedCb)
                   implPtr->transitionSelectedCb(stateIndex, transIndex);
             };
-            impl_->smGraphDelegate->_stateForceSetBlock = ^(int stateIndex) {
+            impl_->smGraphDelegate.stateForceSetBlock = ^(int stateIndex) {
               if (implPtr->stateForceSetCb)
                   implPtr->stateForceSetCb(stateIndex);
             };
-            impl_->smGraphDelegate->_stateAddedBlock = ^{
+            impl_->smGraphDelegate.stateAddedBlock = ^{
               if (implPtr->stateAddedCb)
                   implPtr->stateAddedCb();
             };
-            impl_->smGraphDelegate->_stateRemovedBlock = ^(int stateIndex) {
+            impl_->smGraphDelegate.stateRemovedBlock = ^(int stateIndex) {
               if (implPtr->stateRemovedCb)
                   implPtr->stateRemovedCb(stateIndex);
             };
