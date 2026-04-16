@@ -21,6 +21,13 @@ else()
     set(_SAMA_IS_TOP_LEVEL OFF)
 endif()
 
+option(SAMA_ANDROID      "Build for Android (NDK cross-compilation)" OFF)
+
+# When building for Android, force off desktop-only targets.
+if(SAMA_ANDROID)
+    set(_SAMA_IS_TOP_LEVEL OFF)
+endif()
+
 option(SAMA_BUILD_DEMOS  "Build demo applications"        ${_SAMA_IS_TOP_LEVEL})
 option(SAMA_BUILD_TESTS  "Build unit + screenshot tests"  ${_SAMA_IS_TOP_LEVEL})
 option(SAMA_BUILD_EDITOR "Build the Sama editor"          ${_SAMA_IS_TOP_LEVEL})
@@ -48,11 +55,13 @@ FetchContent_Declare(
     GIT_TAG        1.0.1
 )
 
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG        3.3.9
-)
+if(NOT SAMA_ANDROID)
+    FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG        3.3.9
+    )
+endif()
 
 # bgfx.cmake wraps bgfx/bx/bimg with proper CMake targets.
 # We disable all backends except Metal (macOS) and Vulkan.
@@ -64,11 +73,13 @@ set(BGFX_CUSTOM_TARGETS   OFF CACHE BOOL "" FORCE)
 # Disable unused backends to keep the binary lean
 set(BGFX_USE_DEBUG_SUFFIX OFF CACHE BOOL "" FORCE)
 
-# GLFW: disable unneeded sub-targets
-set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+# GLFW: disable unneeded sub-targets (desktop only)
+if(NOT SAMA_ANDROID)
+    set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+endif()
 
 FetchContent_Declare(
     bgfx_cmake
@@ -95,7 +106,11 @@ set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
 set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
+if(SAMA_ANDROID)
+    FetchContent_MakeAvailable(Catch2 glm bgfx_cmake cgltf JoltPhysics)
+else()
+    FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
+endif()
 
 # Suppress warnings from third-party dependencies — we don't own this code.
 # All compiled third-party targets go through FetchContent and land here.
@@ -705,8 +720,8 @@ target_compile_definitions(engine_physics PUBLIC
 )
 
 # --- engine_rendering static library ---
-# Wraps bgfx init/shutdown/frame and the GLFW window backend.
-add_library(engine_rendering STATIC
+# Wraps bgfx init/shutdown/frame and the platform window backend.
+set(_ENGINE_RENDERING_SOURCES
     engine/rendering/Renderer.cpp
     engine/rendering/RenderPass.cpp
     engine/rendering/GpuFeatures.cpp
@@ -730,8 +745,13 @@ add_library(engine_rendering STATIC
     engine/rendering/systems/UiRenderSystem.cpp
     engine/rendering/RenderSettingsJson.cpp
     engine/rendering/LightClusterBuilder.cpp
-    engine/platform/desktop/GlfwWindow.cpp
 )
+
+if(NOT SAMA_ANDROID)
+    list(APPEND _ENGINE_RENDERING_SOURCES engine/platform/desktop/GlfwWindow.cpp)
+endif()
+
+add_library(engine_rendering STATIC ${_ENGINE_RENDERING_SOURCES})
 
 add_dependencies(engine_rendering engine_shaders)
 
@@ -740,7 +760,11 @@ target_include_directories(engine_rendering PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
-target_link_libraries(engine_rendering PUBLIC bgfx bimg glfw engine_ecs engine_io)
+if(SAMA_ANDROID)
+    target_link_libraries(engine_rendering PUBLIC bgfx bimg engine_ecs engine_io)
+else()
+    target_link_libraries(engine_rendering PUBLIC bgfx bimg glfw engine_ecs engine_io)
+endif()
 
 # Increase bgfx bone matrix limit from default 32 to 128 for skeletal animation.
 # u_model[128] = 512 vec4 uniforms, fits in BGFX_CONFIG_MAX_UNIFORMS (512).
@@ -938,12 +962,14 @@ add_library(engine_input STATIC
 target_include_directories(engine_input PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_input PUBLIC engine_io)
 
-# Desktop GLFW backend
-add_library(engine_input_glfw STATIC
-    engine/input/desktop/GlfwInputBackend.cpp
-)
-target_include_directories(engine_input_glfw PUBLIC ${SAMA_ROOT_DIR})
-target_link_libraries(engine_input_glfw PUBLIC engine_input glfw)
+# Desktop GLFW backend (not available on Android)
+if(NOT SAMA_ANDROID)
+    add_library(engine_input_glfw STATIC
+        engine/input/desktop/GlfwInputBackend.cpp
+    )
+    target_include_directories(engine_input_glfw PUBLIC ${SAMA_ROOT_DIR})
+    target_link_libraries(engine_input_glfw PUBLIC engine_input glfw)
+endif()
 
 # iOS backend — .mm requires Objective-C++ compilation; only built on iOS.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -993,25 +1019,30 @@ endif()  # SAMA_BUILD_TESTS
 
 # --- engine_core static library ---
 # Centralised Engine class that owns window, renderer, default textures, shaders,
-# ImGui, input, shadow renderer, and frame arena.  Apps link engine_core instead
-# of manually wiring all subsystems.
-add_library(engine_core STATIC engine/core/Engine.cpp)
-target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
-target_link_libraries(engine_core PUBLIC
-    engine_input_glfw
-    engine_memory
-    engine_debug
-    engine_scene
-)
+# ImGui, input, shadow renderer, and frame arena.  Desktop only — depends on
+# GLFW for windowing and input.
+if(NOT SAMA_ANDROID)
+    add_library(engine_core STATIC engine/core/Engine.cpp)
+    target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
+    target_link_libraries(engine_core PUBLIC
+        engine_input_glfw
+        engine_memory
+        engine_debug
+        engine_scene
+    )
+endif()
 
 # --- engine_game static library ---
 # Game layer: IGame interface, GameRunner (frame loop with fixed timestep).
-add_library(engine_game STATIC
-    engine/game/GameRunner.cpp
-    engine/game/ProjectConfig.cpp
-)
-target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
-target_link_libraries(engine_game PUBLIC engine_core)
+# Desktop only — depends on engine_core (GLFW).
+if(NOT SAMA_ANDROID)
+    add_library(engine_game STATIC
+        engine/game/GameRunner.cpp
+        engine/game/ProjectConfig.cpp
+    )
+    target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
+    target_link_libraries(engine_game PUBLIC engine_core)
+endif()
 
 # --- engine_ui static library ---
 # Retained-mode UI system: UiNode tree, UiCanvas, UiDrawList, widget types.
@@ -1067,6 +1098,9 @@ endif()
 #                  Good for: 2D games, UI tools.
 # ===========================================================================
 
+# Desktop umbrella targets — depend on engine_core (GLFW).
+if(NOT SAMA_ANDROID)
+
 # Core libs every game needs (rendering, ECS, scene, game loop, memory).
 add_library(sama_minimal INTERFACE)
 target_link_libraries(sama_minimal INTERFACE
@@ -1104,7 +1138,55 @@ target_link_libraries(sama_2d INTERFACE
     engine_io
 )
 
-# --- bake_default_env tool ---
+endif()  # NOT SAMA_ANDROID
+
+# ---------------------------------------------------------------------------
+# Android targets — NativeActivity entry point + shared library for APK.
+# ---------------------------------------------------------------------------
+if(SAMA_ANDROID)
+    # android_native_app_glue — shipped with the NDK.
+    set(_APP_GLUE_DIR "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
+
+    add_library(native_app_glue STATIC "${_APP_GLUE_DIR}/android_native_app_glue.c")
+    target_include_directories(native_app_glue PUBLIC "${_APP_GLUE_DIR}")
+    # ANativeActivity_onCreate must not be stripped — export it.
+    target_link_libraries(native_app_glue PUBLIC android log)
+
+    # engine_android — platform layer for Android.
+    add_library(engine_android STATIC
+        engine/platform/android/AndroidApp.cpp
+    )
+    target_include_directories(engine_android PUBLIC ${SAMA_ROOT_DIR})
+    target_link_libraries(engine_android PUBLIC
+        native_app_glue
+        engine_rendering
+        engine_memory
+        android
+        log
+    )
+
+    # sama_android — shared library loaded by NativeActivity.
+    add_library(sama_android SHARED
+        engine/platform/android/AndroidApp.cpp
+    )
+    target_include_directories(sama_android PRIVATE ${SAMA_ROOT_DIR})
+    target_link_libraries(sama_android PRIVATE
+        native_app_glue
+        engine_rendering
+        engine_scene
+        engine_ecs
+        engine_memory
+        engine_io
+        android
+        log
+    )
+    # Ensure ANativeActivity_onCreate is not stripped from the shared library.
+    set_target_properties(sama_android PROPERTIES
+        LINK_FLAGS "-u ANativeActivity_onCreate"
+    )
+endif()  # SAMA_ANDROID
+
+# --- bake_default_env tool (desktop only) ---
 # Generates the procedural sky cubemap + BRDF LUT and writes it to disk
 # (default: assets/env/default.env). The editor loads this file at startup
 # instead of regenerating, dropping startup from ~5 s to <50 ms. Run
@@ -1114,13 +1196,15 @@ target_link_libraries(sama_2d INTERFACE
 #   ./build/bake_default_env
 #   git add assets/env/default.env && git commit
 #
-add_executable(bake_default_env
-    tools/bake_default_env/main.cpp
-)
-target_link_libraries(bake_default_env PRIVATE
-    engine_assets
-    engine_rendering
-)
+if(NOT SAMA_ANDROID)
+    add_executable(bake_default_env
+        tools/bake_default_env/main.cpp
+    )
+    target_link_libraries(bake_default_env PRIVATE
+        engine_assets
+        engine_rendering
+    )
+endif()
 
 if(SAMA_BUILD_DEMOS)
 
