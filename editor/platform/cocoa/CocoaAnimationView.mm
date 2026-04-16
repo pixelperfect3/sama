@@ -1795,10 +1795,6 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
                 constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
             [impl_->smConditionListStack.trailingAnchor
                 constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
-            [impl_->smGraphView.leadingAnchor
-                constraintEqualToAnchor:impl_->smSectionStack.leadingAnchor],
-            [impl_->smGraphView.trailingAnchor
-                constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
         ]];
     }
 }
