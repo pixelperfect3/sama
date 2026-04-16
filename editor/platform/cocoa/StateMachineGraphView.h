@@ -15,9 +15,10 @@
 
 @interface StateMachineGraphView : NSView
 
-@property(nonatomic, unsafe_unretained) id<StateMachineGraphViewDelegate> delegate;
+- (void)setGraphDelegate:(id<StateMachineGraphViewDelegate>)delegate;
+- (id<StateMachineGraphViewDelegate>)graphDelegate;
 
-- (void)setStateCount:(int)count
+- (void)updateWithStateCount:(int)count
                 names:(NSArray<NSString*>*)names
             clipNames:(NSArray<NSString*>*)clipNames
          currentState:(int)current

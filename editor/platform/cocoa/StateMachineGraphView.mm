@@ -11,6 +11,7 @@ static const CGFloat kMaxZoom = 2.0;
 
 @implementation StateMachineGraphView
 {
+    __unsafe_unretained id<StateMachineGraphViewDelegate> _graphDelegate;
     NSMutableArray<NSValue*>* _nodePositions;
     NSMutableArray<NSString*>* _nodeNames;
     NSMutableArray<NSString*>* _nodeClipNames;
@@ -71,7 +72,17 @@ static const CGFloat kMaxZoom = 2.0;
     return YES;
 }
 
-- (void)setStateCount:(int)count
+- (void)setGraphDelegate:(id<StateMachineGraphViewDelegate>)delegate
+{
+    _graphDelegate = delegate;
+}
+
+- (id<StateMachineGraphViewDelegate>)graphDelegate
+{
+    return _graphDelegate;
+}
+
+- (void)updateWithStateCount:(int)count
                 names:(NSArray<NSString*>*)names
             clipNames:(NSArray<NSString*>*)clipNames
          currentState:(int)current
@@ -503,14 +514,14 @@ static const CGFloat kMaxZoom = 2.0;
         // Double-click: force-set state.
         if (event.clickCount >= 2)
         {
-            if ([_delegate respondsToSelector:@selector(graphView:didForceSetState:)])
-                [_delegate graphView:self didForceSetState:hitNode];
+            if ([_graphDelegate respondsToSelector:@selector(graphView:didForceSetState:)])
+                [_graphDelegate graphView:self didForceSetState:hitNode];
             return;
         }
 
         // Single click: select + start drag.
-        if ([_delegate respondsToSelector:@selector(graphView:didSelectState:)])
-            [_delegate graphView:self didSelectState:hitNode];
+        if ([_graphDelegate respondsToSelector:@selector(graphView:didSelectState:)])
+            [_graphDelegate graphView:self didSelectState:hitNode];
 
         _isDraggingNode = YES;
         _dragNodeIndex = hitNode;
@@ -526,14 +537,14 @@ static const CGFloat kMaxZoom = 2.0;
         int combined = _transStateTransIdx[hitTrans].intValue;
         int sIdx = combined / 1000;
         int tIdx = combined % 1000;
-        if ([_delegate respondsToSelector:@selector(graphView:didSelectTransition:transitionIndex:)])
-            [_delegate graphView:self didSelectTransition:sIdx transitionIndex:tIdx];
+        if ([_graphDelegate respondsToSelector:@selector(graphView:didSelectTransition:transitionIndex:)])
+            [_graphDelegate graphView:self didSelectTransition:sIdx transitionIndex:tIdx];
         return;
     }
 
     // Clicked empty area: deselect.
-    if ([_delegate respondsToSelector:@selector(graphView:didSelectState:)])
-        [_delegate graphView:self didSelectState:-1];
+    if ([_graphDelegate respondsToSelector:@selector(graphView:didSelectState:)])
+        [_graphDelegate graphView:self didSelectState:-1];
 }
 
 - (void)mouseDragged:(NSEvent*)event
@@ -623,15 +634,15 @@ static const CGFloat kMaxZoom = 2.0;
 - (void)contextDeleteState:(NSMenuItem*)sender
 {
     int idx = (int)sender.tag;
-    if ([_delegate respondsToSelector:@selector(graphView:didRequestRemoveState:)])
-        [_delegate graphView:self didRequestRemoveState:idx];
+    if ([_graphDelegate respondsToSelector:@selector(graphView:didRequestRemoveState:)])
+        [_graphDelegate graphView:self didRequestRemoveState:idx];
 }
 
 - (void)contextAddState:(NSMenuItem*)sender
 {
     (void)sender;
-    if ([_delegate respondsToSelector:@selector(graphViewDidRequestAddState:)])
-        [_delegate graphViewDidRequestAddState:self];
+    if ([_graphDelegate respondsToSelector:@selector(graphViewDidRequestAddState:)])
+        [_graphDelegate graphViewDidRequestAddState:self];
 }
 
 @end

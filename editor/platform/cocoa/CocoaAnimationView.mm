@@ -1127,7 +1127,7 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
               if (implPtr->stateRemovedCb)
                   implPtr->stateRemovedCb(stateIndex);
             };
-            impl_->smGraphView.delegate = impl_->smGraphDelegate;
+            [impl_->smGraphView setGraphDelegate:impl_->smGraphDelegate];
         }
 
         impl_->smSectionStack = [NSStackView stackViewWithViews:@[
@@ -1584,7 +1584,7 @@ void CocoaAnimationView::setState(const AnimationViewState& s)
                     [gNames addObject:[NSString stringWithUTF8String:si.name.c_str()]];
                     [gClips addObject:[NSString stringWithUTF8String:si.clipName.c_str()]];
                 }
-                [impl_->smGraphView setStateCount:(int)s.stateInfos.size()
+                [impl_->smGraphView updateWithStateCount:(int)s.stateInfos.size()
                                             names:gNames
                                         clipNames:gClips
                                      currentState:s.currentStateIndex
