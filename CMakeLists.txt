@@ -789,6 +789,17 @@ if(APPLE)
     )
 endif()
 
+# --- engine_asset_tool static library (desktop only) ---
+if(NOT ANDROID)
+    add_library(engine_asset_tool STATIC
+        tools/asset_tool/AssetProcessor.cpp
+        tools/asset_tool/TextureProcessor.cpp
+        tools/asset_tool/ShaderProcessor.cpp
+    )
+    target_include_directories(engine_asset_tool PUBLIC ${SAMA_ROOT_DIR})
+    target_link_libraries(engine_asset_tool PUBLIC engine_io)
+endif()
+
 if(SAMA_BUILD_TESTS)
 
 # --- engine_tests executable ---
@@ -851,9 +862,10 @@ add_executable(engine_tests
     tests/ui/TestBitmapFont.cpp
     tests/ui/TestMsdfFont.cpp
     tests/ui/TestSlugFont.cpp
+    tests/tools/TestAssetProcessor.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui Catch2::Catch2WithMain)
+target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui engine_asset_tool Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
 
@@ -1580,4 +1592,11 @@ if(SAMA_BUILD_DEMOS AND APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(size_test_full PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(size_test_full PRIVATE sama ${SAMA_SIZE_TEST_FRAMEWORKS})
     target_compile_definitions(size_test_full PRIVATE ${SAMA_SIZE_TEST_DEFS})
+endif()
+
+# --- sama_asset_tool CLI (desktop only) ---
+if(NOT ANDROID)
+    add_executable(sama_asset_tool tools/asset_tool/main.cpp)
+    target_include_directories(sama_asset_tool PRIVATE ${SAMA_ROOT_DIR})
+    target_link_libraries(sama_asset_tool PRIVATE engine_asset_tool)
 endif()
