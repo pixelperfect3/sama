@@ -975,6 +975,7 @@ add_executable(engine_input_tests
     tests/input/TestAxisResolution.cpp
     tests/input/TestMouseDelta.cpp
     tests/input/TestTouchInput.cpp
+    tests/input/TestGyroInput.cpp
     tests/input/integration/TestGlfwBackend.cpp
 )
 
@@ -1423,6 +1424,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         editor/platform/cocoa/CocoaConsoleView.mm
         editor/platform/cocoa/CocoaResourceView.mm
         editor/platform/cocoa/CocoaAnimationView.mm
+        editor/platform/cocoa/StateMachineGraphView.mm
     )
 
     add_dependencies(sama_editor engine_shaders)

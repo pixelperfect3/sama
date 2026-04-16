@@ -94,6 +94,25 @@ public:
     [[nodiscard]] float axisValue(std::string_view axisName, const ActionMap& map) const;
 
     // -----------------------------------------------------------------------
+    // Gyroscope / accelerometer
+    // -----------------------------------------------------------------------
+    struct GyroState
+    {
+        float pitchRate = 0.0f;  // rotation rate around X axis (radians/sec)
+        float yawRate = 0.0f;    // rotation rate around Y axis (radians/sec)
+        float rollRate = 0.0f;   // rotation rate around Z axis (radians/sec)
+        float gravityX = 0.0f;   // gravity vector X (accelerometer, normalized)
+        float gravityY = 0.0f;   // gravity vector Y
+        float gravityZ = 0.0f;   // gravity vector Z
+        bool available = false;  // true if the device has a gyroscope
+    };
+
+    [[nodiscard]] const GyroState& gyro() const
+    {
+        return gyro_;
+    }
+
+    // -----------------------------------------------------------------------
     // Internal: written by InputSystem; not part of the public contract
     // -----------------------------------------------------------------------
     static constexpr uint8_t kFlagPressed = 0x01;
@@ -110,6 +129,7 @@ public:
     double mouseDeltaX_ = 0.0;
     double mouseDeltaY_ = 0.0;
     std::vector<TouchPoint> touches_;
+    GyroState gyro_;
 };
 
 }  // namespace engine::input
