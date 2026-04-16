@@ -9,31 +9,39 @@ static const CGFloat kArrowHeadSize = 8.0;
 static const CGFloat kMinZoom = 0.5;
 static const CGFloat kMaxZoom = 2.0;
 
+// Storage object for all mutable state — avoids ARC issues with ivars
+// in NSView subclass @implementation blocks compiled as ObjC++.
+@interface SMGraphStorage : NSObject
+@property(nonatomic, strong) NSMutableArray<NSValue*>* nodePositions;
+@property(nonatomic, strong) NSMutableArray<NSString*>* nodeNames;
+@property(nonatomic, strong) NSMutableArray<NSString*>* nodeClipNames;
+@property(nonatomic, strong) NSMutableArray<NSNumber*>* transFromState;
+@property(nonatomic, strong) NSMutableArray<NSNumber*>* transToState;
+@property(nonatomic, strong) NSMutableArray<NSString*>* transCondLabel;
+@property(nonatomic, strong) NSMutableArray<NSNumber*>* transStateTransIdx;
+@property(nonatomic, assign) int numStates;
+@property(nonatomic, assign) int currentStateIndex;
+@property(nonatomic, assign) int selectedStateIndex;
+@property(nonatomic, assign) int selectedTransitionIndex;
+@property(nonatomic, assign) CGFloat zoomLevel;
+@property(nonatomic, assign) NSPoint panOffset;
+@property(nonatomic, assign) BOOL isDraggingNode;
+@property(nonatomic, assign) int dragNodeIndex;
+@property(nonatomic, assign) NSPoint dragStartMouse;
+@property(nonatomic, assign) NSPoint dragStartNodePos;
+@property(nonatomic, assign) BOOL isPanning;
+@property(nonatomic, assign) NSPoint panStartMouse;
+@property(nonatomic, assign) NSPoint panStartOffset;
+@property(nonatomic, assign) BOOL positionsInitialized;
+@end
+
+@implementation SMGraphStorage
+@end
+
 @implementation StateMachineGraphView
 {
-    void* _graphDelegateRaw;  // unsafe_unretained delegate stored as void* to avoid ARC issues
-    NSMutableArray<NSValue*>* _nodePositions;
-    NSMutableArray<NSString*>* _nodeNames;
-    NSMutableArray<NSString*>* _nodeClipNames;
-    NSMutableArray<NSNumber*>* _transFromState;
-    NSMutableArray<NSNumber*>* _transToState;
-    NSMutableArray<NSString*>* _transCondLabel;
-    NSMutableArray<NSNumber*>* _transStateTransIdx;
-
-    int _numStates;
-    int _currentStateIndex;
-    int _selectedStateIndex;
-    int _selectedTransitionIndex;
-    CGFloat _zoomLevel;
-    NSPoint _panOffset;
-    BOOL _isDraggingNode;
-    int _dragNodeIndex;
-    NSPoint _dragStartMouse;
-    NSPoint _dragStartNodePos;
-    BOOL _isPanning;
-    NSPoint _panStartMouse;
-    NSPoint _panStartOffset;
-    BOOL _positionsInitialized;
+    SMGraphStorage* _s;
+    void* _graphDelegateRaw;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame
@@ -41,23 +49,24 @@ static const CGFloat kMaxZoom = 2.0;
     self = [super initWithFrame:frame];
     if (self)
     {
-        _nodePositions = [NSMutableArray array];
-        _nodeNames = [NSMutableArray array];
-        _nodeClipNames = [NSMutableArray array];
-        _transFromState = [NSMutableArray array];
-        _transToState = [NSMutableArray array];
-        _transCondLabel = [NSMutableArray array];
-        _transStateTransIdx = [NSMutableArray array];
-        _currentStateIndex = -1;
-        _selectedStateIndex = -1;
-        _selectedTransitionIndex = -1;
-        _numStates = 0;
-        _zoomLevel = 1.0;
-        _panOffset = NSMakePoint(10.0, 10.0);
-        _isDraggingNode = NO;
-        _dragNodeIndex = -1;
-        _isPanning = NO;
-        _positionsInitialized = NO;
+        _s = [[SMGraphStorage alloc] init];
+        _s.nodePositions = [NSMutableArray array];
+        _s.nodeNames = [NSMutableArray array];
+        _s.nodeClipNames = [NSMutableArray array];
+        _s.transFromState = [NSMutableArray array];
+        _s.transToState = [NSMutableArray array];
+        _s.transCondLabel = [NSMutableArray array];
+        _s.transStateTransIdx = [NSMutableArray array];
+        _s.currentStateIndex = -1;
+        _s.selectedStateIndex = -1;
+        _s.selectedTransitionIndex = -1;
+        _s.numStates = 0;
+        _s.zoomLevel = 1.0;
+        _s.panOffset = NSMakePoint(10.0, 10.0);
+        _s.isDraggingNode = NO;
+        _s.dragNodeIndex = -1;
+        _s.isPanning = NO;
+        _s.positionsInitialized = NO;
     }
     return self;
 }
@@ -89,30 +98,23 @@ static const CGFloat kMaxZoom = 2.0;
         selectedState:(int)selected
    selectedTransition:(int)selTrans
 {
-    BOOL countChanged = (count != _numStates);
-    _numStates = count;
-    _currentStateIndex = current;
-    _selectedStateIndex = selected;
-    _selectedTransitionIndex = selTrans;
+    BOOL countChanged = (count != _s.numStates);
+    _s.numStates = count;
+    _s.currentStateIndex = current;
+    _s.selectedStateIndex = selected;
+    _s.selectedTransitionIndex = selTrans;
 
-    if (!_nodeNames)
-        _nodeNames = [NSMutableArray array];
-    if (!_nodeClipNames)
-        _nodeClipNames = [NSMutableArray array];
-    if (!_nodePositions)
-        _nodePositions = [NSMutableArray array];
-
-    [_nodeNames removeAllObjects];
+    [_s.nodeNames removeAllObjects];
     if (names)
-        [_nodeNames addObjectsFromArray:names];
-    [_nodeClipNames removeAllObjects];
+        [_s.nodeNames addObjectsFromArray:names];
+    [_s.nodeClipNames removeAllObjects];
     if (clipNames)
-        [_nodeClipNames addObjectsFromArray:clipNames];
+        [_s.nodeClipNames addObjectsFromArray:clipNames];
 
     // Auto-layout: arrange in a grid when positions need initialization.
-    if (countChanged || !_positionsInitialized || (int)_nodePositions.count != count)
+    if (countChanged || !_s.positionsInitialized || (int)_s.nodePositions.count != count)
     {
-        [_nodePositions removeAllObjects];
+        [_s.nodePositions removeAllObjects];
         int cols = MAX(1, (int)ceil(sqrt((double)count)));
         for (int i = 0; i < count; ++i)
         {
@@ -120,9 +122,9 @@ static const CGFloat kMaxZoom = 2.0;
             int row = i / cols;
             CGFloat x = 20.0 + col * kNodeSpacingX;
             CGFloat y = 20.0 + row * kNodeSpacingY;
-            [_nodePositions addObject:[NSValue valueWithPoint:NSMakePoint(x, y)]];
+            [_s.nodePositions addObject:[NSValue valueWithPoint:NSMakePoint(x, y)]];
         }
-        _positionsInitialized = (count > 0);
+        _s.positionsInitialized = (count > 0);
     }
 
     [self setNeedsDisplay:YES];
@@ -133,51 +135,51 @@ static const CGFloat kMaxZoom = 2.0;
                 labels:(NSArray<NSString*>*)labels
        stateTransIdxes:(NSArray<NSNumber*>*)stateTransIdxes
 {
-    if (!_transFromState)
-        _transFromState = [NSMutableArray array];
-    if (!_transToState)
-        _transToState = [NSMutableArray array];
-    if (!_transCondLabel)
-        _transCondLabel = [NSMutableArray array];
-    if (!_transStateTransIdx)
-        _transStateTransIdx = [NSMutableArray array];
+    if (!_s.transFromState)
+        _s.transFromState = [NSMutableArray array];
+    if (!_s.transToState)
+        _s.transToState = [NSMutableArray array];
+    if (!_s.transCondLabel)
+        _s.transCondLabel = [NSMutableArray array];
+    if (!_s.transStateTransIdx)
+        _s.transStateTransIdx = [NSMutableArray array];
 
-    [_transFromState removeAllObjects];
+    [_s.transFromState removeAllObjects];
     if (from)
-        [_transFromState addObjectsFromArray:from];
-    [_transToState removeAllObjects];
+        [_s.transFromState addObjectsFromArray:from];
+    [_s.transToState removeAllObjects];
     if (to)
-        [_transToState addObjectsFromArray:to];
-    [_transCondLabel removeAllObjects];
+        [_s.transToState addObjectsFromArray:to];
+    [_s.transCondLabel removeAllObjects];
     if (labels)
-        [_transCondLabel addObjectsFromArray:labels];
-    [_transStateTransIdx removeAllObjects];
+        [_s.transCondLabel addObjectsFromArray:labels];
+    [_s.transStateTransIdx removeAllObjects];
     if (stateTransIdxes)
-        [_transStateTransIdx addObjectsFromArray:stateTransIdxes];
+        [_s.transStateTransIdx addObjectsFromArray:stateTransIdxes];
     [self setNeedsDisplay:YES];
 }
 
 - (NSPoint)nodeCenterForIndex:(int)idx
 {
-    if (idx < 0 || idx >= (int)_nodePositions.count)
+    if (idx < 0 || idx >= (int)_s.nodePositions.count)
         return NSZeroPoint;
-    NSPoint p = _nodePositions[idx].pointValue;
+    NSPoint p = _s.nodePositions[idx].pointValue;
     return NSMakePoint(p.x + kNodeWidth / 2.0, p.y + kNodeHeight / 2.0);
 }
 
 - (NSRect)nodeRectForIndex:(int)idx
 {
-    if (idx < 0 || idx >= (int)_nodePositions.count)
+    if (idx < 0 || idx >= (int)_s.nodePositions.count)
         return NSZeroRect;
-    NSPoint p = _nodePositions[idx].pointValue;
+    NSPoint p = _s.nodePositions[idx].pointValue;
     return NSMakeRect(p.x, p.y, kNodeWidth, kNodeHeight);
 }
 
 // Convert a point in view coords to canvas coords (accounting for pan/zoom).
 - (NSPoint)viewToCanvas:(NSPoint)viewPt
 {
-    return NSMakePoint((viewPt.x - _panOffset.x) / _zoomLevel,
-                       (viewPt.y - _panOffset.y) / _zoomLevel);
+    return NSMakePoint((viewPt.x - _s.panOffset.x) / _s.zoomLevel,
+                       (viewPt.y - _s.panOffset.y) / _s.zoomLevel);
 }
 
 - (void)drawRect:(NSRect)dirtyRect
@@ -200,26 +202,26 @@ static const CGFloat kMaxZoom = 2.0;
     CGContextSaveGState(ctx);
 
     // Apply pan and zoom.
-    CGContextTranslateCTM(ctx, _panOffset.x, _panOffset.y);
-    CGContextScaleCTM(ctx, _zoomLevel, _zoomLevel);
+    CGContextTranslateCTM(ctx, _s.panOffset.x, _s.panOffset.y);
+    CGContextScaleCTM(ctx, _s.zoomLevel, _s.zoomLevel);
 
     // Draw transitions (behind nodes).
-    for (NSUInteger ti = 0; ti < _transFromState.count; ++ti)
+    for (NSUInteger ti = 0; ti < _s.transFromState.count; ++ti)
     {
-        int fromIdx = _transFromState[ti].intValue;
-        int toIdx = _transToState[ti].intValue;
-        if (fromIdx < 0 || fromIdx >= _numStates || toIdx < 0 || toIdx >= _numStates)
+        int fromIdx = _s.transFromState[ti].intValue;
+        int toIdx = _s.transToState[ti].intValue;
+        if (fromIdx < 0 || fromIdx >= _s.numStates || toIdx < 0 || toIdx >= _s.numStates)
             continue;
 
         NSPoint fromCenter = [self nodeCenterForIndex:fromIdx];
         NSPoint toCenter = [self nodeCenterForIndex:toIdx];
 
         // Determine if this transition is selected.
-        int combined = _transStateTransIdx[ti].intValue;
+        int combined = _s.transStateTransIdx[ti].intValue;
         int tStateIdx = combined / 1000;
         int tTransIdx = combined % 1000;
         BOOL isSelected =
-            (tStateIdx == _selectedStateIndex && tTransIdx == _selectedTransitionIndex);
+            (tStateIdx == _s.selectedStateIndex && tTransIdx == _s.selectedTransitionIndex);
 
         // Compute start/end on node edges.
         NSPoint startPt, endPt;
@@ -240,7 +242,7 @@ static const CGFloat kMaxZoom = 2.0;
                 [[NSColor systemBlueColor] setStroke];
             else
                 [[NSColor systemGrayColor] setStroke];
-            loopPath.lineWidth = 1.5 / _zoomLevel;
+            loopPath.lineWidth = 1.5 / _s.zoomLevel;
             [loopPath stroke];
 
             // Arrowhead at end.
@@ -249,10 +251,10 @@ static const CGFloat kMaxZoom = 2.0;
                        isSelected:isSelected];
 
             // Label at top of loop.
-            if (ti < _transCondLabel.count && _transCondLabel[ti].length > 0)
+            if (ti < _s.transCondLabel.count && _s.transCondLabel[ti].length > 0)
             {
                 NSPoint labelPt = NSMakePoint((startPt.x + endPt.x) / 2.0, startPt.y - 45.0);
-                [self drawLabel:_transCondLabel[ti] atPoint:labelPt isSelected:isSelected];
+                [self drawLabel:_s.transCondLabel[ti] atPoint:labelPt isSelected:isSelected];
             }
             continue;
         }
@@ -286,7 +288,7 @@ static const CGFloat kMaxZoom = 2.0;
             [[NSColor systemBlueColor] setStroke];
         else
             [[NSColor systemGrayColor] setStroke];
-        arrowPath.lineWidth = 1.5 / _zoomLevel;
+        arrowPath.lineWidth = 1.5 / _s.zoomLevel;
         [arrowPath stroke];
 
         // Arrowhead at end.
@@ -295,17 +297,17 @@ static const CGFloat kMaxZoom = 2.0;
         [self drawArrowHeadAt:endPt direction:NSMakePoint(adx, ady) isSelected:isSelected];
 
         // Label at midpoint.
-        if (ti < _transCondLabel.count && _transCondLabel[ti].length > 0)
+        if (ti < _s.transCondLabel.count && _s.transCondLabel[ti].length > 0)
         {
             // Bezier midpoint approximation (t=0.5 with quadratic).
             NSPoint mid = NSMakePoint(0.25 * startPt.x + 0.5 * cp1.x + 0.25 * endPt.x,
                                       0.25 * startPt.y + 0.5 * cp1.y + 0.25 * endPt.y);
-            [self drawLabel:_transCondLabel[ti] atPoint:mid isSelected:isSelected];
+            [self drawLabel:_s.transCondLabel[ti] atPoint:mid isSelected:isSelected];
         }
     }
 
     // Draw state nodes.
-    for (int i = 0; i < _numStates; ++i)
+    for (int i = 0; i < _s.numStates; ++i)
     {
         NSRect nodeRect = [self nodeRectForIndex:i];
 
@@ -319,22 +321,22 @@ static const CGFloat kMaxZoom = 2.0;
 
         // Border.
         NSColor* borderColor;
-        CGFloat borderWidth = 1.5 / _zoomLevel;
-        if (i == _currentStateIndex && i == _selectedStateIndex)
+        CGFloat borderWidth = 1.5 / _s.zoomLevel;
+        if (i == _s.currentStateIndex && i == _s.selectedStateIndex)
         {
             // Both active and selected: use green with blue inner glow.
             borderColor = [NSColor systemGreenColor];
-            borderWidth = 2.5 / _zoomLevel;
+            borderWidth = 2.5 / _s.zoomLevel;
         }
-        else if (i == _currentStateIndex)
+        else if (i == _s.currentStateIndex)
         {
             borderColor = [NSColor systemGreenColor];
-            borderWidth = 2.0 / _zoomLevel;
+            borderWidth = 2.0 / _s.zoomLevel;
         }
-        else if (i == _selectedStateIndex)
+        else if (i == _s.selectedStateIndex)
         {
             borderColor = [NSColor systemBlueColor];
-            borderWidth = 2.0 / _zoomLevel;
+            borderWidth = 2.0 / _s.zoomLevel;
         }
         else
         {
@@ -346,8 +348,8 @@ static const CGFloat kMaxZoom = 2.0;
         [nodePath stroke];
 
         // State name (bold, centered).
-        NSString* name = (i < (int)_nodeNames.count) ? _nodeNames[i] : @"?";
-        NSString* clipName = (i < (int)_nodeClipNames.count) ? _nodeClipNames[i] : @"";
+        NSString* name = (i < (int)_s.nodeNames.count) ? _s.nodeNames[i] : @"?";
+        NSString* clipName = (i < (int)_s.nodeClipNames.count) ? _s.nodeClipNames[i] : @"";
 
         NSDictionary* nameAttrs = @{
             NSFontAttributeName : [NSFont boldSystemFontOfSize:10.0],
@@ -390,7 +392,7 @@ static const CGFloat kMaxZoom = 2.0;
     CGFloat nx = dir.x / len;
     CGFloat ny = dir.y / len;
 
-    CGFloat sz = kArrowHeadSize / _zoomLevel;
+    CGFloat sz = kArrowHeadSize / _s.zoomLevel;
     NSPoint base1 = NSMakePoint(tip.x - nx * sz + ny * sz * 0.4, tip.y - ny * sz - nx * sz * 0.4);
     NSPoint base2 = NSMakePoint(tip.x - nx * sz - ny * sz * 0.4, tip.y - ny * sz + nx * sz * 0.4);
 
@@ -433,7 +435,7 @@ static const CGFloat kMaxZoom = 2.0;
 
 - (int)hitTestNodeAtPoint:(NSPoint)canvasPt
 {
-    for (int i = _numStates - 1; i >= 0; --i)
+    for (int i = _s.numStates - 1; i >= 0; --i)
     {
         NSRect r = [self nodeRectForIndex:i];
         if (NSPointInRect(canvasPt, r))
@@ -444,12 +446,12 @@ static const CGFloat kMaxZoom = 2.0;
 
 - (int)hitTestTransitionAtPoint:(NSPoint)canvasPt
 {
-    CGFloat threshold = 8.0 / _zoomLevel;
-    for (NSUInteger ti = 0; ti < _transFromState.count; ++ti)
+    CGFloat threshold = 8.0 / _s.zoomLevel;
+    for (NSUInteger ti = 0; ti < _s.transFromState.count; ++ti)
     {
-        int fromIdx = _transFromState[ti].intValue;
-        int toIdx = _transToState[ti].intValue;
-        if (fromIdx < 0 || fromIdx >= _numStates || toIdx < 0 || toIdx >= _numStates)
+        int fromIdx = _s.transFromState[ti].intValue;
+        int toIdx = _s.transToState[ti].intValue;
+        if (fromIdx < 0 || fromIdx >= _s.numStates || toIdx < 0 || toIdx >= _s.numStates)
             continue;
         if (fromIdx == toIdx)
             continue; // Skip self-loops for simplicity.
@@ -501,9 +503,9 @@ static const CGFloat kMaxZoom = 2.0;
     // Check for option-drag (pan).
     if (event.modifierFlags & NSEventModifierFlagOption)
     {
-        _isPanning = YES;
-        _panStartMouse = viewPt;
-        _panStartOffset = _panOffset;
+        _s.isPanning = YES;
+        _s.panStartMouse = viewPt;
+        _s.panStartOffset = _s.panOffset;
         return;
     }
 
@@ -523,10 +525,10 @@ static const CGFloat kMaxZoom = 2.0;
         if ([(__bridge id<StateMachineGraphViewDelegate>)_graphDelegateRaw respondsToSelector:@selector(graphView:didSelectState:)])
             [(__bridge id<StateMachineGraphViewDelegate>)_graphDelegateRaw graphView:self didSelectState:hitNode];
 
-        _isDraggingNode = YES;
-        _dragNodeIndex = hitNode;
-        _dragStartMouse = canvasPt;
-        _dragStartNodePos = _nodePositions[hitNode].pointValue;
+        _s.isDraggingNode = YES;
+        _s.dragNodeIndex = hitNode;
+        _s.dragStartMouse = canvasPt;
+        _s.dragStartNodePos = _s.nodePositions[hitNode].pointValue;
         return;
     }
 
@@ -534,7 +536,7 @@ static const CGFloat kMaxZoom = 2.0;
     int hitTrans = [self hitTestTransitionAtPoint:canvasPt];
     if (hitTrans >= 0)
     {
-        int combined = _transStateTransIdx[hitTrans].intValue;
+        int combined = _s.transStateTransIdx[hitTrans].intValue;
         int sIdx = combined / 1000;
         int tIdx = combined % 1000;
         if ([(__bridge id<StateMachineGraphViewDelegate>)_graphDelegateRaw respondsToSelector:@selector(graphView:didSelectTransition:transitionIndex:)])
@@ -551,21 +553,21 @@ static const CGFloat kMaxZoom = 2.0;
 {
     NSPoint viewPt = [self convertPoint:event.locationInWindow fromView:nil];
 
-    if (_isPanning)
+    if (_s.isPanning)
     {
-        _panOffset = NSMakePoint(_panStartOffset.x + (viewPt.x - _panStartMouse.x),
-                                 _panStartOffset.y + (viewPt.y - _panStartMouse.y));
+        _s.panOffset = NSMakePoint(_s.panStartOffset.x + (viewPt.x - _s.panStartMouse.x),
+                                 _s.panStartOffset.y + (viewPt.y - _s.panStartMouse.y));
         [self setNeedsDisplay:YES];
         return;
     }
 
-    if (_isDraggingNode && _dragNodeIndex >= 0 && _dragNodeIndex < (int)_nodePositions.count)
+    if (_s.isDraggingNode && _s.dragNodeIndex >= 0 && _s.dragNodeIndex < (int)_s.nodePositions.count)
     {
         NSPoint canvasPt = [self viewToCanvas:viewPt];
-        CGFloat dx = canvasPt.x - _dragStartMouse.x;
-        CGFloat dy = canvasPt.y - _dragStartMouse.y;
-        NSPoint newPos = NSMakePoint(_dragStartNodePos.x + dx, _dragStartNodePos.y + dy);
-        _nodePositions[_dragNodeIndex] = [NSValue valueWithPoint:newPos];
+        CGFloat dx = canvasPt.x - _s.dragStartMouse.x;
+        CGFloat dy = canvasPt.y - _s.dragStartMouse.y;
+        NSPoint newPos = NSMakePoint(_s.dragStartNodePos.x + dx, _s.dragStartNodePos.y + dy);
+        _s.nodePositions[_s.dragNodeIndex] = [NSValue valueWithPoint:newPos];
         [self setNeedsDisplay:YES];
     }
 }
@@ -573,9 +575,9 @@ static const CGFloat kMaxZoom = 2.0;
 - (void)mouseUp:(NSEvent*)event
 {
     (void)event;
-    _isDraggingNode = NO;
-    _dragNodeIndex = -1;
-    _isPanning = NO;
+    _s.isDraggingNode = NO;
+    _s.dragNodeIndex = -1;
+    _s.isPanning = NO;
 }
 
 - (void)scrollWheel:(NSEvent*)event
@@ -587,15 +589,15 @@ static const CGFloat kMaxZoom = 2.0;
     NSPoint viewPt = [self convertPoint:event.locationInWindow fromView:nil];
 
     // Zoom toward mouse position.
-    CGFloat oldZoom = _zoomLevel;
+    CGFloat oldZoom = _s.zoomLevel;
     CGFloat newZoom = oldZoom * (1.0 + delta * 0.05);
     newZoom = MAX(kMinZoom, MIN(kMaxZoom, newZoom));
 
     // Adjust pan so the point under the cursor stays fixed.
-    _panOffset = NSMakePoint(viewPt.x - (viewPt.x - _panOffset.x) * newZoom / oldZoom,
-                             viewPt.y - (viewPt.y - _panOffset.y) * newZoom / oldZoom);
+    _s.panOffset = NSMakePoint(viewPt.x - (viewPt.x - _s.panOffset.x) * newZoom / oldZoom,
+                             viewPt.y - (viewPt.y - _s.panOffset.y) * newZoom / oldZoom);
 
-    _zoomLevel = newZoom;
+    _s.zoomLevel = newZoom;
     [self setNeedsDisplay:YES];
 }
 
@@ -611,7 +613,7 @@ static const CGFloat kMaxZoom = 2.0;
     {
         NSString* title = [NSString
             stringWithFormat:@"Delete \"%@\"",
-                             (hitNode < (int)_nodeNames.count) ? _nodeNames[hitNode] : @"?"];
+                             (hitNode < (int)_s.nodeNames.count) ? _s.nodeNames[hitNode] : @"?"];
         NSMenuItem* deleteItem = [[NSMenuItem alloc] initWithTitle:title
                                                             action:@selector(contextDeleteState:)
                                                      keyEquivalent:@""];
