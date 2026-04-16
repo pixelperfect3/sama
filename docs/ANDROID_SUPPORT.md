@@ -99,6 +99,12 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - Two-finger pan → right-drag equivalent (for camera orbit)
 - [ ] Keyboard support (for devices with physical keyboards or Bluetooth)
   - Map `AKEYCODE_*` to `engine::input::Key` enum
+- [ ] Gyroscope / accelerometer input
+  - Add `GyroState` to `InputState` (pitch/yaw/roll rates + gravity vector + available flag)
+  - Android: `ASensorManager` + `ASENSOR_TYPE_GYROSCOPE` / `ASENSOR_TYPE_GAME_ROTATION_VECTOR`
+  - Use cases: motion aiming, tilt steering, camera look, AR orientation
+  - Configurable sensitivity and dead zone
+  - Platform-agnostic API so iOS (`CMMotionManager`) and Switch (Joy-Con) can plug in later
 
 ---
 
