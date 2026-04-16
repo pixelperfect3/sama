@@ -541,6 +541,7 @@ namespace engine::editor
 
 struct CocoaAnimationView::Impl
 {
+    NSScrollView* scrollView = nil;
     NSView* containerView = nil;
     NSStackView* rootStack = nil;
 
@@ -645,8 +646,8 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
 {
     @autoreleasepool
     {
-        impl_->containerView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 150)];
-        impl_->containerView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        impl_->containerView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 800)];
+        impl_->containerView.translatesAutoresizingMaskIntoConstraints = NO;
 
         impl_->delegate = [[AnimationViewDelegate alloc] init];
 
@@ -1193,6 +1194,31 @@ CocoaAnimationView::CocoaAnimationView() : impl_(std::make_unique<Impl>())
             [impl_->smGraphView.trailingAnchor
                 constraintEqualToAnchor:impl_->smSectionStack.trailingAnchor],
         ]];
+
+        // Also pin rootStack bottom to containerView so the document view
+        // has a well-defined height for scrolling.
+        [impl_->rootStack.bottomAnchor constraintEqualToAnchor:impl_->containerView.bottomAnchor
+                                                      constant:-8]
+            .active = YES;
+
+        // Wrap containerView in a scroll view so the panel scrolls when
+        // content is taller than the available space.
+        impl_->scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 600, 150)];
+        impl_->scrollView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        impl_->scrollView.hasVerticalScroller = YES;
+        impl_->scrollView.hasHorizontalScroller = NO;
+        impl_->scrollView.autohidesScrollers = YES;
+        impl_->scrollView.borderType = NSNoBorder;
+        impl_->scrollView.drawsBackground = NO;
+        impl_->scrollView.documentView = impl_->containerView;
+
+        // Pin the document view width to the scroll view's clip view so
+        // it stretches horizontally but scrolls vertically.
+        NSClipView* clipView = impl_->scrollView.contentView;
+        [NSLayoutConstraint activateConstraints:@[
+            [impl_->containerView.widthAnchor
+                constraintEqualToAnchor:clipView.widthAnchor],
+        ]];
     }
 }
 
@@ -1200,6 +1226,7 @@ CocoaAnimationView::~CocoaAnimationView()
 {
     @autoreleasepool
     {
+        impl_->scrollView = nil;
         impl_->containerView = nil;
         impl_->rootStack = nil;
         impl_->statusLabel = nil;
@@ -1249,7 +1276,7 @@ CocoaAnimationView::~CocoaAnimationView()
 
 void* CocoaAnimationView::nativeView() const
 {
-    return (__bridge void*)impl_->containerView;
+    return (__bridge void*)impl_->scrollView;
 }
 
 void CocoaAnimationView::setState(const AnimationViewState& s)
