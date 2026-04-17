@@ -209,6 +209,116 @@ target_link_libraries(my_game PRIVATE
 
 All individual libraries are listed in `CMakeLists.txt` — look for `add_library(engine_*)` entries.
 
+## Android
+
+Sama supports cross-compiling for Android via the NDK. The engine uses Vulkan on Android (bgfx handles the backend) with a pure C++ NativeActivity entry point -- no Java or Kotlin required.
+
+For the full roadmap, design decisions, and phase-by-phase status, see [docs/ANDROID_SUPPORT.md](docs/ANDROID_SUPPORT.md).
+
+### Prerequisites
+
+- **Android NDK r27d+** -- download from [developer.android.com/ndk/downloads](https://developer.android.com/ndk/downloads) or install via Android Studio's SDK Manager
+- **Java 17+** -- required by `sdkmanager` and Android build tools (`aapt2`, `apksigner`)
+- **Platform tools** -- `adb` for deploying to devices; install via `sdkmanager --install "platform-tools"` or from [developer.android.com/tools/releases/platform-tools](https://developer.android.com/tools/releases/platform-tools)
+- **Set `ANDROID_NDK`** -- the build script defaults to `$HOME/Android/Sdk/ndk/26.1.10909125`; override by exporting the variable:
+  ```bash
+  export ANDROID_NDK=/path/to/your/ndk
+  ```
+
+### Building for Android
+
+**Using the build script (recommended):**
+
+```bash
+# Default: arm64-v8a, Release
+./android/build_android.sh
+
+# Specify ABI and build type
+./android/build_android.sh arm64-v8a Debug
+./android/build_android.sh armeabi-v7a Release
+```
+
+**Manual CMake invocation:**
+
+```bash
+cmake -S . -B build/android/arm64-v8a \
+    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a \
+    -DANDROID_PLATFORM=android-24 \
+    -DANDROID_STL=c++_shared \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DSAMA_ANDROID=ON
+
+cmake --build build/android/arm64-v8a -j$(sysctl -n hw.ncpu)
+```
+
+**Available ABIs:** `arm64-v8a` (primary, 64-bit ARM), `armeabi-v7a` (32-bit ARM). The build produces a `libsama_android.so` shared library.
+
+### Asset Pipeline
+
+The `sama-asset-tool` CLI processes assets for Android device tiers (texture resizing, format tagging, manifest generation):
+
+```bash
+# Build the asset tool (desktop target)
+cmake --build build --target sama-asset-tool -j$(sysctl -n hw.ncpu)
+
+# Process assets for each tier
+build/sama-asset-tool --input assets/ --output build/android/low/assets/  --target android --tier low
+build/sama-asset-tool --input assets/ --output build/android/mid/assets/  --target android --tier mid
+build/sama-asset-tool --input assets/ --output build/android/high/assets/ --target android --tier high
+
+# Preview without writing files
+build/sama-asset-tool --input assets/ --output out/ --target android --tier mid --dry-run --verbose
+```
+
+**Tiers:**
+
+| Tier | Max Texture Size | ASTC Block | Typical APK Size |
+|------|-----------------|------------|-----------------|
+| `low` | 512px | 8x8 | ~30 MB |
+| `mid` | 1024px | 6x6 | ~60 MB |
+| `high` | 2048px | 4x4 | ~120 MB |
+
+### Android Project Structure
+
+```
+android/
+    build_android.sh          Build script (ABI + build type args)
+    AndroidManifest.xml       NativeActivity manifest (no Java)
+    CMakeLists.txt            Sets SAMA_ANDROID=ON, includes main build
+
+engine/platform/android/
+    AndroidApp.h/.cpp         Entry point: engine::platform::runAndroidApp()
+
+tools/asset_tool/
+    main.cpp                  sama-asset-tool CLI entry point
+    AssetProcessor.h/.cpp     Pipeline orchestrator
+    TextureProcessor.h/.cpp   Texture discovery and processing
+    ShaderProcessor.h/.cpp    Shader discovery and processing
+```
+
+### Current Status
+
+**Implemented:**
+
+- Phase A (NDK Bootstrap) -- CMake toolchain, build script, NativeActivity entry point, AndroidManifest, bgfx Vulkan initialization
+- Phase D (Asset Pipeline) -- `sama-asset-tool` CLI with texture/shader processing, tier configs, asset manifest generation, 17 tests
+
+**Not yet implemented:**
+
+- Phase B -- Android platform layer (`AndroidFileSystem`, `AndroidWindow`, lifecycle handling)
+- Phase C -- Touch input mapping, virtual joystick, multi-touch gestures
+- Phase E -- Tier system in `ProjectConfig` with runtime tier selection
+- Phase F -- APK packaging (`aapt2` + `zipalign` + `apksigner`)
+- Phase G -- Editor "Build for Android" integration
+- Phase H -- AAB generation for Play Store
+
+**Known limitations:**
+
+- ASTC texture encoding is stubbed -- textures are currently copied as-is with a TODO logged. Full ASTC compression requires the `astcenc` CLI tool.
+- No APK packaging yet (Phase F) -- the build produces a shared library but cannot create an installable APK.
+- Not yet verified on physical hardware or emulator.
+
 ## Architecture
 
 The engine is organized into modular static libraries, each owning a specific subsystem. Systems declare their component read/write sets as type aliases, and the compile-time DAG scheduler resolves execution order and parallelism opportunities.
