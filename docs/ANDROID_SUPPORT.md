@@ -198,7 +198,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 **Effort:** Medium | **Dependencies:** Phases A, D, E
 
-- [ ] Build script / CMake target for APK assembly (Gradle-free)
+- [x] Build script / CMake target for APK assembly (Gradle-free)
   - Cross-compile engine + game → `libsamagame.so` per ABI
   - Run `sama-asset-tool` for the target tier
   - Assemble APK structure:
@@ -217,16 +217,16 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
         mipmap-*/ic_launcher.png
     ```
   - Use `aapt2` for resource compilation, `zipalign` for alignment, `apksigner` for signing
-- [ ] Keystore management
+- [x] Keystore management
   - Debug keystore auto-generated on first build
   - Release keystore path configured in `project.json` or passed via CLI
-- [ ] CLI interface
+- [x] CLI interface
   ```bash
   sama-build android --tier mid --keystore release.jks --output MyGame.apk
   sama-build android --tier high --debug --install  # build + adb install
   ```
-- [ ] `adb install` integration for quick deploy to connected device
-- [ ] Build time optimization
+- [x] `adb install` integration for quick deploy to connected device
+- [x] Build time optimization
   - Incremental native builds (only recompile changed sources)
   - Cache processed assets (skip re-compression if source unchanged)
 

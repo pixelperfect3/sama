@@ -1612,3 +1612,15 @@ if(NOT ANDROID)
     target_include_directories(sama_asset_tool PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(sama_asset_tool PRIVATE engine_asset_tool)
 endif()
+
+# --- APK build convenience target (desktop only) ---
+# Calls the Gradle-free APK build script. Requires ANDROID_NDK, ANDROID_SDK_ROOT,
+# and build-tools (aapt2, zipalign, apksigner) to be installed.
+if(NOT SAMA_ANDROID)
+    add_custom_target(build_apk
+        COMMAND ${CMAKE_SOURCE_DIR}/android/build_apk.sh --tier mid
+        DEPENDS sama_asset_tool
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Building Android APK (mid tier)"
+    )
+endif()
