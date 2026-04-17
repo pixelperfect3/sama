@@ -866,6 +866,10 @@ add_executable(engine_tests
     tests/ui/TestMsdfFont.cpp
     tests/ui/TestSlugFont.cpp
     tests/tools/TestAssetProcessor.cpp
+    tests/platform/TestAndroidKeyMap.cpp
+    tests/platform/TestVirtualJoystick.cpp
+    engine/platform/android/AndroidKeyMap.cpp
+    engine/platform/android/VirtualJoystick.cpp
 )
 
 target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui engine_asset_tool Catch2::Catch2WithMain)
@@ -1170,6 +1174,12 @@ if(SAMA_ANDROID)
     # engine_android — platform layer for Android.
     add_library(engine_android STATIC
         engine/platform/android/AndroidApp.cpp
+        engine/platform/android/AndroidFileSystem.cpp
+        engine/platform/android/AndroidGyro.cpp
+        engine/platform/android/AndroidInput.cpp
+        engine/platform/android/AndroidKeyMap.cpp
+        engine/platform/android/AndroidWindow.cpp
+        engine/platform/android/VirtualJoystick.cpp
     )
     target_include_directories(engine_android PUBLIC ${SAMA_ROOT_DIR})
     target_link_libraries(engine_android PUBLIC
