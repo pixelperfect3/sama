@@ -867,6 +867,7 @@ add_executable(engine_tests
     tests/ui/TestSlugFont.cpp
     tests/tools/TestAssetProcessor.cpp
     tests/platform/TestAndroidKeyMap.cpp
+    tests/platform/TestAndroidInput.cpp
     tests/platform/TestVirtualJoystick.cpp
     engine/platform/android/AndroidKeyMap.cpp
     engine/platform/android/VirtualJoystick.cpp
