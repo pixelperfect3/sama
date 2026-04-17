@@ -9,6 +9,13 @@ namespace engine::tools
 
 // ---------------------------------------------------------------------------
 // TierConfig — quality settings for a target device tier.
+//
+// NOTE: The engine has its own engine::game::TierConfig in
+// engine/game/ProjectConfig.h which bundles both asset and render quality.
+// This tool-side struct is intentionally separate to avoid the asset tool
+// depending on the full engine, but the asset-quality fields (maxTextureSize,
+// astcBlockSize) should stay in sync with the engine-side defaults returned
+// by engine::game::defaultTiers().
 // ---------------------------------------------------------------------------
 
 struct TierConfig

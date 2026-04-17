@@ -630,6 +630,7 @@ add_library(engine_assets STATIC
     engine/assets/EnvironmentAssetSerializer.cpp
     engine/assets/HdrLoader.cpp
     engine/assets/CubemapLoader.cpp
+    engine/assets/TierAssetResolver.cpp
 )
 
 target_include_directories(engine_assets PUBLIC ${SAMA_ROOT_DIR})
@@ -860,6 +861,7 @@ add_executable(engine_tests
     tests/animation/TestAnimationEvents.cpp
     tests/animation/TestAnimationSerializer.cpp
     tests/game/TestProjectConfig.cpp
+    tests/game/TestTierConfig.cpp
     tests/ui/TestUiNode.cpp
     tests/ui/TestUiLayout.cpp
     tests/ui/TestBitmapFont.cpp
