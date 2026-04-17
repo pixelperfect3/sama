@@ -236,8 +236,11 @@ void AssetProcessor::discoverModels()
 {
     static const std::vector<std::string> modelExtensions = {".glb", ".gltf"};
 
-    for (auto& p : fs::recursive_directory_iterator(args_.inputDir))
+    std::error_code ec;
+    for (auto& p : fs::recursive_directory_iterator(args_.inputDir, ec))
     {
+        if (ec)
+            break;
         if (!p.is_regular_file())
             continue;
 

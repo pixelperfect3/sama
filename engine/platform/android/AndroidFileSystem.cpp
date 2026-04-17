@@ -4,6 +4,7 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "SamaEngine", __VA_ARGS__)

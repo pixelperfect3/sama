@@ -50,8 +50,11 @@ std::vector<AssetEntry> ShaderProcessor::discover()
         shaderDir = args_.inputDir;
     }
 
-    for (auto& p : fs::recursive_directory_iterator(shaderDir))
+    std::error_code ec;
+    for (auto& p : fs::recursive_directory_iterator(shaderDir, ec))
     {
+        if (ec)
+            break;
         if (!p.is_regular_file())
             continue;
 

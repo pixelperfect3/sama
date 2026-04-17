@@ -51,9 +51,6 @@ private:
 
     int32_t handleMotionEvent(AInputEvent* event, engine::input::InputState& state);
     int32_t handleKeyEvent(AInputEvent* event, engine::input::InputState& state);
-
-    /// Map AKEYCODE_* to engine::input::Key.  Returns Key::COUNT if unmapped.
-    static engine::input::Key mapKeyCode(int32_t keyCode);
 };
 
 }  // namespace engine::platform

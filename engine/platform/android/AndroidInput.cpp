@@ -1,9 +1,10 @@
 #include "engine/platform/android/AndroidInput.h"
 
 #include <android/input.h>
-#include <android/keycodes.h>
 
 #include <algorithm>
+
+#include "engine/platform/android/AndroidKeyMap.h"
 
 namespace engine::platform
 {
@@ -233,7 +234,7 @@ int32_t AndroidInput::handleKeyEvent(AInputEvent* event, engine::input::InputSta
     int32_t keyCode = AKeyEvent_getKeyCode(event);
     int32_t action = AKeyEvent_getAction(event);
 
-    auto key = mapKeyCode(keyCode);
+    auto key = engine::platform::mapAndroidKeyCode(keyCode);
     if (key == engine::input::Key::COUNT)
         return 0;  // unmapped key
 
@@ -254,88 +255,6 @@ int32_t AndroidInput::handleKeyEvent(AInputEvent* event, engine::input::InputSta
     }
 
     return 1;
-}
-
-engine::input::Key AndroidInput::mapKeyCode(int32_t keyCode)
-{
-    using Key = engine::input::Key;
-
-    // clang-format off
-    switch (keyCode)
-    {
-        // Letters
-        case AKEYCODE_A: return Key::A;
-        case AKEYCODE_B: return Key::B;
-        case AKEYCODE_C: return Key::C;
-        case AKEYCODE_D: return Key::D;
-        case AKEYCODE_E: return Key::E;
-        case AKEYCODE_F: return Key::F;
-        case AKEYCODE_G: return Key::G;
-        case AKEYCODE_H: return Key::H;
-        case AKEYCODE_I: return Key::I;
-        case AKEYCODE_J: return Key::J;
-        case AKEYCODE_K: return Key::K;
-        case AKEYCODE_L: return Key::L;
-        case AKEYCODE_M: return Key::M;
-        case AKEYCODE_N: return Key::N;
-        case AKEYCODE_O: return Key::O;
-        case AKEYCODE_P: return Key::P;
-        case AKEYCODE_Q: return Key::Q;
-        case AKEYCODE_R: return Key::R;
-        case AKEYCODE_S: return Key::S;
-        case AKEYCODE_T: return Key::T;
-        case AKEYCODE_U: return Key::U;
-        case AKEYCODE_V: return Key::V;
-        case AKEYCODE_W: return Key::W;
-        case AKEYCODE_X: return Key::X;
-        case AKEYCODE_Y: return Key::Y;
-        case AKEYCODE_Z: return Key::Z;
-
-        // Digits
-        case AKEYCODE_0: return Key::Num0;
-        case AKEYCODE_1: return Key::Num1;
-        case AKEYCODE_2: return Key::Num2;
-        case AKEYCODE_3: return Key::Num3;
-        case AKEYCODE_4: return Key::Num4;
-        case AKEYCODE_5: return Key::Num5;
-        case AKEYCODE_6: return Key::Num6;
-        case AKEYCODE_7: return Key::Num7;
-        case AKEYCODE_8: return Key::Num8;
-        case AKEYCODE_9: return Key::Num9;
-
-        // Navigation / control
-        case AKEYCODE_SPACE:         return Key::Space;
-        case AKEYCODE_ENTER:         return Key::Enter;
-        case AKEYCODE_ESCAPE:        return Key::Escape;
-        case AKEYCODE_TAB:           return Key::Tab;
-        case AKEYCODE_DEL:           return Key::Backspace;
-        case AKEYCODE_FORWARD_DEL:   return Key::Delete;
-        case AKEYCODE_INSERT:        return Key::Insert;
-        case AKEYCODE_DPAD_LEFT:     return Key::Left;
-        case AKEYCODE_DPAD_RIGHT:    return Key::Right;
-        case AKEYCODE_DPAD_UP:       return Key::Up;
-        case AKEYCODE_DPAD_DOWN:     return Key::Down;
-        case AKEYCODE_MOVE_HOME:     return Key::Home;
-        case AKEYCODE_MOVE_END:      return Key::End;
-        case AKEYCODE_PAGE_UP:       return Key::PageUp;
-        case AKEYCODE_PAGE_DOWN:     return Key::PageDown;
-
-        // Modifiers
-        case AKEYCODE_SHIFT_LEFT:    return Key::LeftShift;
-        case AKEYCODE_SHIFT_RIGHT:   return Key::RightShift;
-        case AKEYCODE_CTRL_LEFT:     return Key::LeftCtrl;
-        case AKEYCODE_CTRL_RIGHT:    return Key::RightCtrl;
-        case AKEYCODE_ALT_LEFT:      return Key::LeftAlt;
-        case AKEYCODE_ALT_RIGHT:     return Key::RightAlt;
-        case AKEYCODE_META_LEFT:     return Key::LeftSuper;
-        case AKEYCODE_META_RIGHT:    return Key::RightSuper;
-
-        // Android-specific: map BACK to Escape for menu/back behavior.
-        case AKEYCODE_BACK:          return Key::Escape;
-
-        default: return Key::COUNT;
-    }
-    // clang-format on
 }
 
 }  // namespace engine::platform

@@ -12,7 +12,11 @@ namespace engine::platform
 
 bool AndroidGyro::init(ALooper* looper)
 {
+#if __ANDROID_API__ >= 26
+    sensorManager_ = ASensorManager_getInstanceForPackage("");
+#else
     sensorManager_ = ASensorManager_getInstance();
+#endif
     if (!sensorManager_)
         return false;
 

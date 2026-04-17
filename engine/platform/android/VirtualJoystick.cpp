@@ -51,7 +51,13 @@ void VirtualJoystick::update(float touchX, float touchY, bool touchActive, float
     float ny = dy / dist;
 
     // Remap distance from [deadZone, radius] to [0, 1] and clamp
-    float effectiveDist = (dist - deadZonePx) / (radiusPx - deadZonePx);
+    float range = radiusPx - deadZonePx;
+    if (range <= 0.0f)
+    {
+        direction_ = math::Vec2{0.0f, 0.0f};
+        return;
+    }
+    float effectiveDist = (dist - deadZonePx) / range;
     if (effectiveDist > 1.0f)
         effectiveDist = 1.0f;
 

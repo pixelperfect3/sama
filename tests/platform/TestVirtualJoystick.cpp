@@ -123,6 +123,17 @@ TEST_CASE("VirtualJoystick: diagonal direction normalization", "[platform][input
     CHECK(joy.direction().y > 0.0f);
 }
 
+TEST_CASE("VirtualJoystick: deadZone 1.0 returns zero", "[platform][input]")
+{
+    VirtualJoystick joy;
+    VirtualJoystickConfig cfg;
+    cfg.deadZone = 1.0f;
+    joy.setConfig(cfg);
+    joy.update(100.0f, 100.0f, true, 800.0f, 600.0f);
+    REQUIRE(joy.direction().x == 0.0f);
+    REQUIRE(joy.direction().y == 0.0f);
+}
+
 TEST_CASE("VirtualJoystick: touch far outside radius is not touched", "[platform][input]")
 {
     VirtualJoystick joy;
