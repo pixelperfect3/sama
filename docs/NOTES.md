@@ -1312,6 +1312,66 @@ ProjectConfig has 8 unit tests covering: defaults, full config parsing, partial 
 
 ---
 
+## Tier System
+
+### Overview
+
+The tier system allows developers to define device-tier quality presets (e.g. low/mid/high) that bundle both asset quality and render quality into a single configuration. This replaces ad-hoc per-setting tuning with a unified quality profile that maps cleanly to the asset pipeline and render settings.
+
+### Architecture
+
+1. **`TierConfig` struct** (`engine/game/ProjectConfig.h`): Bundles asset quality fields (`maxTextureSize`, `textureCompression`) and render quality fields (`shadowMapSize`, `shadowCascades`, `maxBones`, `enableIBL`, `enableSSAO`, `enableBloom`, `enableFXAA`, `depthPrepass`, `renderScale`, `targetFPS`). All fields have sensible defaults matching the "mid" tier.
+
+2. **`defaultTiers()`** returns three built-in presets: low (weak mobile — 512px textures, no IBL/bloom, 0.75x render scale), mid (mainstream — 1024px, IBL + bloom, 1.0x), high (flagship — 2048px, all effects, 60fps target).
+
+3. **`getActiveTier()`** resolves the active tier: looks up `activeTier` name in user-defined `tiers` map first, then falls back to built-in defaults, and finally to "mid" if the name is unknown.
+
+4. **`tierToRenderSettings()`** converts a `TierConfig` to `RenderSettings` for the renderer — shadow resolution/cascades/filter, IBL, SSAO, bloom, FXAA, depth prepass, render scale.
+
+5. **`TierAssetResolver`** (`engine/assets/TierAssetResolver.h/.cpp`): `resolveAssetPath(base, relative, tier)` checks `<base>/<tier>/<relative>` first, falls back to `<base>/<relative>`. This enables per-tier asset overrides without duplicating the entire asset tree.
+
+### Key Decisions
+
+- **Explicit tiers over runtime auto-detection.** Auto-detecting quality from GPU model strings is unreliable (string formats vary across vendors, available memory depends on background apps). Explicit tiers let developers test each configuration and guarantee performance. Runtime detection can be added later as a hint for the default tier selection.
+
+- **TierConfig is separate from the tool-side TierConfig.** The engine-side `engine::game::TierConfig` (in ProjectConfig.h) bundles both asset and render quality. The tool-side `engine::tools::TierConfig` (in AssetProcessor.h) only has asset-quality fields (`maxTextureSize`, `astcBlockSize`). This avoids the asset tool depending on the full engine, but the asset-quality fields must stay in sync manually.
+
+- **depthPrepass defaults to false.** Mobile GPUs use tile-based deferred rendering (TBDR) where the hardware performs hidden surface removal efficiently. A CPU-side depth prepass would double draw calls for minimal benefit. Desktop GPUs benefit more from depth prepass, but the default is tuned for mobile.
+
+- **Shadow filter is threshold-based.** `tierToRenderSettings` uses `PCF4x4` for shadow maps >= 2048 and `Hard` for smaller maps. This avoids wasting PCF samples on low-resolution shadow maps where the filtering would not improve visual quality.
+
+- **Partial tier JSON supported.** A JSON tier definition can specify only the fields that differ from defaults. This makes it easy to create a custom tier that tweaks one or two settings without repeating the full configuration.
+
+---
+
+## Asset Pipeline CLI
+
+### Overview
+
+`sama-asset-tool` is a standalone command-line tool that processes source assets for a target platform and quality tier. It discovers textures, shaders, and models in an input directory, processes them, and writes the results plus a JSON manifest to an output directory.
+
+### Architecture
+
+1. **`AssetProcessor`** (`tools/asset_tool/AssetProcessor.h/.cpp`): Orchestrates the pipeline — parses CLI args, discovers assets via `TextureProcessor`/`ShaderProcessor`/model discovery, processes them, and writes `manifest.json`.
+
+2. **`TextureProcessor`** (`tools/asset_tool/TextureProcessor.h/.cpp`): Discovers `.png`, `.jpg`, `.jpeg`, `.ktx`, `.ktx2`, `.dds` files. Output format is `.ktx` with ASTC compression (stubbed — currently copies files as-is).
+
+3. **`ShaderProcessor`** (`tools/asset_tool/ShaderProcessor.h/.cpp`): Discovers `.sc` bgfx shader files, skips `varying.def.sc`. Determines shader type from filename prefix (`vs_`/`fs_`/`cs_`). Output format is SPIRV for Android, Metal for iOS. Compilation via `shaderc` is stubbed — currently copies files.
+
+4. **`manifest.json`**: Lists all processed assets with platform, tier, timestamp, and per-asset type/source/output/format/dimensions.
+
+### Key Decisions
+
+- **Standalone tool, not a library.** The asset tool is a separate executable that does not link against the engine runtime. This keeps the tool lightweight and avoids pulling in bgfx, ECS, or renderer dependencies for offline processing.
+
+- **ASTC encoding deferred.** The `astc-codec` library in third_party is decode-only. Full ASTC encoding requires the `astcenc` CLI tool. Rather than block the pipeline on this dependency, textures are copied as-is with the correct manifest metadata. The compression step can be added later without changing the manifest format or pipeline structure.
+
+- **Path traversal protection.** Model file copying validates that the destination path does not escape the output directory using `std::mismatch` on canonicalized path components. This prevents malicious or malformed relative paths from writing outside the output tree.
+
+- **Dry-run mode.** `--dry-run` skips all file I/O (including output directory creation) and prints what would be processed. This is useful for CI validation and debugging asset discovery without side effects.
+
+---
+
 ## TODO — Performance & Hygiene
 
 Items reviewed during the 2026-04-12 engine audit but deferred due to risk or complexity:

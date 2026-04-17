@@ -1270,6 +1270,103 @@ Textures are copied to the output directory. Full ASTC compression requires the
 
 Source: `tools/asset_tool/` (AssetProcessor, TextureProcessor, ShaderProcessor).
 
+### TierConfig & Tier System
+
+Configure device-tier quality presets in `ProjectConfig`. Each tier bundles asset
+quality and render quality into a single profile.
+
+#### ProjectConfig with tiers
+
+```cpp
+#include "engine/game/ProjectConfig.h"
+
+using namespace engine::game;
+
+// Load config with tier definitions from JSON
+ProjectConfig config;
+config.loadFromFile("project.json");
+
+// Or set tiers programmatically
+config.activeTier = "low";
+
+// Get the resolved TierConfig (checks user tiers, then built-in defaults)
+TierConfig tier = config.getActiveTier();
+// tier.maxTextureSize, tier.shadowMapSize, tier.enableIBL, etc.
+
+// Convert tier to RenderSettings for the renderer
+auto rs = ProjectConfig::tierToRenderSettings(tier);
+// rs.shadows.directionalRes, rs.lighting.iblEnabled, etc.
+
+// Get built-in default tiers
+auto defaults = defaultTiers();  // returns {"low", "mid", "high"}
+```
+
+#### JSON format
+
+```json
+{
+    "activeTier": "mid",
+    "tiers": {
+        "low": {
+            "maxTextureSize": 512,
+            "textureCompression": "astc_8x8",
+            "shadowMapSize": 512,
+            "shadowCascades": 1,
+            "maxBones": 64,
+            "enableIBL": false,
+            "enableSSAO": false,
+            "enableBloom": false,
+            "enableFXAA": true,
+            "depthPrepass": false,
+            "renderScale": 0.75,
+            "targetFPS": 30
+        }
+    }
+}
+```
+
+Partial definitions are supported -- unspecified fields keep `TierConfig` defaults
+(equivalent to "mid").
+
+#### TierConfig fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxTextureSize` | int | 1024 | Max texture dimension for this tier |
+| `textureCompression` | string | "astc_6x6" | ASTC block size |
+| `shadowMapSize` | int | 1024 | Shadow map resolution |
+| `shadowCascades` | int | 2 | Number of CSM cascades |
+| `maxBones` | int | 128 | Max skeleton bones |
+| `enableIBL` | bool | true | Image-based lighting |
+| `enableSSAO` | bool | false | Screen-space ambient occlusion |
+| `enableBloom` | bool | true | Bloom post-process |
+| `enableFXAA` | bool | true | Anti-aliasing |
+| `depthPrepass` | bool | false | Depth prepass (false for mobile TBDR) |
+| `renderScale` | float | 1.0 | Render resolution scale |
+| `targetFPS` | int | 30 | Target frame rate |
+
+Source: `engine/game/ProjectConfig.h/.cpp`
+
+### TierAssetResolver
+
+Resolve asset paths with per-tier overrides. Checks `<base>/<tier>/<relative>`
+first, falls back to `<base>/<relative>`.
+
+```cpp
+#include "engine/assets/TierAssetResolver.h"
+
+// Example: load tier-specific texture if available
+std::string path = engine::assets::resolveAssetPath(
+    "assets",           // base path
+    "textures/sky.ktx", // relative path
+    "low"               // tier name
+);
+// Returns "assets/low/textures/sky.ktx" if it exists,
+// otherwise "assets/textures/sky.ktx"
+```
+
+Source: `engine/assets/TierAssetResolver.h/.cpp`
+
 ---
 
 ### Animation Editor (Graph View)

@@ -66,51 +66,64 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase B — Android Platform Layer
+## Phase B — Android Platform Layer (DONE)
 
 **Effort:** Low | **Dependencies:** Phase A
 
-- [ ] `AndroidFileSystem` implementing `IFileSystem`
+- [x] `AndroidFileSystem` implementing `IFileSystem`
   - Backed by `AAssetManager` — reads from APK's `assets/` folder
-  - `AAsset_read()` for synchronous loads, `AAsset_getLength()` for size queries
+  - `AAsset_getBuffer()` for zero-copy reads, `AAsset_getLength()` for size queries
   - Follows the same interface as `StdFileSystem` so all existing loaders work unchanged
-- [ ] `AndroidWindow` wrapping `ANativeWindow`
+  - Path resolution with `..` and `.` normalization for relative asset references
+  - Source: `engine/platform/android/AndroidFileSystem.h/.cpp`
+- [x] `AndroidWindow` wrapping `ANativeWindow`
   - Pass `ANativeWindow*` to bgfx via `bgfx::PlatformData::nativeWindowHandle`
   - Vulkan only: bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` internally
   - No EGL — our code never touches graphics API surfaces, just manages the `ANativeWindow*` lifecycle
-  - Surface size tracking for framebuffer resize on orientation change
-  - Content scale factor (display density via `AConfiguration_getDensity`) for HiDPI-aware rendering
-- [ ] Lifecycle handling
+  - Surface size tracking for framebuffer resize on orientation change (`updateSize()`)
+  - Content scale factor from DPI density (160 dpi = 1.0x baseline)
+  - Source: `engine/platform/android/AndroidWindow.h/.cpp`
+- [ ] Lifecycle handling (deferred)
   - Pause: stop rendering, release EGL surface
   - Resume: re-create surface, resume rendering
   - `onSaveInstanceState` / `onRestoreInstanceState` for game state preservation
-- [ ] Audio backend
+- [ ] Audio backend (deferred)
   - AAudio (API 26+) or OpenSL ES (API 24+) for SoLoud
   - SoLoud already has both backends — just enable the right one in CMake
 
 ---
 
-## Phase C — Touch Input
+## Phase C — Touch Input (DONE)
 
 **Effort:** Low | **Dependencies:** Phase A
 
-- [ ] Map `AInputEvent` touch events to `InputState`
-  - Single touch → mouse position + left button
-  - Sufficient for orbit camera and UI interaction
-- [ ] Virtual joystick overlay for movement
-  - Transparent on-screen joystick (left side) for WASD-equivalent
-  - Rendered via `UiRenderer` as a semi-transparent circle + thumb
-- [ ] Multi-touch gestures
+- [x] Map `AInputEvent` touch events to `InputState`
+  - Single touch drives `mouseX_`/`mouseY_` and left mouse button for desktop-code compatibility
+  - Multi-touch tracked with stable pointer IDs in `InputState::touches_`
+  - `ACTION_DOWN`/`POINTER_DOWN` -> `Phase::Began`, `ACTION_MOVE` -> `Phase::Moved`, `ACTION_UP`/`POINTER_UP` -> `Phase::Ended`, `ACTION_CANCEL` -> all ended
+  - `endFrame()` clears per-frame flags (pressed/released), removes ended touches, promotes Began to Moved
+  - Source: `engine/platform/android/AndroidInput.h/.cpp`
+- [x] Virtual joystick overlay for movement
+  - Configurable center position, radius, dead zone, and opacity (all normalized screen coords)
+  - Produces normalized direction vector `[-1,1]` with dead zone remapping and radius clamping
+  - 1.5x activation radius for forgiving touch targeting
+  - Source: `engine/platform/android/VirtualJoystick.h/.cpp`
+  - TODO: rendering via UiRenderer (positional logic implemented, visual overlay pending)
+- [ ] Multi-touch gestures (deferred)
   - Pinch-to-zoom → scroll delta (for camera zoom)
   - Two-finger pan → right-drag equivalent (for camera orbit)
-- [ ] Keyboard support (for devices with physical keyboards or Bluetooth)
-  - Map `AKEYCODE_*` to `engine::input::Key` enum
-- [ ] Gyroscope / accelerometer input
-  - Add `GyroState` to `InputState` (pitch/yaw/roll rates + gravity vector + available flag)
-  - Android: `ASensorManager` + `ASENSOR_TYPE_GYROSCOPE` / `ASENSOR_TYPE_GAME_ROTATION_VECTOR`
-  - Use cases: motion aiming, tilt steering, camera look, AR orientation
-  - Configurable sensitivity and dead zone
-  - Platform-agnostic API so iOS (`CMMotionManager`) and Switch (Joy-Con) can plug in later
+- [x] Keyboard support (for devices with physical keyboards or Bluetooth)
+  - Full `AKEYCODE_*` to `engine::input::Key` mapping: A-Z, 0-9, F1-F12, Numpad 0-9, modifiers, punctuation, navigation
+  - `AKEYCODE_BACK` mapped to `Key::Escape` for menu/back behavior
+  - Two implementations: `AndroidKeyMap` (cross-platform testable with local constants) and `AndroidInput::mapKeyCode` (uses real Android headers)
+  - Source: `engine/platform/android/AndroidKeyMap.h/.cpp`, `engine/platform/android/AndroidInput.cpp`
+  - Tests: `tests/platform/TestAndroidKeyMap.cpp` (11 test cases)
+- [x] Gyroscope / accelerometer input
+  - `AndroidGyro` manages `ASensorManager` lifecycle with enable/disable for battery savings
+  - Polls `ASENSOR_TYPE_GYROSCOPE` (pitch/yaw/roll rates) and `ASENSOR_TYPE_ACCELEROMETER` (gravity vector normalized to [-1,1])
+  - Configurable sample rate (default ~60Hz)
+  - Platform-agnostic `GyroState` in `InputState` with `available` flag
+  - Source: `engine/platform/android/AndroidGyro.h/.cpp` (compiled only on Android via `#ifdef __ANDROID__`)
 
 ---
 
@@ -143,54 +156,52 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase E — Tier System in ProjectConfig
+## Phase E — Tier System in ProjectConfig (DONE)
 
 **Effort:** Medium | **Dependencies:** Phase D
 
-- [ ] Extend `ProjectConfig` JSON with tier definitions
+- [x] Extend `ProjectConfig` JSON with tier definitions
   ```json
   {
+      "activeTier": "mid",
       "tiers": {
           "low": {
               "maxTextureSize": 512,
               "textureCompression": "astc_8x8",
               "shadowMapSize": 512,
+              "shadowCascades": 1,
               "maxBones": 64,
               "enableIBL": false,
               "enableSSAO": false,
               "enableBloom": false,
+              "enableFXAA": true,
+              "depthPrepass": false,
+              "renderScale": 0.75,
               "targetFPS": 30
           },
-          "mid": {
-              "maxTextureSize": 1024,
-              "textureCompression": "astc_6x6",
-              "shadowMapSize": 1024,
-              "maxBones": 128,
-              "enableIBL": true,
-              "enableSSAO": false,
-              "enableBloom": true,
-              "targetFPS": 30
-          },
-          "high": {
-              "maxTextureSize": 2048,
-              "textureCompression": "astc_4x4",
-              "shadowMapSize": 2048,
-              "maxBones": 128,
-              "enableIBL": true,
-              "enableSSAO": true,
-              "enableBloom": true,
-              "targetFPS": 60
-          }
+          "mid": { ... },
+          "high": { ... }
       }
   }
   ```
-- [ ] `TierConfig` struct parsed at startup, feeds into `RenderSettings` and `EngineDesc`
-- [ ] Runtime tier detection (optional): auto-select tier based on GPU model / available memory
+  - Full list of TierConfig fields: `maxTextureSize`, `textureCompression`, `shadowMapSize`, `shadowCascades`, `maxBones`, `enableIBL`, `enableSSAO`, `enableBloom`, `enableFXAA`, `depthPrepass`, `renderScale`, `targetFPS`
+  - Partial tier definitions supported — unspecified fields keep TierConfig defaults
+  - Custom tier names supported (not limited to low/mid/high)
+- [x] `TierConfig` struct parsed at startup, feeds into `RenderSettings` and `EngineDesc`
+  - `getActiveTier()` — looks up active tier name in user tiers first, then built-in defaults, falls back to "mid"
+  - `tierToRenderSettings()` — converts TierConfig to RenderSettings (shadow resolution/cascades/filter, IBL, SSAO, bloom, FXAA, depth prepass, render scale)
+  - `toEngineDesc()` — applies active tier's shadow settings when tiers are configured, otherwise uses legacy RenderConfig
+  - `defaultTiers()` — returns three built-in presets: low (weak mobile), mid (mainstream), high (flagship)
+  - Source: `engine/game/ProjectConfig.h/.cpp`
+  - Tests: `tests/game/TestTierConfig.cpp` (14 test cases covering defaults, getActiveTier, tierToRenderSettings, JSON parsing, toEngineDesc)
+- [ ] Runtime tier detection (deferred): auto-select tier based on GPU model / available memory
   - `GL_RENDERER` string matching or Vulkan `VkPhysicalDeviceProperties`
   - Fallback: default to "mid" if detection fails
-- [ ] Asset loader picks tier-appropriate assets
-  - Check `assets/<tier>/texture.ktx` first, fall back to `assets/texture.ktx`
-  - Or use the asset manifest to resolve paths
+- [x] Asset loader picks tier-appropriate assets
+  - `resolveAssetPath(basePath, relativePath, tier)` — checks `<basePath>/<tier>/<relativePath>` first, falls back to `<basePath>/<relativePath>`
+  - Pure utility function, no IFileSystem dependency
+  - Source: `engine/assets/TierAssetResolver.h/.cpp`
+  - Tests: 3 test cases in `tests/game/TestTierConfig.cpp` (tier-specific path exists, fallback, empty tier)
 
 ---
 
