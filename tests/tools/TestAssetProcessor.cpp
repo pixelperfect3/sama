@@ -13,6 +13,7 @@
 
 #include "engine/io/Json.h"
 #include "tools/asset_tool/AssetProcessor.h"
+#include "tools/asset_tool/AstcEncoder.h"
 #include "tools/asset_tool/ShaderProcessor.h"
 #include "tools/asset_tool/TextureProcessor.h"
 
@@ -209,10 +210,10 @@ TEST_CASE("TextureProcessor discovers image files", "[asset_tool]")
     TempDir outputDir;
 
     inputDir.createTestPng("textures/albedo.png", 64, 64);
-    inputDir.createFile("textures/normal.jpg");   // not valid image, but has texture extension
-    inputDir.createFile("textures/packed.ktx");   // not valid image, but has texture extension
-    inputDir.createFile("textures/readme.txt");   // not a texture
-    inputDir.createFile("models/mesh.glb");       // not a texture
+    inputDir.createFile("textures/normal.jpg");  // not valid image, but has texture extension
+    inputDir.createFile("textures/packed.ktx");  // not valid image, but has texture extension
+    inputDir.createFile("textures/readme.txt");  // not a texture
+    inputDir.createFile("models/mesh.glb");      // not a texture
 
     CliArgs args;
     args.inputDir = inputDir.path().string();
@@ -760,45 +761,43 @@ TEST_CASE("TextureProcessor produces KTX output", "[asset_tool]")
 
     // Check output file exists
     fs::path ktxPath = outputDir.path() / "textures" / "test.ktx";
-
-#if SAMA_HAS_ASTCENC
     REQUIRE(fs::exists(ktxPath));
 
-    // Verify KTX1 magic bytes
-    std::ifstream ktxFile(ktxPath, std::ios::binary);
-    REQUIRE(ktxFile.good());
+    if (isAstcEncoderAvailable())
+    {
+        // Verify KTX1 magic bytes
+        std::ifstream ktxFile(ktxPath, std::ios::binary);
+        REQUIRE(ktxFile.good());
 
-    uint8_t magic[12];
-    ktxFile.read(reinterpret_cast<char*>(magic), 12);
-    CHECK(magic[0] == 0xAB);
-    CHECK(magic[1] == 0x4B);
-    CHECK(magic[2] == 0x54);
-    CHECK(magic[3] == 0x58);
+        uint8_t magic[12];
+        ktxFile.read(reinterpret_cast<char*>(magic), 12);
+        CHECK(magic[0] == 0xAB);
+        CHECK(magic[1] == 0x4B);
+        CHECK(magic[2] == 0x54);
+        CHECK(magic[3] == 0x58);
 
-    // Read endianness
-    uint32_t endianness = 0;
-    ktxFile.read(reinterpret_cast<char*>(&endianness), 4);
-    CHECK(endianness == 0x04030201);
+        // Read endianness
+        uint32_t endianness = 0;
+        ktxFile.read(reinterpret_cast<char*>(&endianness), 4);
+        CHECK(endianness == 0x04030201);
 
-    // Skip glType, glTypeSize, glFormat (12 bytes)
-    ktxFile.seekg(12, std::ios::cur);
+        // Skip glType, glTypeSize, glFormat (12 bytes)
+        ktxFile.seekg(12, std::ios::cur);
 
-    // Read glInternalFormat — should be ASTC 6x6 for mid tier
-    uint32_t glInternalFormat = 0;
-    ktxFile.read(reinterpret_cast<char*>(&glInternalFormat), 4);
-    CHECK(glInternalFormat == 0x93B4);  // GL_COMPRESSED_RGBA_ASTC_6x6_KHR
+        // Read glInternalFormat — should be ASTC 6x6 for mid tier
+        uint32_t glInternalFormat = 0;
+        ktxFile.read(reinterpret_cast<char*>(&glInternalFormat), 4);
+        CHECK(glInternalFormat == 0x93B4);  // GL_COMPRESSED_RGBA_ASTC_6x6_KHR
 
-    // Skip glBaseInternalFormat (4 bytes)
-    ktxFile.seekg(4, std::ios::cur);
+        // Skip glBaseInternalFormat (4 bytes)
+        ktxFile.seekg(4, std::ios::cur);
 
-    // Read pixel dimensions
-    uint32_t pixelWidth = 0, pixelHeight = 0;
-    ktxFile.read(reinterpret_cast<char*>(&pixelWidth), 4);
-    ktxFile.read(reinterpret_cast<char*>(&pixelHeight), 4);
-    CHECK(pixelWidth == 16);
-    CHECK(pixelHeight == 16);
-#else
-    // Without astcenc, the source file is copied as-is
-    CHECK(fs::exists(ktxPath));
-#endif
+        // Read pixel dimensions
+        uint32_t pixelWidth = 0, pixelHeight = 0;
+        ktxFile.read(reinterpret_cast<char*>(&pixelWidth), 4);
+        ktxFile.read(reinterpret_cast<char*>(&pixelHeight), 4);
+        CHECK(pixelWidth == 16);
+        CHECK(pixelHeight == 16);
+    }
+    // Without astcenc, the source file is copied as-is — either way it exists
 }

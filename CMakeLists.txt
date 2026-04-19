@@ -164,6 +164,30 @@ endif()
 set(SOLOUD_SRC_DIR ${soloud_SOURCE_DIR}/src)
 set(SOLOUD_INC_DIR ${soloud_SOURCE_DIR}/include)
 
+# astc-encoder — ARM's ASTC texture compression library (Apache 2.0).
+# Used by engine_asset_tool to compress textures into ASTC format for Android.
+# Only built on desktop (not cross-compiled for Android).
+if(NOT SAMA_ANDROID)
+    FetchContent_Declare(
+        astcenc
+        GIT_REPOSITORY https://github.com/ARM-software/astc-encoder.git
+        GIT_TAG        4.8.0
+    )
+    # Only build the static library, not the CLI tool or tests
+    set(ASTCENC_CLI OFF CACHE BOOL "" FORCE)
+    set(ASTCENC_UNITTEST OFF CACHE BOOL "" FORCE)
+    set(ASTCENC_SHAREDLIB OFF CACHE BOOL "" FORCE)
+    set(ASTCENC_ISA_NATIVE ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(astcenc)
+    # Hide symbols to avoid collisions with bgfx's bundled astc-codec
+    if(TARGET astcenc-native-static)
+        set_target_properties(astcenc-native-static PROPERTIES
+            CXX_VISIBILITY_PRESET hidden
+            C_VISIBILITY_PRESET hidden
+        )
+    endif()
+endif()
+
 # rapidjson — header-only JSON parser (MIT). FetchContent_Populate like stb;
 # no CMake targets needed for a header-only lib.
 FetchContent_Declare(
@@ -799,9 +823,26 @@ if(NOT ANDROID)
         tools/asset_tool/AssetProcessor.cpp
         tools/asset_tool/TextureProcessor.cpp
         tools/asset_tool/ShaderProcessor.cpp
+        tools/asset_tool/AstcEncoderStub.cpp
     )
     target_include_directories(engine_asset_tool PUBLIC ${SAMA_ROOT_DIR})
+    target_include_directories(engine_asset_tool PRIVATE ${stb_SOURCE_DIR})
     target_link_libraries(engine_asset_tool PUBLIC engine_io)
+
+    # ASTC encoding object library — compiled separately so it can link
+    # astcenc without pulling those symbols into engine_tests (which already
+    # has bgfx's bundled astc-codec with colliding symbols).
+    if(TARGET astcenc-native-static)
+        add_library(engine_astcenc_bridge OBJECT
+            tools/asset_tool/AstcEncoder.cpp
+        )
+        target_include_directories(engine_astcenc_bridge PRIVATE
+            ${SAMA_ROOT_DIR}
+            ${astcenc_SOURCE_DIR}/Source
+        )
+        target_link_libraries(engine_astcenc_bridge PRIVATE astcenc-native-static)
+        target_compile_definitions(engine_astcenc_bridge PRIVATE SAMA_HAS_ASTCENC=1)
+    endif()
 endif()
 
 if(SAMA_BUILD_TESTS)
@@ -1610,7 +1651,14 @@ endif()
 if(NOT ANDROID)
     add_executable(sama_asset_tool tools/asset_tool/main.cpp)
     target_include_directories(sama_asset_tool PRIVATE ${SAMA_ROOT_DIR})
-    target_link_libraries(sama_asset_tool PRIVATE engine_asset_tool)
+    if(TARGET engine_astcenc_bridge)
+        # Link order matters: bridge objects reference symbols in
+        # engine_asset_tool (the stub), so the static lib must come last.
+        target_link_libraries(sama_asset_tool PRIVATE
+            engine_astcenc_bridge engine_asset_tool astcenc-native-static)
+    else()
+        target_link_libraries(sama_asset_tool PRIVATE engine_asset_tool)
+    endif()
 endif()
 
 # --- APK build convenience target (desktop only) ---
