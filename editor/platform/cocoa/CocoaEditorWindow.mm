@@ -379,6 +379,15 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 33:
             s_menuActionCallback("reset_environment");
             break;
+        case 40:
+            s_menuActionCallback("build_android_low");
+            break;
+        case 41:
+            s_menuActionCallback("build_android_mid");
+            break;
+        case 42:
+            s_menuActionCallback("build_android_high");
+            break;
         default:
             break;
     }
@@ -627,6 +636,15 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             addItem(viewMenu, @"Reset Skybox to Default", @"", 33);
             viewMenuItem.submenu = viewMenu;
             [menuBar addItem:viewMenuItem];
+
+            // Build menu
+            NSMenuItem* buildMenuItem = [[NSMenuItem alloc] init];
+            NSMenu* buildMenu = [[NSMenu alloc] initWithTitle:@"Build"];
+            addItem(buildMenu, @"Android (Low)", @"", 40);
+            addItem(buildMenu, @"Android (Mid)", @"", 41);
+            addItem(buildMenu, @"Android (High)", @"", 42);
+            buildMenuItem.submenu = buildMenu;
+            [menuBar addItem:buildMenuItem];
 
             [NSApp setMainMenu:menuBar];
         }

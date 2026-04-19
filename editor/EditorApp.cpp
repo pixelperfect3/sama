@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <thread>
 
 #include "editor/EditorLog.h"
 #include "editor/EditorState.h"
@@ -3170,6 +3171,49 @@ void EditorApp::run()
                     impl_->hierarchyDirty = true;
                     impl_->propertiesDirty = true;
                 }
+            }
+            else if (action == "build_android_low" || action == "build_android_mid" ||
+                     action == "build_android_high")
+            {
+                std::string tier = "mid";
+                if (action == "build_android_low")
+                    tier = "low";
+                else if (action == "build_android_high")
+                    tier = "high";
+
+                EditorLog::instance().info(("Building Android APK (" + tier + " tier)...").c_str());
+
+                std::thread buildThread(
+                    [tier]()
+                    {
+                        std::string cmd = "./android/build_apk.sh --tier " + tier + " 2>&1";
+                        FILE* pipe = popen(cmd.c_str(), "r");
+                        if (!pipe)
+                        {
+                            EditorLog::instance().error("Failed to start Android build");
+                            return;
+                        }
+                        char buffer[256];
+                        while (fgets(buffer, sizeof(buffer), pipe))
+                        {
+                            std::string line(buffer);
+                            if (!line.empty() && line.back() == '\n')
+                                line.pop_back();
+                            EditorLog::instance().info(line.c_str());
+                        }
+                        int result = pclose(pipe);
+                        if (result == 0)
+                        {
+                            EditorLog::instance().info("Android APK build complete!");
+                        }
+                        else
+                        {
+                            EditorLog::instance().error(
+                                ("Android APK build failed (exit " + std::to_string(result) + ")")
+                                    .c_str());
+                        }
+                    });
+                buildThread.detach();
             }
             impl_->pendingMenuAction.clear();
         }
