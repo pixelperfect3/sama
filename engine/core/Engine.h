@@ -12,13 +12,26 @@
 #include "engine/rendering/Renderer.h"
 #include "engine/rendering/ShadowRenderer.h"
 
+#ifndef __ANDROID__
 struct GLFWwindow;
+#else
+struct android_app;
+#endif
 
 namespace engine::input
 {
 class InputSystem;
 class IInputBackend;
 }  // namespace engine::input
+
+#ifdef __ANDROID__
+namespace engine::platform
+{
+class AndroidWindow;
+class AndroidGyro;
+class AndroidFileSystem;
+}  // namespace engine::platform
+#endif
 
 namespace engine::core
 {
@@ -44,6 +57,10 @@ struct EngineDesc
 //
 // The Engine does NOT own game logic, physics, audio, animation systems, or
 // the ECS registry -- those are managed by the application.
+//
+// On Android, the Engine uses ANativeWindow instead of GLFW and skips ImGui.
+// The public API (resources, inputState, shaders, fbWidth/fbHeight, etc.)
+// is identical on both platforms, so IGame implementations work unchanged.
 // ---------------------------------------------------------------------------
 
 class Engine
@@ -58,9 +75,15 @@ public:
     Engine(Engine&&) = delete;
     Engine& operator=(Engine&&) = delete;
 
-    // Initialize all subsystems.  Must be called before anything else.
+#ifndef __ANDROID__
+    // Initialize all subsystems (desktop).  Must be called before anything else.
     // Returns false on failure (window or renderer creation failed).
     bool init(const EngineDesc& desc);
+#else
+    // Initialize all subsystems (Android).  Must be called after the native
+    // window is ready.  Returns false on failure.
+    bool initAndroid(struct android_app* app, const EngineDesc& desc);
+#endif
 
     // Shutdown all subsystems in correct order.
     void shutdown();
@@ -68,20 +91,22 @@ public:
     // Frame lifecycle -- call in order each frame.
     //
     // beginFrame: polls window events, handles resize, computes dt, updates
-    //             input state, feeds ImGui cursor/button/scroll/keyboard state,
-    //             begins ImGui frame.  Returns false if the window should close.
+    //             input state.  On desktop also feeds ImGui state and begins
+    //             the ImGui frame.  Returns false if the app should close.
     bool beginFrame(float& outDt);
 
-    // endFrame: calls imguiEndFrame, resets the frame arena, calls
-    //           renderer.endFrame (submits bgfx frame).
+    // endFrame: on desktop calls imguiEndFrame; on all platforms resets the
+    //           frame arena and calls renderer.endFrame (submits bgfx frame).
     void endFrame();
 
     // ----- Subsystem accessors -----
 
+#ifndef __ANDROID__
     [[nodiscard]] platform::IWindow& window()
     {
         return *window_;
     }
+#endif
     [[nodiscard]] rendering::Renderer& renderer()
     {
         return renderer_;
@@ -145,6 +170,7 @@ public:
         return fbH_;
     }
 
+#ifndef __ANDROID__
     // ----- GLFW handle (needed for scroll callbacks, cursor capture, etc.) -----
 
     [[nodiscard]] GLFWwindow* glfwHandle() const
@@ -167,13 +193,33 @@ public:
     {
         return imguiScrollF_;
     }
+#else
+    // Content scale factor from Android display density.
+    [[nodiscard]] float contentScaleX() const
+    {
+        return contentScaleX_;
+    }
+    [[nodiscard]] float contentScaleY() const
+    {
+        return contentScaleY_;
+    }
+#endif
 
 private:
     bool initialized_ = false;
 
-    // Window
+#ifndef __ANDROID__
+    // Window (desktop)
     std::unique_ptr<platform::IWindow> window_;
     GLFWwindow* glfwHandle_ = nullptr;
+#else
+    // Android app handle and platform objects
+    struct android_app* androidApp_ = nullptr;
+    std::unique_ptr<platform::AndroidWindow> androidWindow_;
+    std::unique_ptr<platform::AndroidGyro> androidGyro_;
+    std::unique_ptr<platform::AndroidFileSystem> androidFileSystem_;
+    bool focused_ = false;
+#endif
 
     // Renderer
     rendering::Renderer renderer_;
@@ -203,13 +249,21 @@ private:
     float contentScaleX_ = 1.f;
     float contentScaleY_ = 1.f;
 
+#ifndef __ANDROID__
     // ImGui scroll accumulator
     float imguiScrollF_ = 0.f;
+#endif
 
     // Frame timing
     double prevTime_ = 0.0;
     uint16_t fbW_ = 0;
     uint16_t fbH_ = 0;
+
+#ifdef __ANDROID__
+    // Android command/input callbacks (static, forwarded to Engine via userData)
+    static void handleAndroidCmd(struct android_app* app, int32_t cmd);
+    static int32_t handleAndroidInput(struct android_app* app, struct AInputEvent* event);
+#endif
 };
 
 }  // namespace engine::core

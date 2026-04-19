@@ -1084,11 +1084,18 @@ endif()  # SAMA_BUILD_TESTS
 # Centralised Engine class that owns window, renderer, default textures, shaders,
 # ImGui, input, shadow renderer, and frame arena.  Desktop only — depends on
 # GLFW for windowing and input.
+add_library(engine_core STATIC engine/core/Engine.cpp)
+target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
 if(NOT SAMA_ANDROID)
-    add_library(engine_core STATIC engine/core/Engine.cpp)
-    target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
     target_link_libraries(engine_core PUBLIC
         engine_input_glfw
+        engine_memory
+        engine_debug
+        engine_scene
+    )
+else()
+    target_link_libraries(engine_core PUBLIC
+        engine_input_android
         engine_memory
         engine_debug
         engine_scene
@@ -1097,15 +1104,13 @@ endif()
 
 # --- engine_game static library ---
 # Game layer: IGame interface, GameRunner (frame loop with fixed timestep).
-# Desktop only — depends on engine_core (GLFW).
-if(NOT SAMA_ANDROID)
-    add_library(engine_game STATIC
-        engine/game/GameRunner.cpp
-        engine/game/ProjectConfig.cpp
-    )
-    target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
-    target_link_libraries(engine_game PUBLIC engine_core)
-endif()
+# Works on both desktop (GLFW) and Android (ANativeWindow).
+add_library(engine_game STATIC
+    engine/game/GameRunner.cpp
+    engine/game/ProjectConfig.cpp
+)
+target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
+target_link_libraries(engine_game PUBLIC engine_core)
 
 # --- engine_ui static library ---
 # Retained-mode UI system: UiNode tree, UiCanvas, UiDrawList, widget types.
@@ -1229,18 +1234,23 @@ if(SAMA_ANDROID)
     target_link_libraries(engine_android PUBLIC
         native_app_glue
         engine_rendering
+        engine_game
+        engine_core
         engine_memory
         android
         log
     )
 
     # sama_android — shared library loaded by NativeActivity.
+    # Games link against this and provide samaCreateGame().
     add_library(sama_android SHARED
         $<TARGET_OBJECTS:engine_android>
     )
     target_include_directories(sama_android PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(sama_android PRIVATE
         engine_android
+        engine_game
+        engine_core
         engine_scene
         engine_ecs
         engine_io

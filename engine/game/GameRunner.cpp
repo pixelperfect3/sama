@@ -15,12 +15,12 @@ GameRunner::GameRunner(IGame& game) : game_(game) {}
 
 GameRunner::~GameRunner() = default;
 
-int GameRunner::run(const core::EngineDesc& desc)
-{
-    core::Engine engine;
-    if (!engine.init(desc))
-        return 1;
+// ---------------------------------------------------------------------------
+// Shared frame loop — identical on desktop and Android.
+// ---------------------------------------------------------------------------
 
+int GameRunner::runLoop(core::Engine& engine)
+{
     ecs::Registry registry;
     game_.onInit(engine, registry);
 
@@ -65,6 +65,21 @@ int GameRunner::run(const core::EngineDesc& desc)
     return 0;
 }
 
+// ===========================================================================
+// Desktop implementation
+// ===========================================================================
+
+#ifndef __ANDROID__
+
+int GameRunner::run(const core::EngineDesc& desc)
+{
+    core::Engine engine;
+    if (!engine.init(desc))
+        return 1;
+
+    return runLoop(engine);
+}
+
 int GameRunner::run(const char* configPath)
 {
     ProjectConfig config;
@@ -78,5 +93,35 @@ int GameRunner::run(const char* configPath)
 
     return run(config.toEngineDesc());
 }
+
+#else  // __ANDROID__
+
+// ===========================================================================
+// Android implementation
+// ===========================================================================
+
+int GameRunner::runAndroid(struct android_app* app, const core::EngineDesc& desc)
+{
+    core::Engine engine;
+    if (!engine.initAndroid(app, desc))
+        return 1;
+
+    return runLoop(engine);
+}
+
+int GameRunner::runAndroid(struct android_app* app, const char* configPath)
+{
+    ProjectConfig config;
+    if (configPath)
+    {
+        config.loadFromFile(configPath);
+    }
+
+    fixedTimestep_ = config.physics.fixedTimestep;
+
+    return runAndroid(app, config.toEngineDesc());
+}
+
+#endif  // __ANDROID__
 
 }  // namespace engine::game
