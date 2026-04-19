@@ -1445,6 +1445,29 @@ Source: `engine/assets/TierAssetResolver.h/.cpp`
 
 ---
 
+### Android game entry point (`samaCreateGame`)
+
+On Android, games provide a factory function instead of `main()`:
+
+```cpp
+#include "engine/game/IGame.h"
+#include "MyGame.h"
+
+// Extern linkage -- the engine's AndroidApp.cpp calls this.
+engine::game::IGame* samaCreateGame()
+{
+    return new MyGame();  // engine takes ownership, deletes on exit
+}
+```
+
+The engine's `AndroidApp.cpp` bootstraps everything: creates a `GameRunner`,
+calls `runAndroid(app)`, and deletes the game instance on exit. Your `IGame`
+implementation is the same code as desktop -- no `#ifdef` needed.
+
+Source: `engine/platform/android/AndroidApp.cpp`, `engine/game/GameRunner.h`
+
+---
+
 ### Animation Editor (Graph View)
 
 The editor's animation panel includes a visual state machine node graph
@@ -1581,7 +1604,7 @@ For a richer HUD with widgets (panels, buttons, progress bars, sliders)
 see the "UI / 2D Text" section above and `apps/ui_test/UiTestApp.cpp`
 for a worked example.
 
-### IGame pattern (recommended for new games)
+### IGame pattern (recommended for new games -- works on desktop and Android)
 
 ```cpp
 #include "engine/game/IGame.h"
@@ -1616,6 +1639,7 @@ public:
     }
 };
 
+// Desktop entry point:
 int main()
 {
     MyGame game;
@@ -1626,6 +1650,40 @@ int main()
         .windowTitle = "My Game"
     });
 }
+```
+
+**Android entry point** (in a separate `_android.cpp` file):
+
+```cpp
+#include "engine/game/IGame.h"
+#include "MyGame.h"
+
+// The engine calls this to get your game instance on Android.
+// AndroidApp.cpp handles the GameRunner lifecycle.
+engine::game::IGame* samaCreateGame()
+{
+    return new MyGame();
+}
+```
+
+The `IGame` class is 100% platform-agnostic -- the same implementation runs
+on both desktop and Android. Only the entry point differs. See
+[docs/ANDROID_SUPPORT.md](ANDROID_SUPPORT.md) for the full cross-platform
+pattern.
+
+### GameRunner API
+
+```cpp
+// Desktop
+GameRunner runner(game);
+runner.setFixedRate(60);                      // optional: default 60Hz
+int exitCode = runner.run("project.json");    // init + loop + shutdown
+int exitCode = runner.run(EngineDesc{...});   // or pass EngineDesc directly
+
+// Android (called by AndroidApp.cpp -- you rarely call this directly)
+int exitCode = runner.runAndroid(app, "project.json");
+int exitCode = runner.runAndroid(app, EngineDesc{...});
+```
 ```
 
 ---
@@ -1915,6 +1973,26 @@ reg.emplace<VisibleTag>(entity);
 `eng.fbWidth()` / `eng.fbHeight()` return physical framebuffer pixels (e.g., 2560x1440
 on a Retina display with 1280x720 logical size). Mouse coordinates from GLFW are in
 logical coordinates. Use `eng.contentScaleX()` / `eng.contentScaleY()` to convert.
+
+On Android, content scale is derived from display density (160 dpi = 1.0x baseline).
+The same `eng.contentScaleX()` / `eng.contentScaleY()` API works on both platforms.
+
+### Using `eng.window()` in cross-platform code
+
+**Symptom:** Compile error on Android -- `window()` is not available.
+
+`Engine::window()` is desktop-only (guarded by `#ifndef __ANDROID__`). If your game
+needs the window for cursor capture or scroll callbacks, guard those calls:
+
+```cpp
+#ifndef __ANDROID__
+    auto& win = engine.window();
+    // desktop-only window operations
+#endif
+```
+
+Most games do not need `window()` -- use `eng.inputState()` instead, which works on
+both platforms.
 
 ### Collider half-extents vs entity scale
 

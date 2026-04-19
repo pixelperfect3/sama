@@ -298,6 +298,76 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
+## Cross-Platform Game Runner (The Missing Piece)
+
+With the completion of the Android game runner, **IGame implementations now work identically on desktop and Android with zero platform-specific code.** This was the key integration that ties all the Android phases together -- previously the platform layer, input, and asset pipeline existed but there was no way to actually run a game on Android using the same code as desktop.
+
+### What changed
+
+1. **`Engine` works on both platforms.** The public API (`resources()`, `inputState()`, `beginFrame()`/`endFrame()`, shader programs, framebuffer dimensions) is identical. Platform differences are hidden behind `#ifdef __ANDROID__` in the implementation:
+   - Desktop: GLFW window, ImGui, mouse/keyboard input
+   - Android: `ANativeWindow`, touch/gyro input, no ImGui
+
+2. **`GameRunner` has desktop and Android entry points.** `run()` for desktop, `runAndroid()` for Android. Both call the same internal `runLoop()` which implements the fixed-timestep frame loop (accumulator-based, 60Hz default, configurable). The only difference is how `Engine` is initialized.
+
+3. **`samaCreateGame()` factory function.** On Android, there is no `main()`. Instead, games define an `extern` factory function:
+   ```cpp
+   // In your game's .cpp file:
+   engine::game::IGame* samaCreateGame()
+   {
+       return new MyGame();
+   }
+   ```
+   The engine's `AndroidApp.cpp` calls this to get the game instance, wraps it in a `GameRunner`, and calls `runAndroid()`. This uses extern linkage -- the game's `.cpp` is compiled into the same shared library as the engine, so the linker resolves the symbol.
+
+4. **`engine_core` and `engine_game` CMake targets build on both platforms.** On desktop they use GLFW; on Android they use the Android platform layer. The game code links against the same targets either way.
+
+### Cross-platform game pattern
+
+Write your game once:
+
+```cpp
+// MyGame.h
+#include "engine/game/IGame.h"
+
+class MyGame : public engine::game::IGame
+{
+public:
+    void onInit(engine::core::Engine& engine, engine::ecs::Registry& registry) override;
+    void onUpdate(engine::core::Engine& engine, engine::ecs::Registry& registry, float dt) override;
+    void onFixedUpdate(engine::core::Engine& engine, engine::ecs::Registry& registry, float fixedDt) override;
+    void onShutdown(engine::core::Engine& engine, engine::ecs::Registry& registry) override;
+};
+```
+
+Desktop entry point (`main.mm`):
+```cpp
+#include "engine/game/GameRunner.h"
+#include "MyGame.h"
+
+int main()
+{
+    MyGame game;
+    engine::game::GameRunner runner(game);
+    return runner.run("project.json");
+}
+```
+
+Android entry point (`MyGame_android.cpp`):
+```cpp
+#include "engine/game/IGame.h"
+#include "MyGame.h"
+
+engine::game::IGame* samaCreateGame()
+{
+    return new MyGame();
+}
+```
+
+The `MyGame` class is identical in both cases -- 100% shared code.
+
+---
+
 ## Key Design Decisions
 
 - **Vulkan only, no GLES fallback.** Google has required Vulkan 1.1 for all new devices since Android 10 (2019) and Vulkan 1.3 since Android 14 (2023). As of 2026, Vulkan coverage is ~95%+ across active devices: 100% high-end (2022+), ~98% mid-range (2020+), ~85-90% low-end (2019+). The remaining ~5% are pre-2019 budget devices — a shrinking tail not worth the complexity of maintaining a GLES backend. If GLES fallback is ever needed, bgfx makes it trivial (change `RendererType::Vulkan` to `RendererType::OpenGLES`), but we don't plan for it.
@@ -311,3 +381,9 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 - **Tier system over automatic quality scaling.** Auto-detecting the right quality level at runtime is unreliable (GPU model strings are inconsistent, available memory varies with background apps). Explicit tiers let developers test each configuration and guarantee performance. Runtime detection can be added later as a hint for the default tier selection.
 
 - **No hot-reload on Android.** Desktop development uses the editor for rapid iteration. Android builds are for testing and release. Hot-reload would require a TCP bridge and asset streaming protocol — high complexity, low value when the editor already provides instant feedback.
+
+- **Single Engine class with `#ifdef` vs EngineAndroid subclass.** We chose `#ifdef __ANDROID__` inside one `Engine` class rather than an inheritance hierarchy (`EngineDesktop` / `EngineAndroid`). The public API is identical on both platforms -- only the init path, window management, and input backend differ. A subclass design would force game code to use `Engine&` references everywhere (which they already do), but would also fragment the implementation across two files with duplicated frame logic. The `#ifdef` approach keeps all frame lifecycle code in one place, and the compile-time branching means zero runtime cost.
+
+- **`samaCreateGame()` extern linkage vs registration.** The Android entry point uses `extern engine::game::IGame* samaCreateGame()` -- a function the game defines and the engine calls. The alternative was a registration pattern (e.g., `REGISTER_GAME(MyGame)` macro expanding to a static initializer). We chose extern linkage because: (1) it is explicit and easy to understand, (2) there is exactly one game per APK so a registry is unnecessary, (3) static initialization order issues are avoided entirely, and (4) the pattern is familiar from `main()` itself.
+
+- **Shared `runLoop()` factored out.** `GameRunner` has platform-specific entry points (`run()` and `runAndroid()`) but the actual frame loop -- fixed-timestep accumulator, `IGame` callback dispatch, `beginFrame`/`endFrame` -- lives in a single `runLoop(Engine&)` method. This guarantees that desktop and Android have identical frame timing behavior and that bug fixes to the loop apply to both platforms.

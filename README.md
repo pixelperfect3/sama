@@ -13,7 +13,7 @@ A modern C++20 3D game engine built with an ECS architecture, PBR rendering, and
 - **Custom Memory Allocators** -- `FrameArena` (per-frame bump allocator via `std::pmr::monotonic_buffer_resource`), `InlinedVector` (small-buffer optimized vector), and `PoolAllocator` (fixed-size object pool). Zero per-frame heap allocations in the hot path.
 - **JSON Serialization** -- rapidjson wrapper (`JsonDocument`, `JsonValue`, `JsonWriter`) with pimpl isolation. Scene save/load, render settings, and input binding persistence.
 - **Asset Pipeline** -- glTF/GLB loading via cgltf with multi-primitive mesh merging, tangent generation, skeleton/animation extraction, and async background decoding through `AssetManager`.
-- **Engine Core** -- Single-init `Engine` class managing renderer, physics, audio, asset manager, and frame arena. Shared `OrbitCamera` with mouse/keyboard controls.
+- **Engine Core** -- Single-init `Engine` class managing renderer, physics, audio, asset manager, and frame arena. Works on both desktop (GLFW) and Android (ANativeWindow) with identical public API. `GameRunner` provides a fixed-timestep frame loop on both platforms. Shared `OrbitCamera` with mouse/keyboard controls.
 
 ## Demos
 
@@ -213,6 +213,8 @@ All individual libraries are listed in `CMakeLists.txt` — look for `add_librar
 
 Sama supports cross-compiling for Android via the NDK. The engine uses Vulkan on Android (bgfx handles the backend) with a pure C++ NativeActivity entry point -- no Java or Kotlin required.
 
+**Games run on Android with zero platform-specific code.** The same `IGame` implementation that runs on desktop works on Android -- the `Engine`, `GameRunner`, and all ECS systems operate identically on both platforms. This is the recommended workflow: develop and iterate on desktop, then build an APK for Android testing and release.
+
 For the full roadmap, design decisions, and phase-by-phase status, see [docs/ANDROID_SUPPORT.md](docs/ANDROID_SUPPORT.md).
 
 ### Prerequisites
@@ -333,6 +335,65 @@ Once the native library builds successfully, package it into a signed APK:
 
 A debug keystore is created automatically at `$HOME/.android/debug.keystore` on first build.
 
+### Writing a Cross-Platform Game
+
+Write your game as an `IGame` implementation -- no `#ifdef` needed:
+
+```cpp
+// MyGame.h
+#include "engine/game/IGame.h"
+
+class MyGame : public engine::game::IGame
+{
+public:
+    void onInit(engine::core::Engine& engine, engine::ecs::Registry& registry) override
+    {
+        // Create entities, load assets, set up game state
+    }
+
+    void onUpdate(engine::core::Engine& engine, engine::ecs::Registry& registry, float dt) override
+    {
+        // Input, camera, game logic (runs every frame)
+    }
+
+    void onFixedUpdate(engine::core::Engine& engine, engine::ecs::Registry& registry, float fixedDt) override
+    {
+        // Physics-rate gameplay (60Hz fixed timestep)
+    }
+
+    void onShutdown(engine::core::Engine& engine, engine::ecs::Registry& registry) override
+    {
+        // Cleanup
+    }
+};
+```
+
+Desktop entry point (`main.mm`):
+```cpp
+#include "engine/game/GameRunner.h"
+#include "MyGame.h"
+
+int main()
+{
+    MyGame game;
+    engine::game::GameRunner runner(game);
+    return runner.run("project.json");
+}
+```
+
+Android entry point (`MyGame_android.cpp`):
+```cpp
+#include "engine/game/IGame.h"
+#include "MyGame.h"
+
+engine::game::IGame* samaCreateGame()
+{
+    return new MyGame();
+}
+```
+
+The engine handles all platform differences internally. `Engine::beginFrame()`/`endFrame()`, `resources()`, `inputState()`, shader programs, and framebuffer dimensions all have the same API on both platforms.
+
 ### Current Status
 
 **Implemented:**
@@ -345,6 +406,7 @@ A debug keystore is created automatically at `$HOME/.android/debug.keystore` on 
 - Phase F (APK Packaging) -- `build_apk.sh` with aapt2 + zipalign + apksigner, debug keystore, adb install
 - Phase G (Editor Integration) -- Build > Android menu in the editor (Phase G agent)
 - Phase H (AAB for Play Store) -- `build_aab.sh` with `bundletool`, multi-ABI support
+- **Cross-Platform Game Runner** -- `Engine`, `GameRunner`, and `IGame` work on both desktop and Android with identical APIs. `samaCreateGame()` factory pattern for Android entry point. `engine_core` and `engine_game` CMake targets build on both platforms.
 
 ### Building AAB for Play Store
 

@@ -15,6 +15,8 @@ Skeletal animation adds the ability to deform meshes at runtime using a bone hie
 
 The architecture follows the engine's existing patterns: sparse-set ECS components for animation state, a dedicated `AnimationSystem` that runs each frame (after `TransformSystem` so that `WorldTransformComponent` is up to date), CPU-side pose evaluation with GPU-side vertex skinning via `u_model[]` (bgfx's built-in bone matrix array), and glTF 2.0 as the sole import path using the already-integrated cgltf parser.
 
+**Cross-platform note:** The animation system has no platform dependencies. `AnimationSystem`, `Skeleton`, `AnimationClip`, and all pose evaluation code are pure C++ with no GLFW, Android, or OS-specific calls. GPU skinning goes through bgfx, which abstracts the graphics backend. Animation works identically on desktop and Android via the cross-platform `IGame` + `GameRunner` pattern.
+
 ---
 
 ## 2. Data Structures

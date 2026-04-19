@@ -1423,3 +1423,29 @@ Items reviewed during the 2026-04-12 engine audit but deferred due to risk or co
 - [ ] **AssetManager string copies in load()**: `pathToSlot_.find(std::string(path))` creates a temporary string on every lookup. Fixing requires enabling transparent hash/comparison on the `ankerl::unordered_dense::map`, which is a nontrivial API change — needs careful testing of the heterogeneous lookup support.
 - [ ] **AnimationSystem boneBuffer_ lifetime documentation**: The raw `boneBuffer_` pointer appears to dangle after the local `pmr::vector` destructs, but is safe because `FrameArena` doesn't reclaim memory until `reset()` at frame end. This is subtle and should have a comment explaining the lifetime contract.
 - [ ] **Transparent hash for asset path lookups**: Several maps in AssetManager and RenderResources use `std::string` keys but are often queried with `std::string_view`. Enabling heterogeneous lookup across these maps would eliminate temporary string allocations on hot paths.
+
+---
+
+## Cross-Platform Engine & Android Game Runner
+
+### Overview
+
+The `Engine` class and `GameRunner` now work on both desktop and Android. `IGame` implementations are 100% platform-agnostic -- the same class runs on both platforms with zero `#ifdef` in game code. This was the key missing piece that tied the Android platform layer (Phases A-C) into a usable game development workflow.
+
+### Design Decisions
+
+**Single Engine class with `#ifdef __ANDROID__` vs EngineAndroid subclass**
+
+Considered: (1) inheritance hierarchy with `EngineDesktop` and `EngineAndroid` subclasses, (2) strategy pattern with injected platform backends, (3) `#ifdef` sections within one class.
+
+Chose option 3. The public API is identical on both platforms -- `beginFrame()`, `endFrame()`, `resources()`, `inputState()`, shader accessors, framebuffer dimensions all have the same signatures and semantics. Only the init path (GLFW vs ANativeWindow), window management, and input backend differ, and these are all private implementation details. An inheritance hierarchy would split the frame lifecycle logic across two files with inevitable duplication. A strategy pattern would add runtime indirection for decisions that are fully determined at compile time. The `#ifdef` approach keeps all code in one place, compiles out the unused platform entirely, and costs zero at runtime.
+
+**`samaCreateGame()` extern linkage vs registration macro**
+
+Considered: (1) `extern` factory function, (2) `REGISTER_GAME(MyGame)` macro with static initializer, (3) explicit `setGame()` call in `android_main`.
+
+Chose option 1. There is exactly one game per APK, so a registry is overkill. Static initialization ordering (option 2) is a well-known source of subtle bugs in C++, especially across translation units. An explicit call in `android_main` (option 3) would require games to provide their own `android_main`, duplicating the bootstrap boilerplate. The `extern` function is explicit, simple, and familiar -- it is essentially the `main()` equivalent for Android.
+
+**Shared `runLoop()` in GameRunner**
+
+The frame loop (fixed-timestep accumulator, IGame callback dispatch, beginFrame/endFrame) is factored into a private `runLoop(Engine&)` method. Both `run()` (desktop) and `runAndroid()` (Android) call it after platform-specific Engine initialization. This guarantees identical frame timing on both platforms and means bug fixes apply everywhere. The alternative -- duplicating the loop in each entry point -- would inevitably drift as features are added.
