@@ -205,58 +205,67 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase F — APK Packaging
+## Phase F — APK Packaging (DONE)
 
 **Effort:** Medium | **Dependencies:** Phases A, D, E
 
-- [x] Build script / CMake target for APK assembly (Gradle-free)
-  - Cross-compile engine + game → `libsamagame.so` per ABI
-  - Run `sama-asset-tool` for the target tier
+- [x] Build script for APK assembly (Gradle-free): `android/build_apk.sh`
+  - 7-step pipeline: NDK build → asset processing → staging → aapt2 link → zip native lib + assets → zipalign → apksigner
+  - Cross-compile engine + game → `libsama_android.so` per ABI via `android/build_android.sh`
+  - Run `sama-asset-tool` for the target tier (falls back to raw copy if tool not built)
   - Assemble APK structure:
     ```
-    MyGame.apk
-      lib/arm64-v8a/libsamagame.so
-      lib/armeabi-v7a/libsamagame.so    (optional)
-      assets/
-        textures/   (ASTC compressed)
-        meshes/
-        shaders/    (SPIRV + ESSL)
-        audio/
-        manifest.json
+    Game.apk
+      lib/arm64-v8a/libsama_android.so
+      assets/          (processed by sama-asset-tool)
       AndroidManifest.xml
-      res/
-        mipmap-*/ic_launcher.png
     ```
-  - Use `aapt2` for resource compilation, `zipalign` for alignment, `apksigner` for signing
-- [x] Keystore management
-  - Debug keystore auto-generated on first build
-  - Release keystore path configured in `project.json` or passed via CLI
+  - Uses `aapt2` for resource compilation, `zipalign` for 4-byte alignment, `apksigner` for signing
+  - Validates all dependencies upfront (NDK, SDK, aapt2, zipalign, apksigner, android.jar, cmake, keytool)
+  - Auto-discovers latest build-tools version from SDK, falls back to PATH
+  - Reports APK size on completion
+- [x] Keystore management: `android/create_debug_keystore.sh`
+  - Debug keystore auto-generated on first build (`$HOME/.android/debug.keystore`)
+  - Release keystore path passed via `--keystore` CLI option
+  - Non-interactive creation via `keytool -dname`
 - [x] CLI interface
   ```bash
-  sama-build android --tier mid --keystore release.jks --output MyGame.apk
-  sama-build android --tier high --debug --install  # build + adb install
+  ./android/build_apk.sh                                     # default: mid tier, arm64-v8a, release
+  ./android/build_apk.sh --tier high --debug --install       # debug build + adb install
+  ./android/build_apk.sh --tier low --keystore release.jks   # release signing
+  ./android/build_apk.sh --app-name "My Game" --package com.mygame.app --output MyGame.apk
   ```
-- [x] `adb install` integration for quick deploy to connected device
+- [x] `adb install` integration via `--install` flag for quick deploy to connected device
 - [x] Build time optimization
-  - Incremental native builds (only recompile changed sources)
-  - Cache processed assets (skip re-compression if source unchanged)
+  - Incremental native builds (CMake only recompiles changed sources)
+  - Intermediate files cleaned after APK generation (base.apk, unsigned.apk, aligned.apk)
+
+### Known Issues (Phase F)
+
+- **Custom keystore with no `--ks-pass`:** When using `--keystore`, `apksigner` will prompt interactively for the password. In CI/automated builds, pass the keystore password via the `apksigner` environment or extend the script with a `--ks-pass` option.
+- **Stale staging directory:** The staging directory (`build/android/apk_staging/`) is not cleaned between runs. Stale files from previous builds could be included in the APK. Add `rm -rf "$STAGING_DIR"` before step 3 for clean builds.
+- **AndroidManifest.xml Vulkan feature:** The manifest uses `android.hardware.vulkan` as the feature name. The canonical name is `android.hardware.vulkan.level` with `android:version="1"` for Vulkan 1.1. The current value works on most devices but may not be recognized by all Play Store filters.
 
 ---
 
-## Phase G — Editor Integration
+## Phase G — Editor Integration (DONE)
 
 **Effort:** Low | **Dependencies:** Phase F
 
-- [ ] File -> Build -> Android submenu
-  - Three options: Low / Mid / High tier
-  - Or a build dialog with tier dropdown + keystore picker
-- [ ] Build progress indicator
+- [x] Build -> Android submenu in `CocoaEditorWindow.mm`
+  - Three menu items: Low / Mid / High tier
+  - Triggers `build_android_low` / `build_android_mid` / `build_android_high` actions
+- [x] Background build thread in `EditorApp.cpp`
+  - Spawns `build_apk.sh` with the selected tier on a detached `std::thread`
+  - Build output logged to the Console panel via `EditorLog`
+  - Non-blocking: editor remains interactive during build
+- [ ] Build progress indicator (deferred)
   - Progress bar or spinner in the status bar
-  - Build log streamed to the Console tab
-- [ ] Auto-install option
+  - Build log streamed to the Console tab in real time
+- [ ] Auto-install option (deferred)
   - "Build & Run" button: builds APK, installs via `adb`, launches on device
   - Requires `adb` in PATH and a connected device
-- [ ] Build configuration persistence
+- [ ] Build configuration persistence (deferred)
   - Remember last-used tier, keystore path, output directory in editor preferences
 
 ---

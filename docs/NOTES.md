@@ -1372,19 +1372,47 @@ The tier system allows developers to define device-tier quality presets (e.g. lo
 
 ---
 
-## Android AAB Generation (Phase H)
+## APK Packaging (`android/build_apk.sh`)
 
-**Decision:** Build AABs from a base module zip via `bundletool`, not by converting from a finished APK.
+### Overview
 
-**Reasoning:** Converting APK-to-AAB with `bundletool` requires an intermediate APK that already has all resources compiled, then decompiling and re-packaging — fragile and wasteful. Instead, we construct the AAB module directory structure directly (manifest, lib, assets), zip it into a base module, and pass it to `bundletool build-bundle`. This approach:
+A 7-step Gradle-free APK build pipeline that cross-compiles the engine, processes assets, and produces a signed APK ready for device installation. Implemented in Phase F of the Android roadmap.
 
-1. Avoids the full APK pipeline (no `zipalign`, no `apksigner` for the intermediate)
-2. Uses `aapt2 link --proto-format` to produce the proto-format resources that `bundletool` expects (AABs use protobuf resources, not binary XML like APKs)
-3. Keeps the script self-contained — it calls `build_android.sh` for NDK compilation but does not depend on `build_apk.sh`
+### Key Decisions
 
-**Multi-ABI tradeoff:** Building both `arm64-v8a` and `armeabi-v7a` doubles compile time but is critical for Play Store coverage. The `--skip-armeabi` flag is provided for development iteration where only arm64 matters. Play Store generates per-device APKs from the multi-ABI AAB, so end users only download the ABI they need.
+- **Gradle-free, shell-based pipeline.** Direct use of `aapt2` + `zipalign` + `apksigner` keeps the build fast and avoids Gradle's 30+ second JVM startup. The tradeoff is manual APK assembly (manifest linking, zip insertion, alignment, signing), but games have minimal Android resources (just a manifest — no layouts, no drawables).
 
-**Signing:** AABs use `jarsigner` (JDK tool), not `apksigner` (Android SDK tool). This is a Google requirement — Play Store re-signs the per-device APKs with Google's key, so the AAB itself uses the standard JAR signing scheme.
+- **7-step sequential pipeline.** Each step depends on the previous: (1) NDK build → (2) asset processing → (3) staging directory assembly → (4) aapt2 link base APK → (5) zip in native lib + assets → (6) zipalign → (7) apksigner. Intermediate files are cleaned up after signing. This is simpler than a parallel approach and the total time is dominated by step 1 (NDK build), making parallelism moot.
+
+- **Debug keystore auto-creation.** On first build without `--keystore`, the script creates a debug keystore at `$HOME/.android/debug.keystore` via `keytool -dname` (non-interactive). This avoids blocking first-time users with keystore setup. The debug keystore uses the standard Android debug credentials (`android`/`androiddebugkey`) so `adb install` works without user configuration.
+
+- **Asset tool fallback to raw copy.** If `sama-asset-tool` is not built, assets are copied as-is with a warning. This allows APK testing before the asset pipeline is fully operational. The alternative (hard-fail) would block developers who only want to test the NDK build.
+
+- **Upfront dependency validation.** All required tools (NDK, SDK, aapt2, zipalign, apksigner, android.jar, cmake, keytool) are validated before any work begins. This avoids the frustration of a build failing halfway through after a 5-minute NDK compile because `zipalign` is missing.
+
+- **Build-tools auto-discovery.** The script finds the latest installed build-tools version via `ls -d | sort -V | tail -1`. This avoids hardcoding a build-tools version that the user may not have installed. Falls back to PATH-based lookup for each tool individually.
+
+### Status
+- [x] APK packaging implemented (`android/build_apk.sh`, `android/create_debug_keystore.sh` — committed)
+
+---
+
+## Android AAB Generation (`android/build_aab.sh`)
+
+### Overview
+
+AAB (Android App Bundle) generation for Play Store distribution. Builds a base module zip via `bundletool` with multi-ABI support. Implemented in Phase H of the Android roadmap.
+
+### Key Decisions
+
+- **Base module zip via `bundletool`, not APK-to-AAB conversion.** Converting APK-to-AAB with `bundletool` requires an intermediate APK that already has all resources compiled, then decompiling and re-packaging — fragile and wasteful. Instead, we construct the AAB module directory structure directly (manifest, lib, assets), zip it into a base module, and pass it to `bundletool build-bundle`. This approach avoids the full APK pipeline (no `zipalign`, no `apksigner` for the intermediate), uses `aapt2 link --proto-format` for protobuf resources that `bundletool` expects, and keeps the script self-contained.
+
+- **Multi-ABI by default.** Building both `arm64-v8a` and `armeabi-v7a` doubles compile time but is critical for Play Store coverage. The `--skip-armeabi` flag is provided for development iteration where only arm64 matters. Play Store generates per-device APKs from the multi-ABI AAB, so end users only download the ABI they need.
+
+- **`jarsigner` for AAB signing, not `apksigner`.** AABs use `jarsigner` (JDK tool), not `apksigner` (Android SDK tool). This is a Google requirement — Play Store re-signs the per-device APKs with Google's key, so the AAB itself uses the standard JAR signing scheme.
+
+### Status
+- [x] AAB generation implemented (`android/build_aab.sh` — committed)
 
 ---
 

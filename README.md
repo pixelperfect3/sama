@@ -283,15 +283,21 @@ build/sama-asset-tool --input assets/ --output out/ --target android --tier mid 
 
 ```
 android/
-    build_android.sh          Build script (ABI + build type args)
-    build_apk.sh              APK packaging (Gradle-free)
-    build_aab.sh              AAB generation for Play Store
-    create_debug_keystore.sh  Auto-creates debug signing key
+    build_android.sh          NDK build script (ABI + build type args)
+    build_apk.sh              APK packaging (Gradle-free, tier, signing, install)
+    build_aab.sh              AAB generation for Play Store (bundletool)
+    create_debug_keystore.sh  Auto-creates debug keystore for signing
     AndroidManifest.xml       NativeActivity manifest (no Java)
     CMakeLists.txt            Sets SAMA_ANDROID=ON, includes main build
 
 engine/platform/android/
     AndroidApp.h/.cpp         Entry point: engine::platform::runAndroidApp()
+    AndroidFileSystem.h/.cpp  AAssetManager-backed IFileSystem
+    AndroidWindow.h/.cpp      ANativeWindow wrapper for bgfx
+    AndroidInput.h/.cpp       Touch/keyboard input mapping
+    AndroidKeyMap.h/.cpp      AKEYCODE_* to engine::input::Key mapping
+    AndroidGyro.h/.cpp        ASensorManager gyro/accelerometer
+    VirtualJoystick.h/.cpp    On-screen virtual joystick for movement
 
 tools/asset_tool/
     main.cpp                  sama-asset-tool CLI entry point
@@ -300,21 +306,45 @@ tools/asset_tool/
     ShaderProcessor.h/.cpp    Shader discovery and processing
 ```
 
+### Building an APK
+
+Once the native library builds successfully, package it into a signed APK:
+
+```bash
+# Default: mid tier, arm64-v8a, release, debug-signed
+./android/build_apk.sh
+
+# Specify tier, debug build, and auto-install via adb
+./android/build_apk.sh --tier high --debug --install
+
+# Custom app name, package ID, and output path
+./android/build_apk.sh --app-name "My Game" --package com.mygame.app --output MyGame.apk
+
+# Release signing with a custom keystore
+./android/build_apk.sh --keystore path/to/release.jks --output MyGame.apk
+```
+
+**Additional prerequisites for APK builds:**
+
+- **Android SDK** -- set `ANDROID_SDK_ROOT` or `ANDROID_HOME`
+- **Build tools** -- `aapt2`, `zipalign`, `apksigner` (install via `sdkmanager --install 'build-tools;34.0.0'`)
+- **Platform** -- `android.jar` (install via `sdkmanager --install 'platforms;android-34'`)
+- **Java 17+** -- required by `apksigner` and `keytool`
+
+A debug keystore is created automatically at `$HOME/.android/debug.keystore` on first build.
+
 ### Current Status
 
 **Implemented:**
 
 - Phase A (NDK Bootstrap) -- CMake toolchain, build script, NativeActivity entry point, AndroidManifest, bgfx Vulkan initialization
-- Phase B (Platform Layer) -- `AndroidFileSystem`, `AndroidWindow`, Vulkan surface lifecycle
-- Phase C (Touch Input) -- Touch-to-mouse mapping, virtual joystick, keyboard support, gyroscope/accelerometer
+- Phase B (Platform Layer) -- `AndroidFileSystem`, `AndroidWindow`, Vulkan surface via bgfx
+- Phase C (Touch Input) -- touch-to-mouse mapping, multi-touch, virtual joystick, keyboard, gyroscope/accelerometer
 - Phase D (Asset Pipeline) -- `sama-asset-tool` CLI with texture/shader processing, tier configs, asset manifest generation, 17 tests
-- Phase E (Tier System) -- `TierConfig` in `ProjectConfig`, `tierToRenderSettings()`, `TierAssetResolver`, 14 tests
-- Phase F (APK Packaging) -- Gradle-free APK build via `build_apk.sh` (`aapt2` + `zipalign` + `apksigner`)
-- Phase H (AAB for Play Store) -- AAB generation via `build_aab.sh` with `bundletool`, multi-ABI support
-
-**Not yet implemented:**
-
-- Phase G -- Editor "Build for Android" integration
+- Phase E (Tier System) -- `TierConfig` in `ProjectConfig`, `TierAssetResolver`, `tierToRenderSettings()`, 14 tests
+- Phase F (APK Packaging) -- `build_apk.sh` with aapt2 + zipalign + apksigner, debug keystore, adb install
+- Phase G (Editor Integration) -- Build > Android menu in the editor (Phase G agent)
+- Phase H (AAB for Play Store) -- `build_aab.sh` with `bundletool`, multi-ABI support
 
 ### Building AAB for Play Store
 

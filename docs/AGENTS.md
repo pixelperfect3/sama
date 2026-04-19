@@ -1270,6 +1270,82 @@ Textures are copied to the output directory. Full ASTC compression requires the
 
 Source: `tools/asset_tool/` (AssetProcessor, TextureProcessor, ShaderProcessor).
 
+### APK Build (`android/build_apk.sh`)
+
+Build a signed Android APK from the command line (Gradle-free).
+
+```bash
+# Default: mid tier, arm64-v8a, release, debug-signed
+./android/build_apk.sh
+
+# High tier, debug build, auto-install to connected device
+./android/build_apk.sh --tier high --debug --install
+
+# Custom app name, package, and output
+./android/build_apk.sh --app-name "My Game" --package com.mygame.app --output MyGame.apk
+
+# Release signing
+./android/build_apk.sh --keystore path/to/release.jks
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tier <low\|mid\|high>` | `mid` | Asset quality tier |
+| `--abi <arm64-v8a\|...>` | `arm64-v8a` | Target ABI |
+| `--debug` | release | Debug build type |
+| `--keystore <path>` | debug keystore | Keystore for signing |
+| `--output <path>` | `build/android/Game.apk` | Output APK path |
+| `--install` | off | Install via adb after build |
+| `--app-name <name>` | `"Sama Game"` | Application display name |
+| `--package <id>` | `com.sama.game` | Android package identifier |
+
+**Prerequisites:** `ANDROID_NDK`, `ANDROID_SDK_ROOT` (or `ANDROID_HOME`), build-tools
+(aapt2, zipalign, apksigner), platform (android.jar), Java 17+.
+
+A debug keystore is auto-created at `$HOME/.android/debug.keystore` on first build.
+
+Source: `android/build_apk.sh`, `android/build_android.sh`, `android/create_debug_keystore.sh`.
+
+### AAB Build for Play Store (`android/build_aab.sh`)
+
+Build an Android App Bundle for Play Store distribution.
+
+```bash
+# Build AAB with both ABIs (arm64-v8a + armeabi-v7a)
+./android/build_aab.sh --tier high --keystore release.jks --package com.mygame.app --output MyGame.aab
+
+# arm64-v8a only (faster build, covers modern devices)
+./android/build_aab.sh --tier mid --skip-armeabi --output MyGame.aab
+
+# Unsigned AAB (sign later before Play Store upload)
+./android/build_aab.sh --tier mid
+
+# Test locally
+bundletool build-apks --bundle=MyGame.aab --output=Game.apks --local-testing
+bundletool install-apks --apks=Game.apks
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tier <low\|mid\|high>` | `mid` | Asset quality tier |
+| `--keystore <path>` | unsigned | Keystore for signing |
+| `--ks-pass <password>` | prompted | Keystore password |
+| `--ks-alias <alias>` | `sama` | Key alias in keystore |
+| `--key-pass <password>` | prompted | Key password |
+| `--output <path>` | `build/android/Game.aab` | Output AAB path |
+| `--app-name <name>` | `"Sama Game"` | Application display name |
+| `--package <id>` | `com.sama.game` | Android package identifier |
+| `--skip-armeabi` | off | Skip armeabi-v7a build (arm64 only) |
+
+**Prerequisites:** `bundletool` (`brew install bundletool`), `jarsigner` (JDK),
+`ANDROID_NDK`, `ANDROID_SDK_ROOT`, `aapt2`, `cmake`.
+
+Source: `android/build_aab.sh`.
+
 ### TierConfig & Tier System
 
 Configure device-tier quality presets in `ProjectConfig`. Each tier bundles asset
