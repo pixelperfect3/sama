@@ -284,6 +284,9 @@ build/sama-asset-tool --input assets/ --output out/ --target android --tier mid 
 ```
 android/
     build_android.sh          Build script (ABI + build type args)
+    build_apk.sh              APK packaging (Gradle-free)
+    build_aab.sh              AAB generation for Play Store
+    create_debug_keystore.sh  Auto-creates debug signing key
     AndroidManifest.xml       NativeActivity manifest (no Java)
     CMakeLists.txt            Sets SAMA_ANDROID=ON, includes main build
 
@@ -302,21 +305,46 @@ tools/asset_tool/
 **Implemented:**
 
 - Phase A (NDK Bootstrap) -- CMake toolchain, build script, NativeActivity entry point, AndroidManifest, bgfx Vulkan initialization
+- Phase B (Platform Layer) -- `AndroidFileSystem`, `AndroidWindow`, Vulkan surface lifecycle
+- Phase C (Touch Input) -- Touch-to-mouse mapping, virtual joystick, keyboard support, gyroscope/accelerometer
 - Phase D (Asset Pipeline) -- `sama-asset-tool` CLI with texture/shader processing, tier configs, asset manifest generation, 17 tests
+- Phase E (Tier System) -- `TierConfig` in `ProjectConfig`, `tierToRenderSettings()`, `TierAssetResolver`, 14 tests
+- Phase F (APK Packaging) -- Gradle-free APK build via `build_apk.sh` (`aapt2` + `zipalign` + `apksigner`)
+- Phase H (AAB for Play Store) -- AAB generation via `build_aab.sh` with `bundletool`, multi-ABI support
 
 **Not yet implemented:**
 
-- Phase B -- Android platform layer (`AndroidFileSystem`, `AndroidWindow`, lifecycle handling)
-- Phase C -- Touch input mapping, virtual joystick, multi-touch gestures
-- Phase E -- Tier system in `ProjectConfig` with runtime tier selection
-- Phase F -- APK packaging (`aapt2` + `zipalign` + `apksigner`)
 - Phase G -- Editor "Build for Android" integration
-- Phase H -- AAB generation for Play Store
+
+### Building AAB for Play Store
+
+```bash
+# Build AAB with both ABIs (arm64-v8a + armeabi-v7a)
+./android/build_aab.sh \
+    --tier high \
+    --keystore ~/keys/release.jks \
+    --package com.mystudio.mygame \
+    --output MyGame.aab
+
+# Build arm64-v8a only (smaller, covers most modern devices)
+./android/build_aab.sh \
+    --tier mid \
+    --skip-armeabi \
+    --output MyGame.aab
+
+# Build unsigned AAB (sign later before upload)
+./android/build_aab.sh --tier mid
+
+# Test the AAB locally
+bundletool build-apks --bundle=MyGame.aab --output=Game.apks --local-testing
+bundletool install-apks --apks=Game.apks
+```
+
+**Requirements:** `bundletool` (`brew install bundletool`), Android NDK/SDK, Java 17+.
 
 **Known limitations:**
 
 - ASTC texture encoding is stubbed -- textures are currently copied as-is with a TODO logged. Full ASTC compression requires the `astcenc` CLI tool.
-- No APK packaging yet (Phase F) -- the build produces a shared library but cannot create an installable APK.
 - Not yet verified on physical hardware or emulator.
 
 ## Architecture

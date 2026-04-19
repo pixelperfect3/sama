@@ -1372,6 +1372,22 @@ The tier system allows developers to define device-tier quality presets (e.g. lo
 
 ---
 
+## Android AAB Generation (Phase H)
+
+**Decision:** Build AABs from a base module zip via `bundletool`, not by converting from a finished APK.
+
+**Reasoning:** Converting APK-to-AAB with `bundletool` requires an intermediate APK that already has all resources compiled, then decompiling and re-packaging — fragile and wasteful. Instead, we construct the AAB module directory structure directly (manifest, lib, assets), zip it into a base module, and pass it to `bundletool build-bundle`. This approach:
+
+1. Avoids the full APK pipeline (no `zipalign`, no `apksigner` for the intermediate)
+2. Uses `aapt2 link --proto-format` to produce the proto-format resources that `bundletool` expects (AABs use protobuf resources, not binary XML like APKs)
+3. Keeps the script self-contained — it calls `build_android.sh` for NDK compilation but does not depend on `build_apk.sh`
+
+**Multi-ABI tradeoff:** Building both `arm64-v8a` and `armeabi-v7a` doubles compile time but is critical for Play Store coverage. The `--skip-armeabi` flag is provided for development iteration where only arm64 matters. Play Store generates per-device APKs from the multi-ABI AAB, so end users only download the ABI they need.
+
+**Signing:** AABs use `jarsigner` (JDK tool), not `apksigner` (Android SDK tool). This is a Google requirement — Play Store re-signs the per-device APKs with Google's key, so the AAB itself uses the standard JAR signing scheme.
+
+---
+
 ## TODO — Performance & Hygiene
 
 Items reviewed during the 2026-04-12 engine audit but deferred due to risk or complexity:

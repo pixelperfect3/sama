@@ -261,21 +261,30 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase H — AAB for Play Store
+## Phase H — AAB for Play Store (DONE)
 
 **Effort:** Low | **Dependencies:** Phase F
 
-- [ ] Generate Android App Bundle (`.aab`) instead of APK
-  - Uses `bundletool` to create the AAB from the same compiled resources
-  - Play Store handles per-device APK generation
-- [ ] Split APKs per ABI
-  - `arm64-v8a` and `armeabi-v7a` as separate config splits
-  - Reduces per-device download size
-- [ ] Asset packs for large games (>150MB base APK limit)
+- [x] Generate Android App Bundle (`.aab`) instead of APK
+  - `android/build_aab.sh` — standalone shell script, no Gradle
+  - Uses `bundletool` to create the AAB from a base module zip
+  - Reuses `build_android.sh` for NDK cross-compilation and `sama-asset-tool` for asset processing
+  - Play Store handles per-device APK generation from the AAB
+- [x] Multi-ABI support
+  - Builds both `arm64-v8a` and `armeabi-v7a` by default for maximum device coverage
+  - `--skip-armeabi` flag for arm64-only builds (smaller bundle, modern devices only)
+  - Each ABI placed in `base/lib/<abi>/` within the module structure
+- [x] AAB signing with `jarsigner`
+  - `--keystore`, `--ks-pass`, `--ks-alias`, `--key-pass` options
+  - Unsigned build supported for later signing before Play Store upload
+- [x] Dependency validation at startup
+  - Checks for `bundletool`, `jarsigner`, `cmake`, `aapt2`, Android NDK/SDK, `android.jar`
+  - Clear install instructions for each missing tool
+- [ ] Asset packs for large games (>150MB base APK limit) (deferred)
   - `install-time` asset pack for core assets
   - `fast-follow` pack for optional content (additional levels, HD textures)
   - Uses Play Asset Delivery API
-- [ ] Play Console metadata
+- [ ] Play Console metadata (deferred)
   - Generate `output-metadata.json` compatible with Play Console upload
 
 ---
