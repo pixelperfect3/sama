@@ -1259,7 +1259,27 @@ if(SAMA_ANDROID)
     set_target_properties(sama_android PROPERTIES
         LINK_FLAGS "-u ANativeActivity_onCreate"
     )
+    # On Android, link the test game into sama_android.
+    target_sources(sama_android PRIVATE apps/android_test/AndroidTestGame.cpp)
+
 endif()  # SAMA_ANDROID
+
+# --- android_test app (desktop, for verifying the test game compiles) ---
+if(NOT SAMA_ANDROID)
+    add_executable(android_test apps/android_test/AndroidTestGame.cpp)
+    target_include_directories(android_test PRIVATE ${SAMA_ROOT_DIR})
+    target_link_libraries(android_test PRIVATE
+        engine_core
+        engine_game
+        engine_rendering
+        engine_scene
+        engine_ecs
+        engine_memory
+        engine_io
+        engine_threading
+        engine_input_glfw
+    )
+endif()
 
 # --- bake_default_env tool (desktop only) ---
 # Generates the procedural sky cubemap + BRDF LUT and writes it to disk
