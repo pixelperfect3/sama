@@ -1,14 +1,37 @@
 #include "engine/rendering/ShaderLoader.h"
 
 #include <bgfx/bgfx.h>
+
+#ifdef __ANDROID__
+// On Android, shaders are loaded at runtime from the assets folder (not embedded).
+// For now, return invalid handles — the test app only clears the screen.
+// Full shader loading from assets will be implemented when games need PBR rendering.
+
+namespace engine::rendering
+{
+
+bgfx::ProgramHandle loadPbrProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadUnlitProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadSpriteProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadShadowProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadSkinnedPbrProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadSkinnedShadowProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadGizmoProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadMsdfProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadSkyboxProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadRoundedRectProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadPostProcessProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadSsaoProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadBlurProgram() { return BGFX_INVALID_HANDLE; }
+bgfx::ProgramHandle loadSlugProgram() { return BGFX_INVALID_HANDLE; }
+
+}  // namespace engine::rendering
+
+#else  // Desktop — embedded shaders from generated headers
+
 #include <bgfx/embedded_shader.h>
 
 // Generated shader bytecode headers (produced by shaderc via CMake custom commands).
-// Each header defines a static uint8_t array named <shader>_<backend>.
-// The BGFX_EMBEDDED_SHADER macro concatenates the base name with the backend suffix
-// (_mtl, _spv, _glsl, _essl, etc.) to populate the EmbeddedShader table automatically.
-// All platform-supported variants must be present — the macro is conditioned on
-// BGFX_PLATFORM_SUPPORTS_* flags which are true for multiple backends on macOS.
 #include "generated/shaders/fs_gizmo_essl.bin.h"
 #include "generated/shaders/fs_gizmo_glsl.bin.h"
 #include "generated/shaders/fs_gizmo_mtl.bin.h"
@@ -411,3 +434,5 @@ bgfx::ProgramHandle loadRoundedRectProgram()
 }
 
 }  // namespace engine::rendering
+
+#endif  // __ANDROID__

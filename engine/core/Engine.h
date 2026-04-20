@@ -16,6 +16,7 @@
 struct GLFWwindow;
 #else
 struct android_app;
+struct AInputEvent;
 #endif
 
 namespace engine::input
@@ -262,7 +263,7 @@ private:
 #ifdef __ANDROID__
     // Android command/input callbacks (static, forwarded to Engine via userData)
     static void handleAndroidCmd(struct android_app* app, int32_t cmd);
-    static int32_t handleAndroidInput(struct android_app* app, struct AInputEvent* event);
+    static int32_t handleAndroidInput(struct android_app* app, ::AInputEvent* event);
 #endif
 };
 

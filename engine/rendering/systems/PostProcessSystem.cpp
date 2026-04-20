@@ -1,5 +1,18 @@
 #include "engine/rendering/systems/PostProcessSystem.h"
 
+#ifdef __ANDROID__
+// Post-processing requires embedded shaders not yet available on Android.
+// Provide stub implementations so the engine compiles.
+namespace engine::rendering
+{
+bool PostProcessSystem::init(uint16_t, uint16_t) { return true; }
+void PostProcessSystem::shutdown() {}
+void PostProcessSystem::resize(uint16_t, uint16_t) {}
+bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings&, const ShaderUniforms&,
+                                        bgfx::ViewId firstViewId) { return firstViewId; }
+}  // namespace engine::rendering
+#else
+
 #include <bgfx/bgfx.h>
 #include <bgfx/embedded_shader.h>
 
@@ -343,3 +356,5 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
 }
 
 }  // namespace engine::rendering
+
+#endif  // __ANDROID__

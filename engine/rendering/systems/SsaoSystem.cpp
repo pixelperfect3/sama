@@ -1,5 +1,15 @@
 #include "engine/rendering/systems/SsaoSystem.h"
 
+#ifdef __ANDROID__
+namespace engine::rendering
+{
+void SsaoSystem::init(uint16_t, uint16_t) {}
+void SsaoSystem::shutdown() {}
+void SsaoSystem::submit(const SsaoSettings&, const ShaderUniforms&,
+                         bgfx::TextureHandle, bgfx::ViewId, bgfx::VertexBufferHandle) {}
+}  // namespace engine::rendering
+#else
+
 #include <bgfx/bgfx.h>
 #include <bgfx/embedded_shader.h>
 
@@ -188,3 +198,5 @@ void SsaoSystem::submit(const SsaoSettings& settings, const ShaderUniforms& unif
 }
 
 }  // namespace engine::rendering
+
+#endif  // __ANDROID__

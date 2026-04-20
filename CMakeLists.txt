@@ -68,7 +68,11 @@ endif()
 
 # bgfx.cmake wraps bgfx/bx/bimg with proper CMake targets.
 # We disable all backends except Metal (macOS) and Vulkan.
-set(BGFX_BUILD_TOOLS      ON  CACHE BOOL "" FORCE) # build shaderc
+if(SAMA_ANDROID)
+    set(BGFX_BUILD_TOOLS    OFF CACHE BOOL "" FORCE) # no shaderc on Android
+else()
+    set(BGFX_BUILD_TOOLS    ON  CACHE BOOL "" FORCE) # build shaderc on desktop
+endif()
 set(BGFX_BUILD_EXAMPLES   OFF CACHE BOOL "" FORCE)
 set(BGFX_INSTALL          OFF CACHE BOOL "" FORCE)
 set(BGFX_CUSTOM_TARGETS   OFF CACHE BOOL "" FORCE)
@@ -203,6 +207,10 @@ endif()
 # ---------------------------------------------------------------------------
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
 # ---------------------------------------------------------------------------
+
+# Shader compilation uses shaderc which is desktop-only.
+# On Android, pre-compiled shaders are included via the asset pipeline.
+if(NOT SAMA_ANDROID)
 
 set(SHADER_SRC_DIR     ${SAMA_ROOT_DIR}/engine/shaders)
 set(SHADER_INCLUDE_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/src)
@@ -578,6 +586,8 @@ compile_shader_pp(
 
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
+endif()  # NOT SAMA_ANDROID (shader compilation)
+
 # --- engine_io static library ---
 add_library(engine_io STATIC engine/io/Json.cpp)
 target_include_directories(engine_io PUBLIC ${SAMA_ROOT_DIR} ${rapidjson_SOURCE_DIR}/include)
@@ -781,7 +791,9 @@ endif()
 
 add_library(engine_rendering STATIC ${_ENGINE_RENDERING_SOURCES})
 
-add_dependencies(engine_rendering engine_shaders)
+if(NOT SAMA_ANDROID)
+    add_dependencies(engine_rendering engine_shaders)
+endif()
 
 target_include_directories(engine_rendering PUBLIC
     ${SAMA_ROOT_DIR}
@@ -1099,6 +1111,7 @@ else()
         engine_memory
         engine_debug
         engine_scene
+        native_app_glue
     )
 endif()
 
@@ -1220,6 +1233,12 @@ if(SAMA_ANDROID)
     # ANativeActivity_onCreate must not be stripped — export it.
     target_link_libraries(native_app_glue PUBLIC android log)
 
+    # bgfx's example-common compiles entry_android.cpp which needs the
+    # native app glue header. Add the include path so it compiles.
+    if(TARGET example-common)
+        target_include_directories(example-common PRIVATE "${_APP_GLUE_DIR}")
+    endif()
+
     # engine_android — platform layer for Android.
     add_library(engine_android STATIC
         engine/platform/android/AndroidApp.cpp
@@ -1254,6 +1273,14 @@ if(SAMA_ANDROID)
         engine_scene
         engine_ecs
         engine_io
+        engine_rendering
+        engine_animation
+        engine_physics
+        engine_audio
+        engine_assets
+        engine_threading
+        EGL
+        GLESv3
     )
     # Ensure ANativeActivity_onCreate is not stripped from the shared library.
     set_target_properties(sama_android PROPERTIES
