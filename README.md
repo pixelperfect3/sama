@@ -396,7 +396,7 @@ The engine handles all platform differences internally. `Engine::beginFrame()`/`
 
 ### Current Status
 
-**Hardware verified:** First successful render on **Pixel 9** (Vulkan, 2251x1080) with full-frame-rate touch input and gyroscope support.
+**Hardware verified:** Vulkan + UiRenderer + BitmapFont text rendering on **Pixel 9** (2251x1080, 60fps) with SPIRV shaders, touch input, and gyroscope support.
 
 **Implemented:**
 
@@ -489,12 +489,14 @@ The engine's `AndroidApp.cpp` calls your `samaCreateGame()`, wraps it in a `Game
 
 ### Current Status (Hardware Verified)
 
-**First successful render on Pixel 9** (Vulkan, 2251x1080). The `android_test` app runs at full frame rate with touch input, multi-touch trails, gyroscope tilt, and bgfx debug text overlay.
+**Vulkan + UiRenderer + BitmapFont text rendering working on Pixel 9** (2251x1080, 60fps). The full rendering stack is verified: Vulkan backend, SPIRV shaders loaded from APK assets, UiRenderer text overlay, gyroscope, and touch input.
+
+**Note:** bgfx hardcodes `NUM_SWAPCHAIN_IMAGE=4` which is insufficient for some Vulkan drivers (Pixel 9 needs 5). The engine patches this to 8 via a CMake compile definition on the bgfx target. See `docs/ANDROID_SUPPORT.md` for details.
 
 **Known limitations:**
 
-- Shaders are stubbed on Android -- all shader loaders return `BGFX_INVALID_HANDLE`. Games can clear the screen and use `bgfx::touch()`/`bgfx::dbgTextPrintf()`, but PBR rendering is not yet available.
-- Post-processing (bloom, FXAA, tone mapping) and SSAO are disabled on Android.
+- Full PBR pipeline (shadows, IBL, SSAO) not yet ported to Android -- UiRenderer and BitmapFont text work, but 3D scene rendering requires additional shader porting.
+- Post-processing (bloom, FXAA, tone mapping) disabled on Android.
 - ASTC texture encoding is stubbed -- textures are currently copied as-is. Full ASTC compression requires the `astcenc` CLI tool.
 - No ImGui on Android.
 

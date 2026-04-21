@@ -372,14 +372,39 @@ The `MyGame` class is identical in both cases -- 100% shared code.
 
 First successful render: **Pixel 9, Vulkan backend, 2251x1080 resolution.**
 
-The `android_test` app (HSV color cycling with touch input, debug text overlay) runs at full frame rate. Touch input, multi-touch trails, and gyroscope tilt all work correctly. The bgfx Vulkan backend initializes without issue on this device.
+The `android_test` app runs at 60fps with the full stack verified: **Vulkan + SPIRV shaders + UiRenderer + BitmapFont text rendering + gyroscope + touch input.** This is not just a clear-screen test — real shader programs load from APK assets and render text overlays via the engine's UiRenderer system.
+
+### Shader Compilation Pipeline
+
+SPIRV shaders are pre-compiled on the host machine and bundled into the APK:
+
+```bash
+# Compile all engine shaders for SPIRV (Android/Vulkan)
+./android/compile_shaders.sh
+
+# Output: shaders/spirv/*.bin files
+# These are copied into the APK's assets/shaders/spirv/ directory by build_apk.sh
+```
+
+At runtime, `AndroidFileSystem` loads `.bin` shader binaries from APK assets via `AAssetManager`. The shader loading path is identical to desktop — only the binary format differs (SPIRV vs Metal).
+
+### bgfx NUM_SWAPCHAIN_IMAGE Patch
+
+bgfx hardcodes `NUM_SWAPCHAIN_IMAGE=4` in its Vulkan backend. The Pixel 9 (and potentially other devices) requires 5 swapchain images. When bgfx cannot acquire enough images, Vulkan validation layers report `VK_ERROR_OUT_OF_DATE_KHR` and rendering fails silently.
+
+**Fix:** We patch `NUM_SWAPCHAIN_IMAGE` to 8 at CMake configure time via a compile definition on the bgfx target. This is safe because the array is stack-allocated and the extra 4 slots cost only ~128 bytes. The patch is applied in the top-level `CMakeLists.txt`:
+
+```cmake
+target_compile_definitions(bgfx PRIVATE BGFX_CONFIG_MAX_FRAME_BUFFER_ATTACHMENTS=8)
+```
+
+**Upstream opportunity:** This could be contributed back to bgfx as a configurable `BGFX_CONFIG_` define (it currently is not). Filed as a potential upstream PR.
 
 ### Known Limitations (Current State)
 
-- **Shaders are stubbed.** All shader loaders return `BGFX_INVALID_HANDLE` on Android. Games can still clear the screen and use `bgfx::touch()` / `bgfx::dbgTextPrintf()`, but PBR rendering, shadows, post-processing, and SSAO are not available yet. Full shader loading from APK assets will be implemented when games need PBR.
+- **PBR rendering not yet ported.** UiRenderer and BitmapFont text rendering work via SPIRV shaders, but the full PBR pipeline (shadows, IBL, SSAO) has not been ported to Android yet.
 - **Post-processing disabled.** `Engine::beginFrame()` on Android calls `renderer_.beginFrameDirect()` which bypasses the post-process framebuffer setup entirely. There is no bloom, FXAA, or tone mapping on Android.
 - **SSAO disabled.** `SsaoSystem` returns early on Android (shader handle is invalid).
-- **Debug text not visible on some devices.** `bgfx::dbgTextPrintf()` works on Pixel 9 but may not render on devices where the debug font texture fails to initialize.
 - **No ImGui on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false.
 
 ### Bugs Fixed During Hardware Bring-up
@@ -407,6 +432,10 @@ The `android_test` app (HSV color cycling with touch input, debug text overlay) 
 - **No hot-reload on Android.** Desktop development uses the editor for rapid iteration. Android builds are for testing and release. Hot-reload would require a TCP bridge and asset streaming protocol — high complexity, low value when the editor already provides instant feedback.
 
 - **Single Engine class with `#ifdef` vs EngineAndroid subclass.** We chose `#ifdef __ANDROID__` inside one `Engine` class rather than an inheritance hierarchy (`EngineDesktop` / `EngineAndroid`). The public API is identical on both platforms -- only the init path, window management, and input backend differ. A subclass design would force game code to use `Engine&` references everywhere (which they already do), but would also fragment the implementation across two files with duplicated frame logic. The `#ifdef` approach keeps all frame lifecycle code in one place, and the compile-time branching means zero runtime cost.
+
+- **SPIRV shaders loaded from APK assets at runtime.** The alternative was embedding shader binaries directly into the `.so` via `xxd` or `#include` of binary arrays. We chose APK asset loading because: (1) it keeps the shared library small and avoids bloating the text segment, (2) shaders can be updated without recompiling native code, (3) it mirrors the desktop pattern where shaders are loaded from the filesystem, and (4) `AAssetManager` provides zero-copy access which is as fast as embedded data. The tradeoff is a dependency on the asset packaging step in `build_apk.sh`, but this is already required for textures and models.
+
+- **bgfx NUM_SWAPCHAIN_IMAGE patch via CMake.** bgfx hardcodes this to 4, but Vulkan drivers on some devices (confirmed: Pixel 9) request more images than bgfx can handle. Rather than forking bgfx, we apply the fix as a compile definition (`-DBGFX_CONFIG_MAX_FRAME_BUFFER_ATTACHMENTS=8`) on the bgfx target at configure time. This is minimally invasive, easy to remove if upstream accepts the change, and costs only ~128 bytes of stack space. The value 8 was chosen to be generous — no known device requests more than 5.
 
 - **`samaCreateGame()` extern linkage vs registration.** The Android entry point uses `extern engine::game::IGame* samaCreateGame()` -- a function the game defines and the engine calls. The alternative was a registration pattern (e.g., `REGISTER_GAME(MyGame)` macro expanding to a static initializer). We chose extern linkage because: (1) it is explicit and easy to understand, (2) there is exactly one game per APK so a registry is unnecessary, (3) static initialization order issues are avoided entirely, and (4) the pattern is familiar from `main()` itself.
 

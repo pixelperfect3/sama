@@ -798,6 +798,7 @@ Side projects to improve third-party libraries used by the engine.
 | Item | Trigger | Notes |
 |---|---|---|
 | Jolt soft body upstream contributions | After Jolt is integrated and real usage surfaces the most painful gaps | Open GitHub discussion with jrouwe before writing code. Priority gaps: mesh/heightfield hair collision, GPU-accelerated soft body. See NOTES.md → Physics → Side Projects |
+| bgfx `NUM_SWAPCHAIN_IMAGE` configurable upstream | Next time we update bgfx | Currently hardcoded to 4 in bgfx's Vulkan backend. Pixel 9 needs 5. We patch to 8 via CMake define. Upstream PR would add a `BGFX_CONFIG_` knob so the patch is no longer needed. Low complexity, high value for all Android/Vulkan users of bgfx. |
 
 ---
 
@@ -1413,6 +1414,34 @@ AAB (Android App Bundle) generation for Play Store distribution. Builds a base m
 
 ### Status
 - [x] AAB generation implemented (`android/build_aab.sh` — committed)
+
+---
+
+## Android Vulkan + UiRenderer (Milestone: 2026-04-11)
+
+### Context
+
+Vulkan rendering with real shader programs (not just `bgfx::dbgTextPrintf`) is now working on Android. The full stack is verified on Pixel 9 at 60fps: Vulkan + SPIRV shaders + UiRenderer + BitmapFont text rendering + gyroscope + touch.
+
+### Decision: bgfx NUM_SWAPCHAIN_IMAGE Patch
+
+**Problem:** bgfx hardcodes `NUM_SWAPCHAIN_IMAGE=4` in `renderer_vk.cpp`. The Pixel 9's Vulkan driver requests 5 swapchain images (minImageCount=3 + driver overhead). When bgfx cannot index all images, `vkAcquireNextImageKHR` returns indices beyond the array bounds, causing silent rendering failure or `VK_ERROR_OUT_OF_DATE_KHR`.
+
+**Fix:** Patch to 8 via CMake compile definition on the bgfx target. The value 8 is generous (no known device needs more than 5) and costs only ~128 bytes of additional stack arrays.
+
+**Why not fork bgfx:** A compile definition is the least invasive approach. It requires no source file changes, survives bgfx version updates, and can be removed if upstream accepts a `BGFX_CONFIG_` knob for this value.
+
+**Tradeoff:** If bgfx changes the internal define name, our patch silently stops working. Mitigated by verifying Vulkan init succeeds at app startup (logcat shows swapchain image count).
+
+### Decision: SPIRV Shader Loading from APK Assets
+
+**Problem:** Desktop uses Metal .bin shaders loaded from the filesystem. Android needs SPIRV .bin shaders loaded from APK assets (no writable filesystem for shaders).
+
+**Approach:** Pre-compile shaders to SPIRV on the host via `compile_shaders.sh` (uses bgfx's `shaderc` tool). The `.bin` outputs go into `shaders/spirv/` and are packaged into the APK's `assets/shaders/spirv/` directory. At runtime, `AndroidFileSystem` loads them via `AAssetManager` — same `IFileSystem::readFile()` interface as desktop.
+
+**Why not embed in .so:** Embedding via `xxd` or binary includes bloats the shared library's text segment, prevents shader-only updates, and breaks the filesystem abstraction that all other asset loading uses. APK asset loading is zero-copy via `AAsset_getBuffer()` so there is no performance penalty.
+
+**Why not runtime compilation:** SPIRV compilation from GLSL at runtime (via `shaderc` or `glslang`) adds ~2MB to the binary and 100-500ms startup latency. Pre-compilation is strictly better for shipping games.
 
 ---
 

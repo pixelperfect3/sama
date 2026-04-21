@@ -2150,11 +2150,29 @@ adb logcat | grep -i "sama\|bgfx\|signal\|FATAL"
 adb logcat -c && adb logcat -s SamaEngine
 ```
 
+### Shader Compilation for Android
+
+SPIRV shaders must be pre-compiled before building the APK:
+
+```bash
+# Compile all engine shaders to SPIRV (run from project root)
+./android/compile_shaders.sh
+
+# Output goes to shaders/spirv/*.bin
+# build_apk.sh automatically includes these in assets/shaders/spirv/
+```
+
+The script uses bgfx's `shaderc` tool to cross-compile `.sc` shader source files to SPIRV binary format. These `.bin` files are loaded at runtime via `AndroidFileSystem` (backed by `AAssetManager`).
+
+If you add new shaders, add them to `compile_shaders.sh` and re-run before building the APK.
+
 ### Android Limitations (Current State)
 
-- **Shaders stubbed:** All shader loaders return `BGFX_INVALID_HANDLE`. Your game can clear the screen and use `bgfx::touch()` / `bgfx::dbgTextPrintf()`, but PBR rendering, shadows, SSAO, and post-processing are not available yet.
+- **UiRenderer + BitmapFont text works.** SPIRV shaders load from APK assets and render correctly via the UiRenderer system.
+- **PBR not yet ported:** The full PBR pipeline (shadows, IBL, SSAO) requires porting additional shaders to SPIRV. UiRenderer and text rendering work, but 3D scene rendering is not yet available.
 - **No ImGui:** The engine does not initialize ImGui on Android. `imguiWantsMouse()` returns false.
 - **`beginFrameDirect` only:** The renderer bypasses the post-process framebuffer on Android. Rendering goes directly to the swapchain.
+- **bgfx swapchain patch required:** bgfx's `NUM_SWAPCHAIN_IMAGE=4` is too small for some Vulkan drivers. The engine patches to 8 via CMake. See `docs/ANDROID_SUPPORT.md`.
 
 ### Reference: AndroidTestGame
 
