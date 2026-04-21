@@ -119,13 +119,36 @@ else()
     FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
 endif()
 
-# Patch bgfx Vulkan renderer: increase NUM_SWAPCHAIN_IMAGE from 4 to 8.
-# Modern Android devices (Pixel 9, etc.) request 5 swapchain images which
-# exceeds bgfx's default of 4, causing Vulkan init to fail silently.
+# Patch bgfx Vulkan renderer for modern Android devices.
+# bgfx hardcodes NUM_SWAPCHAIN_IMAGE=4, but modern devices (Pixel 9, etc.)
+# request minImageCount=5, causing Vulkan init to fail silently and fall back
+# to OpenGL ES. Two patches:
+# 1. Raise NUM_SWAPCHAIN_IMAGE from 4 to 8 with #ifndef guard
+# 2. Clamp minImageCount to array capacity with a clear warning
 set(_BGFX_VK_SRC "${bgfx_cmake_SOURCE_DIR}/bgfx/src/renderer_vk.cpp")
 if(EXISTS "${_BGFX_VK_SRC}")
     file(READ "${_BGFX_VK_SRC}" _vk_content)
-    string(REPLACE "#define NUM_SWAPCHAIN_IMAGE 4" "#define NUM_SWAPCHAIN_IMAGE 8" _vk_content "${_vk_content}")
+
+    # Patch 1: Make NUM_SWAPCHAIN_IMAGE overridable and raise default to 8
+    string(REPLACE
+        "#define NUM_SWAPCHAIN_IMAGE 4"
+        "#ifndef NUM_SWAPCHAIN_IMAGE\n#define NUM_SWAPCHAIN_IMAGE 8\n#endif // NUM_SWAPCHAIN_IMAGE"
+        _vk_content "${_vk_content}")
+
+    # Patch 2: Add early forward-define so the clamping code can reference it
+    # (the #define lives in the class body near line 4238, but we need it earlier)
+    # Use a unique anchor that appears only once near the top of the file.
+    string(REPLACE
+        "#endif // BX_PLATFORM_OSX"
+        "#endif // BX_PLATFORM_OSX\n\n#ifndef NUM_SWAPCHAIN_IMAGE\n#define NUM_SWAPCHAIN_IMAGE 8\n#endif"
+        _vk_content "${_vk_content}")
+
+    # Patch 3: Clamp minImageCount to array capacity instead of failing
+    string(REPLACE
+        "m_sci.minImageCount   = surfaceCapabilities.minImageCount;"
+        "// Clamp to array capacity — see patches/bgfx_swapchain_fix.patch\n\t\t\t\tuint32_t _desiredImages = surfaceCapabilities.minImageCount;\n\t\t\t\tif (surfaceCapabilities.maxImageCount > 0 && _desiredImages > surfaceCapabilities.maxImageCount)\n\t\t\t\t\t_desiredImages = surfaceCapabilities.maxImageCount;\n\t\t\t\tif (_desiredImages > NUM_SWAPCHAIN_IMAGE)\n\t\t\t\t{\n\t\t\t\t\tBX_TRACE(\"Warning: device minImageCount %d > NUM_SWAPCHAIN_IMAGE %d, clamping.\", _desiredImages, (int)NUM_SWAPCHAIN_IMAGE);\n\t\t\t\t\t_desiredImages = NUM_SWAPCHAIN_IMAGE;\n\t\t\t\t}\n\t\t\t\tm_sci.minImageCount   = _desiredImages;"
+        _vk_content "${_vk_content}")
+
     file(WRITE "${_BGFX_VK_SRC}" "${_vk_content}")
 endif()
 
