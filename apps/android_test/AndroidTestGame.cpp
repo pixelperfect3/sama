@@ -209,11 +209,15 @@ public:
             drawList_.clear();
 
             char buf[256];
-            float y = 10.f;
 #ifdef __ANDROID__
-            const float fontSize = 10.f;
-            const float lineH = 14.f;
+            // Larger margin for rounded screens + status bar (Pixel 9)
+            float y = 160.f;
+            const float leftMargin = 40.f;
+            const float fontSize = 14.f;
+            const float lineH = 18.f;
 #else
+            float y = 10.f;
+            const float leftMargin = 10.f;
             const float fontSize = 16.f;
             const float lineH = 20.f;
 #endif
@@ -223,22 +227,22 @@ public:
 
             snprintf(buf, sizeof(buf), "Android Test | %.1f fps | %.3f ms",
                      dt > 0 ? 1.0f / dt : 0.0f, dt * 1000.0f);
-            drawList_.drawText({10.f, y}, buf, white, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, white, &font_, fontSize);
             y += lineH;
 
             snprintf(buf, sizeof(buf), "Screen: %ux%u", engine.fbWidth(), engine.fbHeight());
-            drawList_.drawText({10.f, y}, buf, white, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, white, &font_, fontSize);
             y += lineH * 1.5f;
 
             // Mouse / touch
             snprintf(buf, sizeof(buf), "Mouse: (%.0f, %.0f)  %s",
                      static_cast<double>(input.mouseX()), static_cast<double>(input.mouseY()),
                      input.isMouseButtonHeld(MouseButton::Left) ? "[LEFT]" : "");
-            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
             y += lineH;
 
             snprintf(buf, sizeof(buf), "Touches: %zu active", input.touches().size());
-            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
             y += lineH;
 
             int touchRow = 0;
@@ -253,7 +257,7 @@ public:
                     phase = "Ended";
                 snprintf(buf, sizeof(buf), "  [%llu] (%.0f, %.0f) %s",
                          static_cast<unsigned long long>(touch.id), touch.x, touch.y, phase);
-                drawList_.drawText({20.f, y}, buf, gray, &font_, fontSize);
+                drawList_.drawText({leftMargin + 10.f, y}, buf, gray, &font_, fontSize);
                 y += lineH;
                 if (++touchRow >= 5)
                     break;
@@ -265,45 +269,47 @@ public:
             {
                 snprintf(buf, sizeof(buf), "Gyro: pitch=%.2f  yaw=%.2f  roll=%.2f", gyro.pitchRate,
                          gyro.yawRate, gyro.rollRate);
-                drawList_.drawText({10.f, y}, buf, green, &font_, fontSize);
+                drawList_.drawText({leftMargin, y}, buf, green, &font_, fontSize);
                 y += lineH;
                 snprintf(buf, sizeof(buf), "Gravity: (%.2f, %.2f, %.2f)", gyro.gravityX,
                          gyro.gravityY, gyro.gravityZ);
-                drawList_.drawText({10.f, y}, buf, green, &font_, fontSize);
+                drawList_.drawText({leftMargin, y}, buf, green, &font_, fontSize);
                 y += lineH;
             }
             else
             {
-                drawList_.drawText({10.f, y}, "Gyro: not available", gray, &font_, fontSize);
+                drawList_.drawText({leftMargin, y}, "Gyro: not available", gray, &font_, fontSize);
                 y += lineH;
             }
             y += lineH * 0.5f;
 
             // Trail + color info
             snprintf(buf, sizeof(buf), "Trail dots: %zu", touchTrail_.size());
-            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
             y += lineH;
             snprintf(buf, sizeof(buf), "Hue: %.0f  Brightness: %.2f", hue_, brightness_);
-            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
             y += lineH * 1.5f;
 
             // Controls
-            drawList_.drawText({10.f, y}, "--- Controls ---", gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, "--- Controls ---", gray, &font_, fontSize);
             y += lineH;
-            drawList_.drawText({10.f, y}, "Touch/Click: change hue by X", gray, &font_, fontSize);
-            y += lineH;
-            drawList_.drawText({10.f, y}, "Drag: draw colored trail", gray, &font_, fontSize);
-            y += lineH;
-            drawList_.drawText({10.f, y}, "Gyro tilt: adjust brightness + hue", gray, &font_,
+            drawList_.drawText({leftMargin, y}, "Touch/Click: change hue by X", gray, &font_,
                                fontSize);
             y += lineH;
-            drawList_.drawText({10.f, y}, "Space: reset | Escape: quit", gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, "Drag: draw colored trail", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Gyro tilt: adjust brightness + hue", gray, &font_,
+                               fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Space: reset | Escape: quit", gray, &font_,
+                               fontSize);
             y += lineH;
 
             snprintf(buf, sizeof(buf), "Color: R=%u G=%u B=%u  (hue=%.0f sat=0.6 val=%.2f)",
                      (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF, hue_,
                      brightness_);
-            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
 
             // Render UI on view 48 (kViewGameUi)
             uiRenderer_.render(drawList_, 48, engine.fbWidth(), engine.fbHeight());
