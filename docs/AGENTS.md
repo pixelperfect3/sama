@@ -2079,7 +2079,95 @@ Sidecar files must be in the same directory as the `.glb` and share the same bas
 
 ---
 
-## 8. CLAUDE.md Integration
+## 8. Android Game Development
+
+### The `samaCreateGame()` Pattern
+
+On Android, there is no `main()`. Instead, games define a factory function that the engine calls:
+
+```cpp
+// In your game's .cpp file (or a separate _android.cpp):
+#include "engine/game/IGame.h"
+#include "MyGame.h"
+
+engine::game::IGame* samaCreateGame()
+{
+    return new MyGame();
+}
+```
+
+The engine's `AndroidApp.cpp` calls this, wraps the result in a `GameRunner`, and runs the same frame loop as desktop. Your `IGame` class is identical on both platforms -- no `#ifdef` needed.
+
+### Build Commands
+
+```bash
+# Build and install APK (default: arm64-v8a, mid tier, release)
+./android/build_apk.sh --install
+
+# Build with specific tier and debug mode
+./android/build_apk.sh --tier high --debug --install
+
+# Just build the native library (no APK packaging)
+./android/build_android.sh arm64-v8a Release
+
+# Manual CMake cross-compile
+cmake -S . -B build/android/arm64-v8a \
+    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a \
+    -DANDROID_PLATFORM=android-24 \
+    -DANDROID_STL=c++_shared \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DSAMA_ANDROID=ON
+cmake --build build/android/arm64-v8a -j$(sysctl -n hw.ncpu)
+```
+
+### Adding Your Game to the Android Build
+
+1. Add your game's `.cpp` files to the `sama_android` target in `CMakeLists.txt`:
+   ```cmake
+   if(SAMA_ANDROID)
+       target_sources(sama_android PRIVATE
+           apps/my_game/MyGame.cpp
+           apps/my_game/MyGame_android.cpp
+       )
+   endif()
+   ```
+2. Build: `./android/build_apk.sh --tier mid --install`
+
+### Logcat Debugging
+
+```bash
+# Filter to Sama engine logs
+adb logcat -s SamaEngine
+
+# Filter to bgfx + Sama
+adb logcat -s SamaEngine:V bgfx:V
+
+# See all logs (verbose, useful for crash stacks)
+adb logcat | grep -i "sama\|bgfx\|signal\|FATAL"
+
+# Clear and start fresh
+adb logcat -c && adb logcat -s SamaEngine
+```
+
+### Android Limitations (Current State)
+
+- **Shaders stubbed:** All shader loaders return `BGFX_INVALID_HANDLE`. Your game can clear the screen and use `bgfx::touch()` / `bgfx::dbgTextPrintf()`, but PBR rendering, shadows, SSAO, and post-processing are not available yet.
+- **No ImGui:** The engine does not initialize ImGui on Android. `imguiWantsMouse()` returns false.
+- **`beginFrameDirect` only:** The renderer bypasses the post-process framebuffer on Android. Rendering goes directly to the swapchain.
+
+### Reference: AndroidTestGame
+
+See `apps/android_test/AndroidTestGame.cpp` for the canonical cross-platform game that works on both desktop and Android. It demonstrates:
+- HSV color cycling background (works without shaders)
+- Touch input with multi-finger tracking
+- Gyroscope/accelerometer tilt response
+- Debug text overlay
+- Both `main()` (desktop) and `samaCreateGame()` (Android) entry points in one file
+
+---
+
+## 9. CLAUDE.md Integration
 
 Suggested additions to `CLAUDE.md` to help AI tools:
 

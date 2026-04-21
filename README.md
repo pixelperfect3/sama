@@ -396,6 +396,8 @@ The engine handles all platform differences internally. `Engine::beginFrame()`/`
 
 ### Current Status
 
+**Hardware verified:** First successful render on **Pixel 9** (Vulkan, 2251x1080) with full-frame-rate touch input and gyroscope support.
+
 **Implemented:**
 
 - Phase A (NDK Bootstrap) -- CMake toolchain, build script, NativeActivity entry point, AndroidManifest, bgfx Vulkan initialization
@@ -434,10 +436,67 @@ bundletool install-apks --apks=Game.apks
 
 **Requirements:** `bundletool` (`brew install bundletool`), Android NDK/SDK, Java 17+.
 
+### Adding Android Support to Your Game
+
+Follow these steps to make any `IGame` implementation run on Android:
+
+**1. Implement your game class (same as desktop -- no platform-specific code):**
+
+```cpp
+// MyGame.h
+#include "engine/game/IGame.h"
+
+class MyGame : public engine::game::IGame
+{
+public:
+    void onInit(engine::core::Engine& engine, engine::ecs::Registry& registry) override;
+    void onUpdate(engine::core::Engine& engine, engine::ecs::Registry& registry, float dt) override;
+    // ... other IGame methods
+};
+```
+
+**2. Add the `samaCreateGame()` factory function:**
+
+```cpp
+// MyGame_android.cpp (or at the bottom of MyGame.cpp behind #ifdef __ANDROID__)
+#include "engine/game/IGame.h"
+#include "MyGame.h"
+
+engine::game::IGame* samaCreateGame()
+{
+    return new MyGame();
+}
+```
+
+**3. Add your source file to the `sama_android` target in CMakeLists.txt:**
+
+```cmake
+if(SAMA_ANDROID)
+    target_sources(sama_android PRIVATE
+        apps/my_game/MyGame.cpp
+        apps/my_game/MyGame_android.cpp
+    )
+endif()
+```
+
+**4. Build and install:**
+
+```bash
+./android/build_apk.sh --tier mid --install
+```
+
+The engine's `AndroidApp.cpp` calls your `samaCreateGame()`, wraps it in a `GameRunner`, and runs the same fixed-timestep frame loop as desktop. Your game code is 100% shared.
+
+### Current Status (Hardware Verified)
+
+**First successful render on Pixel 9** (Vulkan, 2251x1080). The `android_test` app runs at full frame rate with touch input, multi-touch trails, gyroscope tilt, and bgfx debug text overlay.
+
 **Known limitations:**
 
-- ASTC texture encoding is stubbed -- textures are currently copied as-is with a TODO logged. Full ASTC compression requires the `astcenc` CLI tool.
-- Not yet verified on physical hardware or emulator.
+- Shaders are stubbed on Android -- all shader loaders return `BGFX_INVALID_HANDLE`. Games can clear the screen and use `bgfx::touch()`/`bgfx::dbgTextPrintf()`, but PBR rendering is not yet available.
+- Post-processing (bloom, FXAA, tone mapping) and SSAO are disabled on Android.
+- ASTC texture encoding is stubbed -- textures are currently copied as-is. Full ASTC compression requires the `astcenc` CLI tool.
+- No ImGui on Android.
 
 ## Architecture
 

@@ -1449,3 +1449,29 @@ Chose option 1. There is exactly one game per APK, so a registry is overkill. St
 **Shared `runLoop()` in GameRunner**
 
 The frame loop (fixed-timestep accumulator, IGame callback dispatch, beginFrame/endFrame) is factored into a private `runLoop(Engine&)` method. Both `run()` (desktop) and `runAndroid()` (Android) call it after platform-specific Engine initialization. This guarantees identical frame timing on both platforms and means bug fixes apply everywhere. The alternative -- duplicating the loop in each entry point -- would inevitably drift as features are added.
+
+---
+
+## First Android Hardware Render (Pixel 9, Vulkan, 2251x1080)
+
+### Overview
+
+The Sama engine successfully renders on a Pixel 9 running Vulkan at 2251x1080. The `android_test` app demonstrates touch input, multi-touch trails, gyroscope tilt, and bgfx debug text at full frame rate. This validates the entire Android pipeline: NDK cross-compile, APK packaging, NativeActivity lifecycle, bgfx Vulkan initialization, and the cross-platform IGame/GameRunner architecture.
+
+### Design Decisions
+
+**Event loop timeout must be recomputed each iteration**
+
+The Android event loop in `Engine::beginFrame()` uses `ALooper_pollAll(timeout, ...)` in a loop. The timeout must be recomputed on every iteration, not cached before the loop. Reasoning: the first iteration may process `APP_CMD_INIT_WINDOW` which makes the window ready, or `APP_CMD_GAINED_FOCUS` which sets the focused flag. If the timeout was computed once before the loop (as `-1` because the window was not yet ready), the loop would block indefinitely on the second iteration even though the window is now ready. The fix is `int timeout = (androidWindow_->isReady() && focused_) ? 0 : -1;` at the top of each iteration.
+
+**`beginFrameDirect` on Android (no post-processing)**
+
+On desktop, `beginFrame()` sets up the post-process framebuffer (bloom, FXAA, tone mapping) and begins an ImGui frame. On Android, shaders are stubbed so the post-process pipeline cannot function. Rather than conditionally initializing an incomplete post-process chain, Android calls `renderer_.beginFrameDirect()` which targets the swapchain directly. This means games on Android render to view 0 without any intermediate framebuffer. The tradeoff is no post-effects, but the benefit is simplicity and guaranteed correctness -- there is no half-broken pipeline producing artifacts. When shader loading is implemented, the Android path can switch to the full `beginFrame` pipeline.
+
+**Shader stubs return `BGFX_INVALID_HANDLE` (games can still clear screen)**
+
+On Android, `ShaderLoader.cpp` returns `BGFX_INVALID_HANDLE` for all shader programs. This is intentional rather than loading placeholder shaders, because: (1) shader compilation for Android requires cross-compiling with `shaderc` to SPIR-V, which the build pipeline does not yet do, (2) returning invalid handles is safe -- bgfx silently skips draw calls with invalid programs, (3) games that only need `bgfx::setViewClear()` + `bgfx::touch()` work perfectly without shaders, and (4) it provides a clear signal to game code (`bgfx::isValid(program)`) for conditional rendering paths.
+
+**`libc++_shared.so` must be packaged in APK with `c++_shared` STL**
+
+The NDK build uses `ANDROID_STL=c++_shared` because: (1) `c++_static` can cause ODR violations when multiple shared libraries link the static STL, (2) exception handling across shared library boundaries requires a shared runtime, (3) `libc++_shared.so` is small (~800KB). The consequence is that `build_apk.sh` must copy `libc++_shared.so` from the NDK sysroot into the APK's `lib/<abi>/` directory. The NDK provides it at `$ANDROID_NDK/toolchains/llvm/prebuilt/<host>/sysroot/usr/lib/<triple>/libc++_shared.so`. Without it, the app crashes immediately on launch with `java.lang.UnsatisfiedLinkError`.

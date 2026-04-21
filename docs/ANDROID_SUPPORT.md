@@ -62,7 +62,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - `bgfx::Init::type = bgfx::RendererType::Vulkan`
   - bgfx's `PlatformData` needs `nativeWindowHandle` from `ANativeWindow`
   - bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` internally
-- [ ] Build smoke test: empty window with clear color on an Android device/emulator (not yet verified on hardware)
+- [x] Build smoke test: verified rendering on physical hardware (Pixel 9, Vulkan, 2251x1080)
 
 ---
 
@@ -365,6 +365,30 @@ engine::game::IGame* samaCreateGame()
 ```
 
 The `MyGame` class is identical in both cases -- 100% shared code.
+
+---
+
+## Verified on Hardware
+
+First successful render: **Pixel 9, Vulkan backend, 2251x1080 resolution.**
+
+The `android_test` app (HSV color cycling with touch input, debug text overlay) runs at full frame rate. Touch input, multi-touch trails, and gyroscope tilt all work correctly. The bgfx Vulkan backend initializes without issue on this device.
+
+### Known Limitations (Current State)
+
+- **Shaders are stubbed.** All shader loaders return `BGFX_INVALID_HANDLE` on Android. Games can still clear the screen and use `bgfx::touch()` / `bgfx::dbgTextPrintf()`, but PBR rendering, shadows, post-processing, and SSAO are not available yet. Full shader loading from APK assets will be implemented when games need PBR.
+- **Post-processing disabled.** `Engine::beginFrame()` on Android calls `renderer_.beginFrameDirect()` which bypasses the post-process framebuffer setup entirely. There is no bloom, FXAA, or tone mapping on Android.
+- **SSAO disabled.** `SsaoSystem` returns early on Android (shader handle is invalid).
+- **Debug text not visible on some devices.** `bgfx::dbgTextPrintf()` works on Pixel 9 but may not render on devices where the debug font texture fails to initialize.
+- **No ImGui on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false.
+
+### Bugs Fixed During Hardware Bring-up
+
+1. **Event loop deadlock.** The initial implementation used a single `ALooper_pollAll(-1, ...)` call that blocked indefinitely once the window was ready. Fix: recompute the timeout each iteration of the inner loop -- use `-1` (blocking) only when the window is not ready or the app is not focused, and `0` (non-blocking) when rendering should proceed.
+
+2. **Missing `beginFrameDirect` call.** On Android, the post-process pipeline is disabled (shaders are stubs), so `beginFrame()` on Android must call `renderer_.beginFrameDirect()` instead of the desktop's ImGui-based begin frame. Without this, bgfx had no active encoder and `bgfx::touch(0)` was a no-op.
+
+3. **`libc++_shared.so` not packaged in APK.** The NDK build uses `ANDROID_STL=c++_shared` (required for exception support across shared library boundaries), but the runtime library was not being copied into the APK's `lib/<abi>/` directory. Fix: `build_apk.sh` now copies `libc++_shared.so` from the NDK sysroot into the staging directory alongside `libsama_android.so`.
 
 ---
 
