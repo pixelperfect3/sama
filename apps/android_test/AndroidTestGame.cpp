@@ -204,9 +204,6 @@ public:
         bgfx::touch(0);
 
         // --- Text overlay via UiRenderer ---
-        // TODO: UiRenderer crashes on Android GLES — debug later.
-        // For now, only render on desktop.
-#ifndef __ANDROID__
         {
             using engine::ui::UiDrawList;
             drawList_.clear();
@@ -306,7 +303,6 @@ public:
             // Render UI on view 48 (kViewGameUi)
             uiRenderer_.render(drawList_, 48, engine.fbWidth(), engine.fbHeight());
         }
-#endif  // !__ANDROID__
     }
 
 private:
