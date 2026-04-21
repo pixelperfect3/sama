@@ -148,12 +148,15 @@ public:
 #ifdef __ANDROID__
         if (frameCount_ % 60 == 1)
         {
+            uint32_t c = hsvToRgba(hue_, 0.6f, brightness_);
             __android_log_print(4, "SamaEngine",
-                                "frame=%d gyro: avail=%d pitch=%.2f yaw=%.2f roll=%.2f "
+                                "frame=%d color=R%u,G%u,B%u gyro: avail=%d "
+                                "pitch=%.2f yaw=%.2f roll=%.2f "
                                 "grav=(%.2f,%.2f,%.2f) hue=%.0f bright=%.2f touches=%zu",
-                                frameCount_, gyro.available ? 1 : 0, gyro.pitchRate, gyro.yawRate,
-                                gyro.rollRate, gyro.gravityX, gyro.gravityY, gyro.gravityZ, hue_,
-                                brightness_, input.touches().size());
+                                frameCount_, (c >> 24) & 0xFF, (c >> 16) & 0xFF, (c >> 8) & 0xFF,
+                                gyro.available ? 1 : 0, gyro.pitchRate, gyro.yawRate, gyro.rollRate,
+                                gyro.gravityX, gyro.gravityY, gyro.gravityZ, hue_, brightness_,
+                                input.touches().size());
         }
 #endif
         if (gyro.available)
@@ -193,8 +196,8 @@ public:
                           static_cast<uint16_t>(engine.fbHeight()));
         bgfx::touch(0);
 
-        // --- Debug text overlay (desktop only — crashes on Android Release builds
-        //     because BGFX_DEBUG_TEXT is not set and the text blitter isn't initialized) ---
+        // --- Debug text overlay (desktop only — bgfx debug text blitter
+        //     crashes on Android because embedded debug shaders are missing) ---
 #ifndef __ANDROID__
         bgfx::dbgTextClear();
         int row = 1;
@@ -253,6 +256,11 @@ public:
         bgfx::dbgTextPrintf(1, row++, 0x06, "Drag: draw colored trail");
         bgfx::dbgTextPrintf(1, row++, 0x06, "Gyro tilt: adjust brightness + hue");
         bgfx::dbgTextPrintf(1, row++, 0x06, "Space: reset  |  Escape: quit");
+
+        // Show current RGBA color
+        bgfx::dbgTextPrintf(1, row++, 0x07, "Color: R=%u G=%u B=%u  (hue=%.0f sat=0.6 val=%.2f)",
+                            (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF,
+                            hue_, brightness_);
 #endif  // !__ANDROID__
     }
 

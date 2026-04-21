@@ -49,7 +49,7 @@ bool Renderer::init(const RendererDesc& desc)
         return false;
     }
 
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) && !defined(__ANDROID__)
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 #endif
 
