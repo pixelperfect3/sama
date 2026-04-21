@@ -40,8 +40,6 @@ bool Renderer::init(const RendererDesc& desc)
 
     // Single-threaded mode: bgfx::renderFrame() must be called exactly once
     // before bgfx::init() to prevent bgfx from spawning its own render thread.
-    // On Android this selects OpenGL ES instead of Vulkan, but multi-threaded
-    // Vulkan causes render-thread crashes. Accept GLES for now.
     if (!desc.headless)
         bgfx::renderFrame();
 
@@ -49,15 +47,34 @@ bool Renderer::init(const RendererDesc& desc)
     init.resolution.height = desc.height;
     init.resolution.reset = BGFX_RESET_VSYNC;
 
+#ifdef __ANDROID__
+    __android_log_print(4, "SamaEngine", "bgfx::init type=%d nwh=%p w=%u h=%u",
+                        (int)init.type, init.platformData.nwh,
+                        init.resolution.width, init.resolution.height);
+#endif
+
     if (!bgfx::init(init))
     {
+#ifdef __ANDROID__
+        __android_log_print(6, "SamaEngine", "bgfx::init() FAILED");
+#endif
         return false;
     }
 
 #ifdef __ANDROID__
-    // Log which renderer bgfx actually chose
-    __android_log_print(4, "SamaEngine", "bgfx renderer: %s",
-                        bgfx::getRendererName(bgfx::getRendererType()));
+    {
+        auto actualType = bgfx::getRendererType();
+        __android_log_print(4, "SamaEngine", "bgfx renderer: %s",
+                            bgfx::getRendererName(actualType));
+        if (actualType != bgfx::RendererType::Vulkan)
+        {
+            __android_log_print(6, "SamaEngine",
+                                "FATAL: Expected Vulkan but got %s. "
+                                "Sama requires Vulkan on Android.",
+                                bgfx::getRendererName(actualType));
+            return false;
+        }
+    }
 #endif
 
 #if !defined(NDEBUG) && !defined(__ANDROID__)

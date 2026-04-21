@@ -66,8 +66,8 @@ compile_shader() {
         -f "$INPUT" \
         -o "$OUTPUT" \
         --type "$TYPE" \
-        --platform android \
-        -p 100_es \
+        --platform linux \
+        -p spirv \
         --varyingdef "$VARYING" \
         -i "$BGFX_INCLUDE" \
         -i "$SHADER_DIR"

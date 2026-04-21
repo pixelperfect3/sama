@@ -119,6 +119,16 @@ else()
     FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
 endif()
 
+# Patch bgfx Vulkan renderer: increase NUM_SWAPCHAIN_IMAGE from 4 to 8.
+# Modern Android devices (Pixel 9, etc.) request 5 swapchain images which
+# exceeds bgfx's default of 4, causing Vulkan init to fail silently.
+set(_BGFX_VK_SRC "${bgfx_cmake_SOURCE_DIR}/bgfx/src/renderer_vk.cpp")
+if(EXISTS "${_BGFX_VK_SRC}")
+    file(READ "${_BGFX_VK_SRC}" _vk_content)
+    string(REPLACE "#define NUM_SWAPCHAIN_IMAGE 4" "#define NUM_SWAPCHAIN_IMAGE 8" _vk_content "${_vk_content}")
+    file(WRITE "${_BGFX_VK_SRC}" "${_vk_content}")
+endif()
+
 # Suppress warnings from third-party dependencies — we don't own this code.
 # All compiled third-party targets go through FetchContent and land here.
 function(suppress_third_party_warnings target)
@@ -809,6 +819,12 @@ endif()
 # Increase bgfx bone matrix limit from default 32 to 128 for skeletal animation.
 # u_model[128] = 512 vec4 uniforms, fits in BGFX_CONFIG_MAX_UNIFORMS (512).
 target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BONES=128)
+if(SAMA_ANDROID)
+    target_compile_definitions(bx PUBLIC BX_ANDROID_LOG_TAG="bgfx")
+    # Pixel 9 (and other modern Android devices) request 5 swapchain images.
+    # bgfx defaults to 4 which causes Vulkan init to fail.
+    target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BACK_BUFFERS=8)
+endif()
 
 # Same GLM flags as engine_tests to ensure consistent behaviour when rendering
 # code includes GLM headers directly.
@@ -1281,6 +1297,7 @@ if(SAMA_ANDROID)
         engine_audio
         engine_assets
         engine_threading
+        vulkan
         EGL
         GLESv3
     )
