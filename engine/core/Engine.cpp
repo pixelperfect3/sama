@@ -27,6 +27,7 @@
 
 #include "engine/input/android/AndroidInputBackend.h"
 #include "engine/platform/android/AndroidFileSystem.h"
+#include "engine/platform/android/AndroidGlobals.h"
 #include "engine/platform/android/AndroidGyro.h"
 #include "engine/platform/android/AndroidWindow.h"
 
@@ -332,6 +333,22 @@ void Engine::handleAndroidCmd(struct android_app* app, int32_t cmd)
                     engine->contentScaleY_ = scale;
                     LOGI("Display density: %d dpi (scale %.2f)", density, scale);
                 }
+
+                // If bgfx was already initialized (window recreation after
+                // orientation change), reset with the new window handle.
+                if (engine->renderer_.isInitialized())
+                {
+                    uint32_t w = engine->androidWindow_->width();
+                    uint32_t h = engine->androidWindow_->height();
+                    LOGI("Window recreated: %ux%u — resetting bgfx", w, h);
+                    bgfx::PlatformData pd;
+                    pd.ndt = nullptr;
+                    pd.nwh = app->window;
+                    bgfx::setPlatformData(pd);
+                    engine->renderer_.resize(w, h);
+                    engine->fbW_ = static_cast<uint16_t>(w);
+                    engine->fbH_ = static_cast<uint16_t>(h);
+                }
             }
             break;
 
@@ -373,6 +390,9 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     androidWindow_ = std::make_unique<platform::AndroidWindow>();
     androidGyro_ = std::make_unique<platform::AndroidGyro>();
     androidFileSystem_ = std::make_unique<platform::AndroidFileSystem>(app->activity->assetManager);
+
+    // Store the AAssetManager globally so ShaderLoader can access it.
+    platform::setAssetManager(app->activity->assetManager);
 
     // Register callbacks.
     app->userData = this;

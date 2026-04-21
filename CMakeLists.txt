@@ -1243,6 +1243,7 @@ if(SAMA_ANDROID)
     add_library(engine_android STATIC
         engine/platform/android/AndroidApp.cpp
         engine/platform/android/AndroidFileSystem.cpp
+        engine/platform/android/AndroidGlobals.cpp
         engine/platform/android/AndroidGyro.cpp
         engine/platform/android/AndroidInput.cpp
         engine/platform/android/AndroidKeyMap.cpp
@@ -1274,6 +1275,7 @@ if(SAMA_ANDROID)
         engine_ecs
         engine_io
         engine_rendering
+        engine_ui
         engine_animation
         engine_physics
         engine_audio
@@ -1299,6 +1301,7 @@ if(NOT SAMA_ANDROID)
         engine_core
         engine_game
         engine_rendering
+        engine_ui
         engine_scene
         engine_ecs
         engine_memory

@@ -198,6 +198,12 @@ echo ""
 
 # ── Step 1: Build native library ────────────────────────────────────────────
 
+# ── Step 0: Compile shaders to SPIRV if not already present ─────────────────
+if [ ! -f "${PROJECT_ROOT}/assets/shaders/spirv/vs_sprite.bin" ]; then
+    echo "[0/7] Compiling shaders to SPIRV for Android..."
+    "${PROJECT_ROOT}/android/compile_shaders.sh"
+fi
+
 echo "[1/7] Building native library..."
 "${PROJECT_ROOT}/android/build_android.sh" "$ABI" "$BUILD_TYPE"
 
@@ -231,6 +237,14 @@ elif [ -d "$ASSETS_DIR" ] && [ ! -x "$ASSET_TOOL" ]; then
 else
     echo "  WARNING: No assets directory found at ${ASSETS_DIR}"
     mkdir -p "$ASSETS_OUTPUT"
+fi
+
+# Copy pre-compiled SPIRV shaders (needed by the engine at runtime).
+# These are produced by compile_shaders.sh and live alongside source assets.
+if [ -d "${PROJECT_ROOT}/assets/shaders/spirv" ]; then
+    mkdir -p "${ASSETS_OUTPUT}/shaders/spirv"
+    cp "${PROJECT_ROOT}/assets/shaders/spirv"/*.bin "${ASSETS_OUTPUT}/shaders/spirv/" 2>/dev/null
+    echo "  Copied pre-compiled SPIRV shaders"
 fi
 
 # ── Step 3: Create APK staging directory ────────────────────────────────────

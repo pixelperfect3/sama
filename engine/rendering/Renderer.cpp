@@ -2,6 +2,9 @@
 
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
@@ -17,11 +20,6 @@ bool Renderer::init(const RendererDesc& desc)
     }
 
     headless_ = desc.headless;
-
-    // Single-threaded mode: bgfx::renderFrame() must be called exactly once
-    // before bgfx::init() to prevent bgfx from spawning its own render thread.
-    if (!desc.headless)
-        bgfx::renderFrame();
 
     bgfx::Init init;
 
@@ -40,6 +38,13 @@ bool Renderer::init(const RendererDesc& desc)
         init.platformData.ndt = desc.nativeDisplayHandle;
     }
 
+    // Single-threaded mode: bgfx::renderFrame() must be called exactly once
+    // before bgfx::init() to prevent bgfx from spawning its own render thread.
+    // On Android this selects OpenGL ES instead of Vulkan, but multi-threaded
+    // Vulkan causes render-thread crashes. Accept GLES for now.
+    if (!desc.headless)
+        bgfx::renderFrame();
+
     init.resolution.width = desc.width;
     init.resolution.height = desc.height;
     init.resolution.reset = BGFX_RESET_VSYNC;
@@ -48,6 +53,12 @@ bool Renderer::init(const RendererDesc& desc)
     {
         return false;
     }
+
+#ifdef __ANDROID__
+    // Log which renderer bgfx actually chose
+    __android_log_print(4, "SamaEngine", "bgfx renderer: %s",
+                        bgfx::getRendererName(bgfx::getRendererType()));
+#endif
 
 #if !defined(NDEBUG) && !defined(__ANDROID__)
     bgfx::setDebug(BGFX_DEBUG_TEXT);

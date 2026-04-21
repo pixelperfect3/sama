@@ -22,6 +22,7 @@
 #endif
 #include <cstdint>
 #include <cstdio>
+#include <glm/glm.hpp>
 #include <vector>
 
 #include "engine/core/Engine.h"
@@ -30,6 +31,9 @@
 #include "engine/game/IGame.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
+#include "engine/ui/BitmapFont.h"
+#include "engine/ui/UiDrawList.h"
+#include "engine/ui/UiRenderer.h"
 
 using namespace engine::core;
 using namespace engine::ecs;
@@ -95,6 +99,9 @@ public:
         elapsed_ = 0.0f;
         hue_ = 200.0f;
         brightness_ = 0.4f;
+
+        uiRenderer_.init();
+        font_.createDebugFont();
     }
 
     void onUpdate(Engine& engine, Registry& /*registry*/, float dt) override
@@ -196,71 +203,109 @@ public:
                           static_cast<uint16_t>(engine.fbHeight()));
         bgfx::touch(0);
 
-        // --- Debug text overlay (desktop only — bgfx debug text blitter
-        //     crashes on Android because embedded debug shaders are missing) ---
+        // --- Text overlay via UiRenderer ---
+        // TODO: UiRenderer crashes on Android GLES — debug later.
+        // For now, only render on desktop.
 #ifndef __ANDROID__
-        bgfx::dbgTextClear();
-        int row = 1;
-
-        bgfx::dbgTextPrintf(1, row++, 0x0f, "Android Test  |  %.1f fps  |  %.3f ms",
-                            dt > 0 ? 1.0f / dt : 0.0f, dt * 1000.0f);
-        bgfx::dbgTextPrintf(1, row++, 0x0f, "Screen: %ux%u", engine.fbWidth(), engine.fbHeight());
-        row++;
-
-        // Mouse / touch position
-        bgfx::dbgTextPrintf(1, row++, 0x07, "Mouse: (%.0f, %.0f)  %s", input.mouseX(),
-                            input.mouseY(),
-                            input.isMouseButtonHeld(MouseButton::Left) ? "[LEFT]" : "");
-
-        // Touch points
-        bgfx::dbgTextPrintf(1, row++, 0x07, "Touches: %zu active", input.touches().size());
-        int touchRow = 0;
-        for (const auto& touch : input.touches())
         {
-            const char* phase = "?";
-            if (touch.phase == TouchPoint::Phase::Began)
-                phase = "Began";
-            else if (touch.phase == TouchPoint::Phase::Moved)
-                phase = "Moved";
-            else if (touch.phase == TouchPoint::Phase::Ended)
-                phase = "Ended";
-            bgfx::dbgTextPrintf(3, row++, 0x06, "  [%llu] (%.0f, %.0f) %s",
-                                static_cast<unsigned long long>(touch.id), touch.x, touch.y, phase);
-            if (++touchRow >= 5)
-                break;  // limit display
+            using engine::ui::UiDrawList;
+            drawList_.clear();
+
+            char buf[256];
+            float y = 10.f;
+            const float fontSize = 16.f;
+            const float lineH = 20.f;
+            const glm::vec4 white{1.f, 1.f, 1.f, 1.f};
+            const glm::vec4 green{0.4f, 1.f, 0.4f, 1.f};
+            const glm::vec4 gray{0.7f, 0.7f, 0.7f, 1.f};
+
+            snprintf(buf, sizeof(buf), "Android Test | %.1f fps | %.3f ms",
+                     dt > 0 ? 1.0f / dt : 0.0f, dt * 1000.0f);
+            drawList_.drawText({10.f, y}, buf, white, &font_, fontSize);
+            y += lineH;
+
+            snprintf(buf, sizeof(buf), "Screen: %ux%u", engine.fbWidth(), engine.fbHeight());
+            drawList_.drawText({10.f, y}, buf, white, &font_, fontSize);
+            y += lineH * 1.5f;
+
+            // Mouse / touch
+            snprintf(buf, sizeof(buf), "Mouse: (%.0f, %.0f)  %s",
+                     static_cast<double>(input.mouseX()), static_cast<double>(input.mouseY()),
+                     input.isMouseButtonHeld(MouseButton::Left) ? "[LEFT]" : "");
+            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            snprintf(buf, sizeof(buf), "Touches: %zu active", input.touches().size());
+            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            int touchRow = 0;
+            for (const auto& touch : input.touches())
+            {
+                const char* phase = "?";
+                if (touch.phase == TouchPoint::Phase::Began)
+                    phase = "Began";
+                else if (touch.phase == TouchPoint::Phase::Moved)
+                    phase = "Moved";
+                else if (touch.phase == TouchPoint::Phase::Ended)
+                    phase = "Ended";
+                snprintf(buf, sizeof(buf), "  [%llu] (%.0f, %.0f) %s",
+                         static_cast<unsigned long long>(touch.id), touch.x, touch.y, phase);
+                drawList_.drawText({20.f, y}, buf, gray, &font_, fontSize);
+                y += lineH;
+                if (++touchRow >= 5)
+                    break;
+            }
+            y += lineH * 0.5f;
+
+            // Gyro
+            if (gyro.available)
+            {
+                snprintf(buf, sizeof(buf), "Gyro: pitch=%.2f  yaw=%.2f  roll=%.2f", gyro.pitchRate,
+                         gyro.yawRate, gyro.rollRate);
+                drawList_.drawText({10.f, y}, buf, green, &font_, fontSize);
+                y += lineH;
+                snprintf(buf, sizeof(buf), "Gravity: (%.2f, %.2f, %.2f)", gyro.gravityX,
+                         gyro.gravityY, gyro.gravityZ);
+                drawList_.drawText({10.f, y}, buf, green, &font_, fontSize);
+                y += lineH;
+            }
+            else
+            {
+                drawList_.drawText({10.f, y}, "Gyro: not available", gray, &font_, fontSize);
+                y += lineH;
+            }
+            y += lineH * 0.5f;
+
+            // Trail + color info
+            snprintf(buf, sizeof(buf), "Trail dots: %zu", touchTrail_.size());
+            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+            snprintf(buf, sizeof(buf), "Hue: %.0f  Brightness: %.2f", hue_, brightness_);
+            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+            y += lineH * 1.5f;
+
+            // Controls
+            drawList_.drawText({10.f, y}, "--- Controls ---", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({10.f, y}, "Touch/Click: change hue by X", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({10.f, y}, "Drag: draw colored trail", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({10.f, y}, "Gyro tilt: adjust brightness + hue", gray, &font_,
+                               fontSize);
+            y += lineH;
+            drawList_.drawText({10.f, y}, "Space: reset | Escape: quit", gray, &font_, fontSize);
+            y += lineH;
+
+            snprintf(buf, sizeof(buf), "Color: R=%u G=%u B=%u  (hue=%.0f sat=0.6 val=%.2f)",
+                     (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF, hue_,
+                     brightness_);
+            drawList_.drawText({10.f, y}, buf, gray, &font_, fontSize);
+
+            // Render UI on view 48 (kViewGameUi)
+            uiRenderer_.render(drawList_, 48, engine.fbWidth(), engine.fbHeight());
         }
-        row++;
-
-        // Gyro
-        if (gyro.available)
-        {
-            bgfx::dbgTextPrintf(1, row++, 0x0a, "Gyro: pitch=%.2f  yaw=%.2f  roll=%.2f",
-                                gyro.pitchRate, gyro.yawRate, gyro.rollRate);
-            bgfx::dbgTextPrintf(1, row++, 0x0a, "Gravity: (%.2f, %.2f, %.2f)", gyro.gravityX,
-                                gyro.gravityY, gyro.gravityZ);
-        }
-        else
-        {
-            bgfx::dbgTextPrintf(1, row++, 0x08, "Gyro: not available");
-        }
-        row++;
-
-        // Trail info
-        bgfx::dbgTextPrintf(1, row++, 0x07, "Trail dots: %zu", touchTrail_.size());
-        bgfx::dbgTextPrintf(1, row++, 0x07, "Hue: %.0f  Brightness: %.2f", hue_, brightness_);
-        row++;
-
-        // Controls
-        bgfx::dbgTextPrintf(1, row++, 0x06, "--- Controls ---");
-        bgfx::dbgTextPrintf(1, row++, 0x06, "Touch/Click: change hue by X position");
-        bgfx::dbgTextPrintf(1, row++, 0x06, "Drag: draw colored trail");
-        bgfx::dbgTextPrintf(1, row++, 0x06, "Gyro tilt: adjust brightness + hue");
-        bgfx::dbgTextPrintf(1, row++, 0x06, "Space: reset  |  Escape: quit");
-
-        // Show current RGBA color
-        bgfx::dbgTextPrintf(1, row++, 0x07, "Color: R=%u G=%u B=%u  (hue=%.0f sat=0.6 val=%.2f)",
-                            (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF,
-                            hue_, brightness_);
 #endif  // !__ANDROID__
     }
 
@@ -278,6 +323,11 @@ private:
         float age = 0.0f;
     };
     std::vector<TouchDot> touchTrail_;
+
+    // UI text rendering (works on both desktop and Android)
+    engine::ui::UiRenderer uiRenderer_;
+    engine::ui::BitmapFont font_;
+    engine::ui::UiDrawList drawList_;
 };
 
 // ---------------------------------------------------------------------------

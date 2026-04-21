@@ -3,27 +3,138 @@
 #include <bgfx/bgfx.h>
 
 #ifdef __ANDROID__
-// On Android, shaders are loaded at runtime from the assets folder (not embedded).
-// For now, return invalid handles — the test app only clears the screen.
-// Full shader loading from assets will be implemented when games need PBR rendering.
+// On Android, shaders are loaded at runtime from pre-compiled SPIRV binaries
+// stored in the APK's assets/shaders/spirv/ folder.
+
+#include <android/asset_manager.h>
+#include <android/log.h>
+
+#include "engine/platform/android/AndroidGlobals.h"
+
+#define SHADER_LOG(...) __android_log_print(ANDROID_LOG_INFO, "SamaEngine", __VA_ARGS__)
 
 namespace engine::rendering
 {
 
-bgfx::ProgramHandle loadPbrProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadUnlitProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadSpriteProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadShadowProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadSkinnedPbrProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadSkinnedShadowProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadGizmoProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadMsdfProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadSkyboxProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadRoundedRectProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadPostProcessProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadSsaoProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadBlurProgram() { return BGFX_INVALID_HANDLE; }
-bgfx::ProgramHandle loadSlugProgram() { return BGFX_INVALID_HANDLE; }
+namespace
+{
+
+bgfx::ShaderHandle loadShaderFromAsset(const char* path)
+{
+    AAssetManager* am = engine::platform::getAssetManager();
+    if (!am)
+    {
+        SHADER_LOG("loadShader: no AAssetManager for %s", path);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    AAsset* asset = AAssetManager_open(am, path, AASSET_MODE_BUFFER);
+    if (!asset)
+    {
+        SHADER_LOG("loadShader: asset not found: %s", path);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    size_t size = AAsset_getLength(asset);
+    const bgfx::Memory* mem = bgfx::copy(AAsset_getBuffer(asset), static_cast<uint32_t>(size));
+    AAsset_close(asset);
+
+    SHADER_LOG("loadShader: loaded %s (%zu bytes)", path, size);
+    bgfx::ShaderHandle h = bgfx::createShader(mem);
+    SHADER_LOG("loadShader: createShader -> %u (valid=%d)", h.idx, bgfx::isValid(h));
+    return h;
+}
+
+bgfx::ProgramHandle loadProgramFromAssets(const char* vsPath, const char* fsPath)
+{
+    bgfx::ShaderHandle vsh = loadShaderFromAsset(vsPath);
+    if (!bgfx::isValid(vsh))
+        return BGFX_INVALID_HANDLE;
+
+    bgfx::ShaderHandle fsh = loadShaderFromAsset(fsPath);
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return BGFX_INVALID_HANDLE;
+    }
+
+    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+}
+
+}  // anonymous namespace
+
+bgfx::ProgramHandle loadSpriteProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_sprite.bin");
+}
+
+bgfx::ProgramHandle loadRoundedRectProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_rounded_rect.bin",
+                                 "shaders/spirv/fs_rounded_rect.bin");
+}
+
+bgfx::ProgramHandle loadPbrProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_pbr.bin", "shaders/spirv/fs_pbr.bin");
+}
+
+bgfx::ProgramHandle loadUnlitProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_unlit.bin", "shaders/spirv/fs_unlit.bin");
+}
+
+bgfx::ProgramHandle loadShadowProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_shadow.bin", "shaders/spirv/fs_shadow.bin");
+}
+
+bgfx::ProgramHandle loadSkinnedPbrProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_pbr_skinned.bin", "shaders/spirv/fs_pbr.bin");
+}
+
+bgfx::ProgramHandle loadSkinnedShadowProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_shadow_skinned.bin",
+                                 "shaders/spirv/fs_shadow.bin");
+}
+
+bgfx::ProgramHandle loadGizmoProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_gizmo.bin", "shaders/spirv/fs_gizmo.bin");
+}
+
+bgfx::ProgramHandle loadMsdfProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_msdf.bin");
+}
+
+bgfx::ProgramHandle loadSkyboxProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_skybox.bin", "shaders/spirv/fs_skybox.bin");
+}
+
+bgfx::ProgramHandle loadSlugProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_slug.bin", "shaders/spirv/fs_slug.bin");
+}
+
+bgfx::ProgramHandle loadPostProcessProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_postprocess.bin",
+                                 "shaders/spirv/fs_postprocess.bin");
+}
+
+bgfx::ProgramHandle loadSsaoProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_ssao.bin", "shaders/spirv/fs_ssao.bin");
+}
+
+bgfx::ProgramHandle loadBlurProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_blur.bin", "shaders/spirv/fs_blur.bin");
+}
 
 }  // namespace engine::rendering
 

@@ -1,0 +1,16 @@
+{
+    "keys": {},
+    "mouseButtons": {},
+    "axes": [
+        {
+            "name": "MoveX",
+            "negative": "A",
+            "positive": "D"
+        },
+        {
+            "name": "MoveY",
+            "negative": "S",
+            "positive": "W"
+        }
+    ]
+}

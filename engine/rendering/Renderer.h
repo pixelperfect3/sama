@@ -57,6 +57,11 @@ public:
         return postProcess_;
     }
 
+    [[nodiscard]] bool isInitialized() const noexcept
+    {
+        return initialized_;
+    }
+
 private:
     bool initialized_ = false;
     bool headless_ = false;
