@@ -1,55 +1,42 @@
 diff --git a/src/renderer_vk.cpp b/src/renderer_vk.cpp
-index abc1234..def5678 100644
+index aff49c27f..faf79d7b8 100644
 --- a/src/renderer_vk.cpp
 +++ b/src/renderer_vk.cpp
-@@ -14,6 +14,15 @@
+@@ -15,6 +15,10 @@
  #	import <Metal/Metal.h>
  #endif // BX_PLATFORM_OSX
-
-+// Maximum number of swapchain images the Vulkan renderer can manage.
-+// Modern Android devices (e.g., Pixel 9 with Mali GPU, Vulkan 1.3)
-+// report minImageCount >= 5 from vkGetPhysicalDeviceSurfaceCapabilitiesKHR.
-+// The previous default of 4 caused Vulkan init to fail on these devices,
-+// with bgfx silently falling back to OpenGL ES.
-+// Override at compile time: -DNUM_SWAPCHAIN_IMAGE=N
+ 
 +#ifndef NUM_SWAPCHAIN_IMAGE
 +#define NUM_SWAPCHAIN_IMAGE 8
-+#endif // NUM_SWAPCHAIN_IMAGE
++#endif
 +
  namespace bgfx { namespace vk
  {
-@@ -2028,7 +2037,21 @@
- 				compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
- 			}
-
--			m_sci.minImageCount   = surfaceCapabilities.minImageCount;
-+			// Determine desired swapchain image count, clamped to our
-+			// array capacity (NUM_SWAPCHAIN_IMAGE).
-+			uint32_t desiredImageCount = surfaceCapabilities.minImageCount;
-+			if (surfaceCapabilities.maxImageCount > 0
-+			&&  desiredImageCount > surfaceCapabilities.maxImageCount)
-+			{
-+				desiredImageCount = surfaceCapabilities.maxImageCount;
-+			}
-+			if (desiredImageCount > NUM_SWAPCHAIN_IMAGE)
-+			{
-+				BX_TRACE("Warning: device minImageCount %d exceeds "
-+					"NUM_SWAPCHAIN_IMAGE %d — clamping. Recompile "
-+					"with -DNUM_SWAPCHAIN_IMAGE=%d to fix."
-+					, desiredImageCount, NUM_SWAPCHAIN_IMAGE
-+					, desiredImageCount);
-+				desiredImageCount = NUM_SWAPCHAIN_IMAGE;
-+			}
-+			m_sci.minImageCount   = desiredImageCount;
- 			m_sci.imageFormat     = m_backBufferColorFormat.format;
-
-@@ -4235,7 +4258,10 @@
+ 	static char s_viewName[BGFX_CONFIG_MAX_VIEWS][BGFX_CONFIG_MAX_VIEW_NAME];
+@@ -2028,7 +2032,16 @@ VK_IMPORT_DEVICE
+ 				m_sci.pNext = NULL;
+ 				m_sci.flags = 0;
+ 				m_sci.surface = m_surface;
+-				m_sci.minImageCount   = surfaceCapabilities.minImageCount;
++				// Clamp to array capacity — see patches/bgfx_swapchain_fix.patch
++				uint32_t _desiredImages = surfaceCapabilities.minImageCount;
++				if (surfaceCapabilities.maxImageCount > 0 && _desiredImages > surfaceCapabilities.maxImageCount)
++					_desiredImages = surfaceCapabilities.maxImageCount;
++				if (_desiredImages > NUM_SWAPCHAIN_IMAGE)
++				{
++					BX_TRACE("Warning: device minImageCount %d > NUM_SWAPCHAIN_IMAGE %d, clamping.", _desiredImages, (int)NUM_SWAPCHAIN_IMAGE);
++					_desiredImages = NUM_SWAPCHAIN_IMAGE;
++				}
++				m_sci.minImageCount   = _desiredImages;
+ 				m_sci.imageFormat     = m_backBufferColorFormat.format;
+ 				m_sci.imageColorSpace = m_backBufferColorFormat.colorSpace;
+ 				m_sci.imageExtent.width  = width;
+@@ -4235,7 +4248,7 @@ VK_IMPORT_DEVICE
  			vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
  		}
-
+ 
 -#define NUM_SWAPCHAIN_IMAGE 4
-+#ifndef NUM_SWAPCHAIN_IMAGE
 +#define NUM_SWAPCHAIN_IMAGE 8
-+#endif // NUM_SWAPCHAIN_IMAGE
-+
  		VkAllocationCallbacks*   m_allocatorCb;
+ 		VkDebugReportCallbackEXT m_debugReportCallback;
+ 		VkInstance       m_instance;
