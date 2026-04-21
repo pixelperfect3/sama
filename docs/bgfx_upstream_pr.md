@@ -1,6 +1,19 @@
 # Fix Vulkan swapchain image count on Android (NUM_SWAPCHAIN_IMAGE)
 
-## Summary
+## STATUS: ALREADY FIXED UPSTREAM
+
+**This issue has already been fixed in bgfx master.** The latest `renderer_vk.h` uses:
+```cpp
+constexpr uint32_t kMaxBackBuffers = bx::max(BGFX_CONFIG_MAX_BACK_BUFFERS, 10);
+```
+which replaces the old `#define NUM_SWAPCHAIN_IMAGE 4`. No upstream PR is needed.
+
+**Action item:** Update our bgfx.cmake dependency (`CMakeLists.txt`, `GIT_TAG`) to a
+newer commit that includes this fix, then remove the CMake patch in our build.
+
+---
+
+## Original Summary (for reference)
 
 Two fixes for Vulkan swapchain creation failures on modern Android devices:
 
