@@ -1452,6 +1452,7 @@ Items reviewed during the 2026-04-12 engine audit but deferred due to risk or co
 - [ ] **AssetManager string copies in load()**: `pathToSlot_.find(std::string(path))` creates a temporary string on every lookup. Fixing requires enabling transparent hash/comparison on the `ankerl::unordered_dense::map`, which is a nontrivial API change — needs careful testing of the heterogeneous lookup support.
 - [ ] **AnimationSystem boneBuffer_ lifetime documentation**: The raw `boneBuffer_` pointer appears to dangle after the local `pmr::vector` destructs, but is safe because `FrameArena` doesn't reclaim memory until `reset()` at frame end. This is subtle and should have a comment explaining the lifetime contract.
 - [ ] **Transparent hash for asset path lookups**: Several maps in AssetManager and RenderResources use `std::string` keys but are often queried with `std::string_view`. Enabling heterogeneous lookup across these maps would eliminate temporary string allocations on hot paths.
+- [ ] **Update bgfx.cmake dependency**: The current `widberg/bgfx.cmake` (commit `eebff97`) pins bgfx to `5b05c6c` which has `#define NUM_SWAPCHAIN_IMAGE 4` — too small for modern Android devices. bgfx master already fixed this with `kMaxBackBuffers = max(BGFX_CONFIG_MAX_BACK_BUFFERS, 10)`. Our CMake patch works around it, but updating the dependency would let us remove the patch. Risk: bgfx API/shader format changes between versions may require adaptation.
 
 ---
 
