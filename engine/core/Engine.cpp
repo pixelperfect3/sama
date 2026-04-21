@@ -522,10 +522,14 @@ bool Engine::beginFrame(float& outDt)
     // -- Poll Android events ----------------------------------------------
     int events;
     struct android_poll_source* source;
-    int timeout = (androidWindow_->isReady() && focused_) ? 0 : -1;
 
-    while (ALooper_pollAll(timeout, nullptr, &events, reinterpret_cast<void**>(&source)) >= 0)
+    for (;;)
     {
+        // Recompute timeout each iteration: block when not ready to render,
+        // non-blocking (0) when the window is up and focused.
+        int timeout = (androidWindow_->isReady() && focused_) ? 0 : -1;
+        if (ALooper_pollAll(timeout, nullptr, &events, reinterpret_cast<void**>(&source)) < 0)
+            break;
         if (source != nullptr)
             source->process(androidApp_, source);
         if (androidApp_->destroyRequested)
@@ -567,6 +571,9 @@ bool Engine::beginFrame(float& outDt)
     {
         androidGyro_->update(inputState_);
     }
+
+    // -- Renderer begin (bypass post-processing on Android) ---------------
+    renderer_.beginFrameDirect();
 
     return true;
 }

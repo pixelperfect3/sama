@@ -241,6 +241,20 @@ mkdir -p "${STAGING_DIR}/lib/${ABI}"
 # Copy native library
 cp "$SO_PATH" "${STAGING_DIR}/lib/${ABI}/libsama_android.so"
 
+# Copy the shared C++ runtime (required when ANDROID_STL=c++_shared)
+LIBCXX_PATH="${ANDROID_NDK}/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
+case "$ABI" in
+    arm64-v8a)   LIBCXX_ARCH="aarch64-linux-android" ;;
+    armeabi-v7a) LIBCXX_ARCH="arm-linux-androideabi" ;;
+    x86_64)      LIBCXX_ARCH="x86_64-linux-android" ;;
+    x86)         LIBCXX_ARCH="i686-linux-android" ;;
+esac
+if [ -f "${LIBCXX_PATH}/${LIBCXX_ARCH}/libc++_shared.so" ]; then
+    cp "${LIBCXX_PATH}/${LIBCXX_ARCH}/libc++_shared.so" "${STAGING_DIR}/lib/${ABI}/"
+else
+    echo "WARNING: libc++_shared.so not found for ${ABI}"
+fi
+
 # Generate manifest from template
 sed -e "s/com\\.sama\\.engine/${PACKAGE_ID//./\\.}/g" \
     -e "s/Sama Engine/${APP_NAME}/g" \

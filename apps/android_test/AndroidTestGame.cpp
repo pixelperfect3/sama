@@ -27,7 +27,6 @@
 #include "engine/game/IGame.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
-#include "engine/rendering/ViewIds.h"
 
 using namespace engine::core;
 using namespace engine::ecs;
@@ -98,6 +97,7 @@ public:
     void onUpdate(Engine& engine, Registry& /*registry*/, float dt) override
     {
         elapsed_ += dt;
+        frameCount_++;
         const auto& input = engine.inputState();
         const float fbW = static_cast<float>(engine.fbWidth());
         const float fbH = static_cast<float>(engine.fbHeight());
@@ -171,11 +171,13 @@ public:
         }
 
         // --- Render ---
+        // Use view 0 for maximum compatibility (works even without full
+        // renderer setup on Android where shaders are stubbed).
         uint32_t bgColor = hsvToRgba(hue_, 0.6f, brightness_);
-        bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, bgColor, 1.0f, 0);
-        bgfx::setViewRect(kViewOpaque, 0, 0, static_cast<uint16_t>(engine.fbWidth()),
+        bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, bgColor, 1.0f, 0);
+        bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(engine.fbWidth()),
                           static_cast<uint16_t>(engine.fbHeight()));
-        bgfx::touch(kViewOpaque);
+        bgfx::touch(0);
 
         // --- Debug text overlay ---
         bgfx::dbgTextClear();
@@ -241,6 +243,7 @@ private:
     float elapsed_ = 0.0f;
     float hue_ = 200.0f;
     float brightness_ = 0.4f;
+    int frameCount_ = 0;
 
     struct TouchDot
     {
