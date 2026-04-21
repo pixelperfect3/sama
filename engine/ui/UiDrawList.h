@@ -3,6 +3,7 @@
 #include <bgfx/bgfx.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "engine/math/Types.h"
@@ -58,10 +59,13 @@ public:
     void clear()
     {
         commands_.clear();
+        textStorage_.clear();
     }
 
 private:
     std::vector<UiDrawCmd> commands_;
+    // Owns copies of text strings so callers can reuse their buffers.
+    std::vector<std::string> textStorage_;
 };
 
 }  // namespace engine::ui

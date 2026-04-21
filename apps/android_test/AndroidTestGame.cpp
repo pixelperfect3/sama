@@ -210,8 +210,13 @@ public:
 
             char buf[256];
             float y = 10.f;
+#ifdef __ANDROID__
+            const float fontSize = 10.f;
+            const float lineH = 14.f;
+#else
             const float fontSize = 16.f;
             const float lineH = 20.f;
+#endif
             const glm::vec4 white{1.f, 1.f, 1.f, 1.f};
             const glm::vec4 green{0.4f, 1.f, 0.4f, 1.f};
             const glm::vec4 gray{0.7f, 0.7f, 0.7f, 1.f};

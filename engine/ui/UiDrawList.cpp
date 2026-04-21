@@ -30,12 +30,15 @@ void UiDrawList::drawTexturedRect(math::Vec2 pos, math::Vec2 size, bgfx::Texture
 void UiDrawList::drawText(math::Vec2 pos, const char* text, math::Vec4 color, const IFont* font,
                           float fontSize)
 {
+    // Store an owned copy of the string so callers may reuse their buffers.
+    textStorage_.emplace_back(text ? text : "");
+
     UiDrawCmd cmd{};
     cmd.type = UiDrawCmd::Text;
     cmd.position = pos;
     cmd.size = {0.f, 0.f};
     cmd.color = color;
-    cmd.text = text;
+    cmd.text = textStorage_.back().c_str();
     cmd.font = font;
     cmd.fontSize = fontSize;
     commands_.push_back(cmd);
