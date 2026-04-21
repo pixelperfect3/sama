@@ -17,6 +17,9 @@
 
 #include <algorithm>
 #include <cmath>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -142,6 +145,17 @@ public:
 
         // --- Gyro input ---
         const auto& gyro = input.gyro();
+#ifdef __ANDROID__
+        if (frameCount_ % 60 == 1)
+        {
+            __android_log_print(4, "SamaEngine",
+                                "frame=%d gyro: avail=%d pitch=%.2f yaw=%.2f roll=%.2f "
+                                "grav=(%.2f,%.2f,%.2f) hue=%.0f bright=%.2f touches=%zu",
+                                frameCount_, gyro.available ? 1 : 0, gyro.pitchRate, gyro.yawRate,
+                                gyro.rollRate, gyro.gravityX, gyro.gravityY, gyro.gravityZ, hue_,
+                                brightness_, input.touches().size());
+        }
+#endif
         if (gyro.available)
         {
             // Tilt forward/back adjusts brightness
@@ -179,7 +193,9 @@ public:
                           static_cast<uint16_t>(engine.fbHeight()));
         bgfx::touch(0);
 
-        // --- Debug text overlay ---
+        // --- Debug text overlay (desktop only — crashes on Android Release builds
+        //     because BGFX_DEBUG_TEXT is not set and the text blitter isn't initialized) ---
+#ifndef __ANDROID__
         bgfx::dbgTextClear();
         int row = 1;
 
@@ -237,6 +253,7 @@ public:
         bgfx::dbgTextPrintf(1, row++, 0x06, "Drag: draw colored trail");
         bgfx::dbgTextPrintf(1, row++, 0x06, "Gyro tilt: adjust brightness + hue");
         bgfx::dbgTextPrintf(1, row++, 0x06, "Space: reset  |  Escape: quit");
+#endif  // !__ANDROID__
     }
 
 private:

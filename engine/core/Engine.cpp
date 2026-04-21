@@ -446,9 +446,9 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
 
     // -- Gyroscope --------------------------------------------------------
     ALooper* looper = ALooper_forThread();
-    if (looper)
+    if (looper && androidGyro_->init(looper))
     {
-        androidGyro_->init(looper);
+        androidGyro_->setEnabled(true);
     }
 
     // -- Frame arena ------------------------------------------------------
