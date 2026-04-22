@@ -123,6 +123,7 @@ Tracks all decisions and progress made during development.
   - Chosen over IGL (Meta): bgfx has stronger game engine track record, more documentation/examples, includes shader tooling (shaderc)
   - IGL noted as stronger for Android long-tail device fragmentation — revisit if that becomes a pain point
   - Chosen over custom HAL: binary size savings (~1–2MB) do not justify months of low-level Vulkan/Metal boilerplate
+  - **App code should never call bgfx directly.** The engine provides abstractions: `Engine::setClearColor()` for view clearing, `DebugHud` for debug text (replaces `bgfx::dbgTextPrintf`), `RenderResources` for default textures. This ensures game code is portable and doesn't depend on rendering backend internals.
 - **glTF parser: cgltf**
   - Single C header (~7,500 lines), MIT license — smallest viable option
   - Parses glTF 2.0 JSON and binary GLB; handles meshes, materials, textures, scene node trees
