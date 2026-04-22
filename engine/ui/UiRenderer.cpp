@@ -218,6 +218,9 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
     // every UiRenderer caller gets it for free without having to know
     // about the bgfx view mode default.
     bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+    bgfx::setViewRect(viewId, 0, 0, screenW, screenH);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+    bgfx::touch(viewId);
 
     // Set up orthographic projection: (0,0) top-left, (screenW, screenH)
     // bottom-right.  Uses glm::ortho to match the convention in UiRenderSystem.
@@ -225,7 +228,6 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
     const float h = static_cast<float>(screenH);
     const glm::mat4 ortho = glm::ortho(0.f, w, h, 0.f, -1.f, 1.f);
     bgfx::setViewTransform(viewId, nullptr, glm::value_ptr(ortho));
-    bgfx::setViewRect(viewId, 0, 0, screenW, screenH);
 
     const uint64_t blendState =
         BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
