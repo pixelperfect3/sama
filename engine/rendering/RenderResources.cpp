@@ -3,6 +3,65 @@
 namespace engine::rendering
 {
 
+// ---------------------------------------------------------------------------
+// Default textures
+// ---------------------------------------------------------------------------
+
+void RenderResources::createDefaultTextures()
+{
+    // White 2D — fallback for albedo / ORM slots
+    if (!bgfx::isValid(whiteTexture_))
+    {
+        const uint8_t kWhite[4] = {255, 255, 255, 255};
+        whiteTexture_ =
+            bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                                  bgfx::copy(kWhite, sizeof(kWhite)));
+    }
+
+    // Neutral normal — tangent-space (0, 0, 1)
+    if (!bgfx::isValid(neutralNormalTexture_))
+    {
+        const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
+        neutralNormalTexture_ =
+            bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                                  bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
+    }
+
+    // White cube — fallback for unbound IBL cube samplers
+    if (!bgfx::isValid(whiteCubeTexture_))
+    {
+        uint8_t cubeFaces[6 * 4];
+        for (int i = 0; i < 6 * 4; ++i)
+            cubeFaces[i] = 255;
+        whiteCubeTexture_ =
+            bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+                                    bgfx::copy(cubeFaces, sizeof(cubeFaces)));
+    }
+}
+
+void RenderResources::destroyDefaultTextures()
+{
+    if (bgfx::isValid(whiteTexture_))
+    {
+        bgfx::destroy(whiteTexture_);
+        whiteTexture_ = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(neutralNormalTexture_))
+    {
+        bgfx::destroy(neutralNormalTexture_);
+        neutralNormalTexture_ = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(whiteCubeTexture_))
+    {
+        bgfx::destroy(whiteCubeTexture_);
+        whiteCubeTexture_ = BGFX_INVALID_HANDLE;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mesh registry
+// ---------------------------------------------------------------------------
+
 uint32_t RenderResources::addMesh(Mesh mesh)
 {
     uint32_t index{};
@@ -77,6 +136,9 @@ void RenderResources::destroyAll()
     // Texture handles are non-owned — just drop our records.
     textures_.clear();
     textureFreeList_.clear();
+
+    // Destroy default fallback textures (owned by RenderResources).
+    destroyDefaultTextures();
 }
 
 // ---------------------------------------------------------------------------

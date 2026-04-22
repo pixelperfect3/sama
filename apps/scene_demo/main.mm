@@ -197,20 +197,8 @@ int main()
     RenderResources res;
     const uint32_t meshId = res.addMesh(buildMesh(makeCubeMeshData()));
 
-    // 1×1 white texture for unset albedo / ORM slots
-    const uint8_t kWhite[4] = {255, 255, 255, 255};
-    bgfx::TextureHandle whiteTex =
-        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                              bgfx::copy(kWhite, sizeof(kWhite)));
-    res.setWhiteTexture(whiteTex);
-
-    uint8_t cubeFaces[6 * 4];
-    for (int i = 0; i < 6 * 4; ++i)
-        cubeFaces[i] = 255;
-    bgfx::TextureHandle whiteCubeTex =
-        bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                                bgfx::copy(cubeFaces, sizeof(cubeFaces)));
-    res.setWhiteCubeTexture(whiteCubeTex);
+    // Default fallback textures (white 2D, neutral normal, white cube)
+    res.createDefaultTextures();
 
     ShadowRenderer shadow;
     {
@@ -408,10 +396,6 @@ int main()
         bgfx::destroy(shadowProg);
     if (bgfx::isValid(pbrProg))
         bgfx::destroy(pbrProg);
-    if (bgfx::isValid(whiteTex))
-        bgfx::destroy(whiteTex);
-    if (bgfx::isValid(whiteCubeTex))
-        bgfx::destroy(whiteCubeTex);
     res.destroyAll();
 
     renderer.endFrame();  // flush pending destroy commands

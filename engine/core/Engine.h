@@ -160,6 +160,12 @@ public:
 
     [[nodiscard]] bool imguiWantsMouse() const;
 
+    // ----- View 0 clear color -----
+
+    // Set the RGBA clear color for view 0 (default: 0x303030FF).
+    // Call this instead of bgfx::setViewClear directly.
+    void setClearColor(uint32_t rgba);
+
     // ----- Framebuffer dimensions (physical pixels) -----
 
     [[nodiscard]] uint16_t fbWidth() const
@@ -233,11 +239,6 @@ private:
     bgfx::ProgramHandle skinnedPbrProg_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle skinnedShadowProg_ = BGFX_INVALID_HANDLE;
 
-    // Default textures (owned by Engine, destroyed on shutdown)
-    bgfx::TextureHandle whiteTex_ = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle neutralNormalTex_ = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle whiteCubeTex_ = BGFX_INVALID_HANDLE;
-
     // Input
     std::unique_ptr<input::IInputBackend> inputBackend_;
     std::unique_ptr<input::InputSystem> inputSys_;
@@ -254,6 +255,9 @@ private:
     // ImGui scroll accumulator
     float imguiScrollF_ = 0.f;
 #endif
+
+    // View 0 clear color (RGBA)
+    uint32_t clearColor_ = 0x303030FF;
 
     // Frame timing
     double prevTime_ = 0.0;

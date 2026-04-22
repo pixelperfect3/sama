@@ -13,8 +13,6 @@
 // Desktop:  build/android_test  (mouse + keyboard simulate touch/gyro)
 // Android:  linked into libsama_android.so via samaCreateGame()
 
-#include <bgfx/bgfx.h>
-
 #include <algorithm>
 #include <cmath>
 #ifdef __ANDROID__
@@ -205,10 +203,7 @@ public:
         // Use view 0 for maximum compatibility (works even without full
         // renderer setup on Android where shaders are stubbed).
         uint32_t bgColor = hsvToRgba(hue_, 0.6f, brightness_);
-        bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, bgColor, 1.0f, 0);
-        bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(engine.fbWidth()),
-                          static_cast<uint16_t>(engine.fbHeight()));
-        bgfx::touch(0);
+        engine.setClearColor(bgColor);
 
         // --- Text overlay via UiRenderer ---
         {

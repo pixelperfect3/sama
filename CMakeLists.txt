@@ -1156,6 +1156,7 @@ add_library(engine_ui STATIC
     engine/ui/UiRenderer.cpp
     engine/ui/BitmapFont.cpp
     engine/ui/DefaultFont.cpp
+    engine/ui/DebugHud.cpp
     engine/ui/Measure.cpp
     engine/ui/MsdfFont.cpp
     engine/ui/SlugFont.cpp

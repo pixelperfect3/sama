@@ -57,10 +57,30 @@ public:
     void destroyAll();
 
     // -----------------------------------------------------------------------
+    // Default textures — 1×1 fallback textures for unbound slots.
+    //
+    // createDefaultTextures() allocates the white, neutral-normal, and white
+    // cube textures via bgfx and registers them with the setters below.
+    // destroyDefaultTextures() destroys them.  Both are idempotent.
+    //
+    // Callers may still set individual textures manually via the setters
+    // (e.g. if the Engine manages lifetimes externally), but
+    // createDefaultTextures() is the preferred one-call path.
+    // -----------------------------------------------------------------------
+
+    // Create and register all default fallback textures (white 2D, neutral
+    // normal 2D, white cube).  Safe to call multiple times; subsequent calls
+    // are no-ops while valid handles exist.
+    void createDefaultTextures();
+
+    // Destroy the default textures created by createDefaultTextures().
+    // Called automatically by destroyAll().  Safe to call if textures were
+    // never created or have already been destroyed.
+    void destroyDefaultTextures();
+
+    // -----------------------------------------------------------------------
     // White texture — a 1×1 opaque-white texture used as a default fallback
     // when no texture is bound (e.g. SpriteComponent::textureId == 0).
-    // The handle is NOT owned by RenderResources; the caller is responsible
-    // for its lifetime.  destroyAll() does not destroy it.
     // -----------------------------------------------------------------------
 
     void setWhiteTexture(bgfx::TextureHandle h)

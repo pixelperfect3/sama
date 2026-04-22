@@ -40,6 +40,11 @@ namespace engine::core
 
 Engine::Engine() = default;
 
+void Engine::setClearColor(uint32_t rgba)
+{
+    clearColor_ = rgba;
+}
+
 Engine::~Engine()
 {
     if (initialized_)
@@ -53,33 +58,7 @@ Engine::~Engine()
 // Called by both init() and initAndroid().
 // ===========================================================================
 
-namespace
-{
-
-void createDefaultTextures(rendering::RenderResources& resources, bgfx::TextureHandle& whiteTex,
-                           bgfx::TextureHandle& neutralNormalTex, bgfx::TextureHandle& whiteCubeTex)
-{
-    const uint8_t kWhite[4] = {255, 255, 255, 255};
-    whiteTex = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                                     bgfx::copy(kWhite, sizeof(kWhite)));
-    resources.setWhiteTexture(whiteTex);
-
-    const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
-    neutralNormalTex =
-        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                              bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
-    resources.setNeutralNormalTexture(neutralNormalTex);
-
-    uint8_t cubeFaces[6 * 4];
-    for (int i = 0; i < 6 * 4; ++i)
-        cubeFaces[i] = 255;
-    whiteCubeTex =
-        bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
-                                bgfx::copy(cubeFaces, sizeof(cubeFaces)));
-    resources.setWhiteCubeTexture(whiteCubeTex);
-}
-
-}  // namespace
+// (Default textures are now created via RenderResources::createDefaultTextures().)
 
 // ===========================================================================
 // Desktop (GLFW) implementation
@@ -118,7 +97,7 @@ bool Engine::init(const EngineDesc& desc)
     skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
 
     // -- Default textures -------------------------------------------------
-    createDefaultTextures(resources_, whiteTex_, neutralNormalTex_, whiteCubeTex_);
+    resources_.createDefaultTextures();
 
     // -- Shadow renderer --------------------------------------------------
     {
@@ -186,13 +165,6 @@ void Engine::shutdown()
         bgfx::destroy(skinnedPbrProg_);
     if (bgfx::isValid(skinnedShadowProg_))
         bgfx::destroy(skinnedShadowProg_);
-
-    if (bgfx::isValid(whiteTex_))
-        bgfx::destroy(whiteTex_);
-    if (bgfx::isValid(neutralNormalTex_))
-        bgfx::destroy(neutralNormalTex_);
-    if (bgfx::isValid(whiteCubeTex_))
-        bgfx::destroy(whiteCubeTex_);
 
     resources_.destroyAll();
 
@@ -277,6 +249,11 @@ bool Engine::beginFrame(float& outDt)
                         static_cast<int32_t>(my * contentScaleY_), imguiButtons,
                         static_cast<int32_t>(imguiScrollF_), fbW_, fbH_, -1, rendering::kViewImGui);
     }
+
+    // -- View 0 clear / rect / touch --------------------------------------
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor_, 1.0f, 0);
+    bgfx::setViewRect(0, 0, 0, fbW_, fbH_);
+    bgfx::touch(0);
 
     return true;
 }
@@ -448,7 +425,7 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
 
     // -- Default textures -------------------------------------------------
-    createDefaultTextures(resources_, whiteTex_, neutralNormalTex_, whiteCubeTex_);
+    resources_.createDefaultTextures();
 
     // -- Shadow renderer --------------------------------------------------
     {
@@ -500,13 +477,6 @@ void Engine::shutdown()
         bgfx::destroy(skinnedPbrProg_);
     if (bgfx::isValid(skinnedShadowProg_))
         bgfx::destroy(skinnedShadowProg_);
-
-    if (bgfx::isValid(whiteTex_))
-        bgfx::destroy(whiteTex_);
-    if (bgfx::isValid(neutralNormalTex_))
-        bgfx::destroy(neutralNormalTex_);
-    if (bgfx::isValid(whiteCubeTex_))
-        bgfx::destroy(whiteCubeTex_);
 
     resources_.destroyAll();
 
@@ -592,6 +562,11 @@ bool Engine::beginFrame(float& outDt)
 
     // -- Renderer begin (bypass post-processing on Android) ---------------
     renderer_.beginFrameDirect();
+
+    // -- View 0 clear / rect / touch --------------------------------------
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor_, 1.0f, 0);
+    bgfx::setViewRect(0, 0, 0, fbW_, fbH_);
+    bgfx::touch(0);
 
     return true;
 }

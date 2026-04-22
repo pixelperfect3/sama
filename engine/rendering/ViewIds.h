@@ -47,4 +47,7 @@ inline constexpr bgfx::ViewId kMaxPostProcessViews = 32;  // views 16-47
 // do not affect text and icons.  Uses orthographic projection.
 inline constexpr bgfx::ViewId kViewGameUi = 48;
 
+// Debug HUD — on top of everything, for debug/status text overlays.
+inline constexpr bgfx::ViewId kViewDebugHud = 49;
+
 }  // namespace engine::rendering
