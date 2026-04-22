@@ -64,11 +64,21 @@ std::vector<uint8_t> readFileBytes(const char* path)
 
 bool MsdfFont::loadFromFile(const char* metricsPath, const char* atlasPath)
 {
+    const std::vector<uint8_t> jsonBytes = readFileBytes(metricsPath);
+    const std::vector<uint8_t> pngBytes = readFileBytes(atlasPath);
+    if (jsonBytes.empty() || pngBytes.empty())
+        return false;
+    return loadFromMemory(jsonBytes.data(), jsonBytes.size(), pngBytes.data(), pngBytes.size());
+}
+
+bool MsdfFont::loadFromMemory(const void* jsonData, std::size_t jsonSize, const void* pngData,
+                              std::size_t pngSize)
+{
     shutdown();
 
     // -- 1) Parse JSON metrics --------------------------------------------
     io::JsonDocument doc;
-    if (!doc.parseFile(metricsPath))
+    if (!doc.parse(static_cast<const char*>(jsonData), jsonSize))
         return false;
 
     const io::JsonValue root = doc.root();
@@ -200,16 +210,10 @@ bool MsdfFont::loadFromFile(const char* metricsPath, const char* atlasPath)
     }
 
     // -- 2) Decode the atlas PNG ------------------------------------------
-    const std::vector<uint8_t> pngBytes = readFileBytes(atlasPath);
-    if (pngBytes.empty())
-    {
-        shutdown();
-        return false;
-    }
-
     int w = 0, h = 0, channels = 0;
-    stbi_uc* pixels = stbi_load_from_memory(pngBytes.data(), static_cast<int>(pngBytes.size()), &w,
-                                            &h, &channels, STBI_rgb_alpha);
+    stbi_uc* pixels =
+        stbi_load_from_memory(static_cast<const stbi_uc*>(pngData), static_cast<int>(pngSize), &w,
+                              &h, &channels, STBI_rgb_alpha);
     if (!pixels)
     {
         shutdown();

@@ -20,7 +20,7 @@ Game Project
 
 The export pipeline cross-compiles the engine + game via the Android NDK, processes assets for the target tier (texture compression, shader compilation, optional LOD), and packages everything into a signed APK or AAB.
 
-bgfx already supports OpenGL ES 3.x and Vulkan on Android, so the renderer requires zero shader or pipeline changes. The work is in the platform layer, asset pipeline, and packaging toolchain.
+bgfx supports Vulkan on Android. The renderer requires one platform-specific change: setting `formatColor = RGBA8` (Android surfaces don't support bgfx's default BGRA8). The rest of the work is in the platform layer, asset pipeline, and packaging toolchain.
 
 ---
 
@@ -388,17 +388,50 @@ SPIRV shaders are pre-compiled on the host machine and bundled into the APK:
 
 At runtime, `AndroidFileSystem` loads `.bin` shader binaries from APK assets via `AAssetManager`. The shader loading path is identical to desktop — only the binary format differs (SPIRV vs Metal).
 
-### bgfx NUM_SWAPCHAIN_IMAGE Patch
+### bgfx Swapchain Image Count (RESOLVED)
 
-bgfx hardcodes `NUM_SWAPCHAIN_IMAGE=4` in its Vulkan backend. The Pixel 9 (and potentially other devices) requires 5 swapchain images. When bgfx cannot acquire enough images, Vulkan validation layers report `VK_ERROR_OUT_OF_DATE_KHR` and rendering fails silently.
+bgfx previously hardcoded `NUM_SWAPCHAIN_IMAGE=4` in its Vulkan backend. The Pixel 9 (and other modern Android devices) requires 5 swapchain images, causing Vulkan init to fail silently and fall back to OpenGL ES.
 
-**Fix:** We patch `NUM_SWAPCHAIN_IMAGE` to 8 at CMake configure time via a compile definition on the bgfx target. This is safe because the array is stack-allocated and the extra 4 slots cost only ~128 bytes. The patch is applied in the top-level `CMakeLists.txt`:
+**Resolution:** We updated bgfx.cmake from the stale `widberg/bgfx.cmake` fork to the official `bkaradzic/bgfx.cmake` repo. The upstream bgfx now uses `kMaxBackBuffers = bx::max(BGFX_CONFIG_MAX_BACK_BUFFERS, 10)`, which natively supports up to 10 swapchain images. No CMake patch is needed.
 
-```cmake
-target_compile_definitions(bgfx PRIVATE BGFX_CONFIG_MAX_FRAME_BUFFER_ATTACHMENTS=8)
+### Vulkan Surface Format (RGBA8 vs BGRA8)
+
+bgfx defaults `Resolution::formatColor` to `TextureFormat::BGRA8` (`VK_FORMAT_B8G8R8A8_UNORM`). On Android, Mali and Adreno GPUs typically only expose `VK_FORMAT_R8G8B8A8_UNORM` (RGBA8) as a Vulkan surface format. BGRA8 is optional on mobile per the Vulkan spec. If the requested format doesn't match a supported surface format, bgfx's swapchain creation fails silently and it falls back to OpenGL ES.
+
+**Fix:** `Renderer::init()` sets `init.resolution.formatColor = bgfx::TextureFormat::RGBA8` on Android. RGBA8 is mandatory for all Vulkan-capable Android devices per the Android CDD.
+
+**Why not auto-detect?** bgfx's `getCaps()->formats[]` with `BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER` reports which formats the surface supports, but this data is populated *during* `bgfx::init()` — after the swapchain is already created with `formatColor`. There is no pre-init query API. A pre-init Vulkan surface query (creating a temporary VkInstance) would work but is unnecessarily complex given that RGBA8 is universally supported on Android. If a future device requires a different format, the fix would be to add a pre-init Vulkan surface format query in `Renderer::init()`.
+
+### Emulator Testing
+
+Android emulators on macOS Apple Silicon (M3) support Vulkan via gfxstream -> MoltenVK -> Metal translation. Three AVDs are configured for tier testing:
+
+| AVD | Device | API | Resolution | RAM | Use case |
+|-----|--------|-----|------------|-----|----------|
+| `sama_low` | Pixel | 31 | 720x1280 | 2GB | Low-end / minimum spec |
+| `sama_mid` | Pixel 6 | 33 | 1080x2400 | 4GB | Mid-range baseline |
+| `sama_high` | Pixel 7 Pro | 34 | 1440x3120 | 6GB | High-end / flagship |
+
+**Launch and test:**
+```bash
+# Start emulator (headless)
+$HOME/Android/Sdk/emulator/emulator -avd sama_mid -gpu host -no-snapshot -no-audio -no-window &
+
+# Wait for boot, install, launch
+adb wait-for-device
+adb install -r build/android/Game.apk
+adb shell am start -n com.sama.game/android.app.NativeActivity
+
+# Check logs
+adb logcat -d | grep "SamaEngine"
+
+# Kill emulator
+adb emu kill
 ```
 
-**Upstream opportunity:** This could be contributed back to bgfx as a configurable `BGFX_CONFIG_` define (it currently is not). Filed as a potential upstream PR.
+**bgfx fragment shading rate patch:** bgfx unconditionally chains `VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR` into `vkGetPhysicalDeviceProperties2` pNext. This is valid per the Vulkan spec (drivers should ignore unknown pNext structs), but the emulator's gfxstream layer aborts on unrecognized struct types. We patch this in `patches/bgfx_emulator_compat.patch` to only chain the struct when the extension is supported. This patch is applied via `PATCH_COMMAND` in CMakeLists.txt.
+
+**Emulator limitations:** Vulkan 1.1 only (via MoltenVK), limited extensions, no fragment shading rate. The MoltenVK backend supports BGRA8 (unlike real Mali hardware), so the RGBA8 surface format issue is not reproduced on emulators. Use real hardware to validate GPU-specific behavior.
 
 ### Known Limitations (Current State)
 
@@ -435,7 +468,7 @@ target_compile_definitions(bgfx PRIVATE BGFX_CONFIG_MAX_FRAME_BUFFER_ATTACHMENTS
 
 - **SPIRV shaders loaded from APK assets at runtime.** The alternative was embedding shader binaries directly into the `.so` via `xxd` or `#include` of binary arrays. We chose APK asset loading because: (1) it keeps the shared library small and avoids bloating the text segment, (2) shaders can be updated without recompiling native code, (3) it mirrors the desktop pattern where shaders are loaded from the filesystem, and (4) `AAssetManager` provides zero-copy access which is as fast as embedded data. The tradeoff is a dependency on the asset packaging step in `build_apk.sh`, but this is already required for textures and models.
 
-- **bgfx NUM_SWAPCHAIN_IMAGE patch via CMake.** bgfx hardcodes this to 4, but Vulkan drivers on some devices (confirmed: Pixel 9) request more images than bgfx can handle. Rather than forking bgfx, we apply the fix as a compile definition (`-DBGFX_CONFIG_MAX_FRAME_BUFFER_ATTACHMENTS=8`) on the bgfx target at configure time. This is minimally invasive, easy to remove if upstream accepts the change, and costs only ~128 bytes of stack space. The value 8 was chosen to be generous — no known device requests more than 5.
+- **bgfx dependency: official bkaradzic/bgfx.cmake.** We use the official bgfx CMake wrapper (`bkaradzic/bgfx.cmake`) rather than the stale `widberg/bgfx.cmake` fork. The official repo includes the swapchain image count fix (`kMaxBackBuffers = max(BGFX_CONFIG_MAX_BACK_BUFFERS, 10)`), eliminating the need for our old CMake patch. The bgfx.cmake update also required adapting to API changes: `shaderc_parse` → `_bgfx_shaderc_parse`, `mtxFromCols3` → `mtxFromCols`, `instMul` → `mul`, ImGui `KeyMap`/`KeysDown` → `AddKeyEvent`, and disabling WGSL shader support (`BGFX_PLATFORM_SUPPORTS_WGSL=0`).
 
 - **`samaCreateGame()` extern linkage vs registration.** The Android entry point uses `extern engine::game::IGame* samaCreateGame()` -- a function the game defines and the engine calls. The alternative was a registration pattern (e.g., `REGISTER_GAME(MyGame)` macro expanding to a static initializer). We chose extern linkage because: (1) it is explicit and easy to understand, (2) there is exactly one game per APK so a registry is unnecessary, (3) static initialization order issues are avoided entirely, and (4) the pattern is familiar from `main()` itself.
 

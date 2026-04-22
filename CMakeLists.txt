@@ -88,10 +88,17 @@ if(NOT SAMA_ANDROID)
     set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
 endif()
 
+# Android emulator compat patch: bgfx unconditionally chains
+# VK_KHR_fragment_shading_rate into vkGetPhysicalDeviceProperties2 pNext,
+# which crashes the emulator's gfxstream Vulkan translation layer.
+# The patch gates this on the extension being reported as supported.
 FetchContent_Declare(
     bgfx_cmake
-    GIT_REPOSITORY https://github.com/widberg/bgfx.cmake.git
-    GIT_TAG        eebff97af2a34c695cdc058c63ba527c6ebebc76
+    GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
+    GIT_TAG        98d6c112a427bf218b9c9aaee0128af3b0336584
+    PATCH_COMMAND  ${CMAKE_COMMAND} -E env git apply --whitespace=nowarn
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_emulator_compat.patch
+                   || ${CMAKE_COMMAND} -E echo "Patch already applied or not needed"
 )
 
 # cgltf — single-header glTF 2.0 parser (MIT).
@@ -117,39 +124,6 @@ if(SAMA_ANDROID)
     FetchContent_MakeAvailable(Catch2 glm bgfx_cmake cgltf JoltPhysics)
 else()
     FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
-endif()
-
-# Patch bgfx Vulkan renderer for modern Android devices.
-# bgfx hardcodes NUM_SWAPCHAIN_IMAGE=4, but modern devices (Pixel 9, etc.)
-# request minImageCount=5, causing Vulkan init to fail silently and fall back
-# to OpenGL ES. Two patches:
-# 1. Raise NUM_SWAPCHAIN_IMAGE from 4 to 8 with #ifndef guard
-# 2. Clamp minImageCount to array capacity with a clear warning
-set(_BGFX_VK_SRC "${bgfx_cmake_SOURCE_DIR}/bgfx/src/renderer_vk.cpp")
-if(EXISTS "${_BGFX_VK_SRC}")
-    file(READ "${_BGFX_VK_SRC}" _vk_content)
-
-    # Patch 1: Make NUM_SWAPCHAIN_IMAGE overridable and raise default to 8
-    string(REPLACE
-        "#define NUM_SWAPCHAIN_IMAGE 4"
-        "#ifndef NUM_SWAPCHAIN_IMAGE\n#define NUM_SWAPCHAIN_IMAGE 8\n#endif // NUM_SWAPCHAIN_IMAGE"
-        _vk_content "${_vk_content}")
-
-    # Patch 2: Add early forward-define so the clamping code can reference it
-    # (the #define lives in the class body near line 4238, but we need it earlier)
-    # Use a unique anchor that appears only once near the top of the file.
-    string(REPLACE
-        "#endif // BX_PLATFORM_OSX"
-        "#endif // BX_PLATFORM_OSX\n\n#ifndef NUM_SWAPCHAIN_IMAGE\n#define NUM_SWAPCHAIN_IMAGE 8\n#endif"
-        _vk_content "${_vk_content}")
-
-    # Patch 3: Clamp minImageCount to array capacity instead of failing
-    string(REPLACE
-        "m_sci.minImageCount   = surfaceCapabilities.minImageCount;"
-        "// Clamp to array capacity — see patches/bgfx_swapchain_fix.patch\n\t\t\t\tuint32_t _desiredImages = surfaceCapabilities.minImageCount;\n\t\t\t\tif (surfaceCapabilities.maxImageCount > 0 && _desiredImages > surfaceCapabilities.maxImageCount)\n\t\t\t\t\t_desiredImages = surfaceCapabilities.maxImageCount;\n\t\t\t\tif (_desiredImages > NUM_SWAPCHAIN_IMAGE)\n\t\t\t\t{\n\t\t\t\t\tBX_TRACE(\"Warning: device minImageCount %d > NUM_SWAPCHAIN_IMAGE %d, clamping.\", _desiredImages, (int)NUM_SWAPCHAIN_IMAGE);\n\t\t\t\t\t_desiredImages = NUM_SWAPCHAIN_IMAGE;\n\t\t\t\t}\n\t\t\t\tm_sci.minImageCount   = _desiredImages;"
-        _vk_content "${_vk_content}")
-
-    file(WRITE "${_BGFX_VK_SRC}" "${_vk_content}")
 endif()
 
 # Suppress warnings from third-party dependencies — we don't own this code.
@@ -264,7 +238,12 @@ set(VARYING_PP_DEF     ${SHADER_SRC_DIR}/varying_pp.def.sc)
 function(compile_shader FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
     set(OUT_FILE ${SHADER_OUT_DIR}/${BIN2C_NAME}.bin.h)
 
-    # Build the shaderc_parse argument list; PROFILE is optional (empty = omit).
+    # Default empty PROFILE to 100_es for ANDROID (ESSL).
+    set(_PROFILE "${PROFILE}")
+    if("${_PROFILE}" STREQUAL "" AND "${PLATFORM}" STREQUAL "ANDROID")
+        set(_PROFILE "100_es")
+    endif()
+
     set(_PARSE_ARGS
         FILE       ${FILE}
         OUTPUT     ${OUT_FILE}
@@ -274,18 +253,18 @@ function(compile_shader FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
         VARYINGDEF ${VARYING_DEF}
         INCLUDES   ${SHADER_INCLUDE_DIR}
     )
-    if(NOT "${PROFILE}" STREQUAL "")
-        list(APPEND _PARSE_ARGS PROFILE ${PROFILE})
+    if(NOT "${_PROFILE}" STREQUAL "")
+        list(APPEND _PARSE_ARGS PROFILE ${_PROFILE})
     endif()
 
-    shaderc_parse(CLI ${_PARSE_ARGS})
+    _bgfx_shaderc_parse(CLI ${_PARSE_ARGS})
 
     add_custom_command(
         OUTPUT  ${OUT_FILE}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUT_DIR}
-        COMMAND $<TARGET_FILE:shaderc> ${CLI}
+        COMMAND bgfx::shaderc ${CLI}
         MAIN_DEPENDENCY ${FILE}
-        DEPENDS ${VARYING_DEF} shaderc
+        DEPENDS ${VARYING_DEF} bgfx::shaderc
         COMMENT "Compiling shader ${BIN2C_NAME}"
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
@@ -297,6 +276,11 @@ endfunction()
 function(compile_shader_pp FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
     set(OUT_FILE ${SHADER_OUT_DIR}/${BIN2C_NAME}.bin.h)
 
+    set(_PROFILE "${PROFILE}")
+    if("${_PROFILE}" STREQUAL "" AND "${PLATFORM}" STREQUAL "ANDROID")
+        set(_PROFILE "100_es")
+    endif()
+
     set(_PARSE_ARGS
         FILE       ${FILE}
         OUTPUT     ${OUT_FILE}
@@ -306,18 +290,18 @@ function(compile_shader_pp FILE TYPE PLATFORM PROFILE BIN2C_NAME OUT_LIST)
         VARYINGDEF ${VARYING_PP_DEF}
         INCLUDES   ${SHADER_INCLUDE_DIR}
     )
-    if(NOT "${PROFILE}" STREQUAL "")
-        list(APPEND _PARSE_ARGS PROFILE ${PROFILE})
+    if(NOT "${_PROFILE}" STREQUAL "")
+        list(APPEND _PARSE_ARGS PROFILE ${_PROFILE})
     endif()
 
-    shaderc_parse(CLI ${_PARSE_ARGS})
+    _bgfx_shaderc_parse(CLI ${_PARSE_ARGS})
 
     add_custom_command(
         OUTPUT  ${OUT_FILE}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUT_DIR}
-        COMMAND $<TARGET_FILE:shaderc> ${CLI}
+        COMMAND bgfx::shaderc ${CLI}
         MAIN_DEPENDENCY ${FILE}
-        DEPENDS ${VARYING_PP_DEF} shaderc
+        DEPENDS ${VARYING_PP_DEF} bgfx::shaderc
         COMMENT "Compiling shader ${BIN2C_NAME}"
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
@@ -683,7 +667,7 @@ target_include_directories(engine_debug PUBLIC
     ${_BGFX_IMGUI_DIR}
 )
 
-target_link_libraries(engine_debug PUBLIC bgfx bx)
+target_link_libraries(engine_debug PUBLIC bgfx bx bimg)
 
 # --- engine_assets static library ---
 add_library(engine_assets STATIC
@@ -842,11 +826,10 @@ endif()
 # Increase bgfx bone matrix limit from default 32 to 128 for skeletal animation.
 # u_model[128] = 512 vec4 uniforms, fits in BGFX_CONFIG_MAX_UNIFORMS (512).
 target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BONES=128)
+# Disable WebGPU/WGSL support — we don't compile WGSL shaders.
+target_compile_definitions(bgfx PUBLIC BGFX_PLATFORM_SUPPORTS_WGSL=0)
 if(SAMA_ANDROID)
     target_compile_definitions(bx PUBLIC BX_ANDROID_LOG_TAG="bgfx")
-    # Pixel 9 (and other modern Android devices) request 5 swapchain images.
-    # bgfx defaults to 4 which causes Vulkan init to fail.
-    target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BACK_BUFFERS=8)
 endif()
 
 # Same GLM flags as engine_tests to ensure consistent behaviour when rendering

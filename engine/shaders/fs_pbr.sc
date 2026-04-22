@@ -115,7 +115,7 @@ void main()
 
     // Transform tangent-space normal to world space.
     // Expanded manually (T*ns.x + B*ns.y + N*ns.z) to avoid
-    // mtxFromCols3 which transposes on Metal's shader path.
+    // mtxFromCols which transposes on Metal's shader path.
     vec3 N = normalize(T * normalSample.x + B * normalSample.y + Ngeom * normalSample.z);
 
     // -----------------------------------------------------------------------

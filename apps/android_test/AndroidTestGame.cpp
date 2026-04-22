@@ -32,8 +32,14 @@
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
 #include "engine/ui/BitmapFont.h"
+#include "engine/ui/MsdfFont.h"
 #include "engine/ui/UiDrawList.h"
 #include "engine/ui/UiRenderer.h"
+#ifdef __ANDROID__
+#include <android/asset_manager.h>
+
+#include "engine/platform/android/AndroidGlobals.h"
+#endif
 
 using namespace engine::core;
 using namespace engine::ecs;
@@ -102,6 +108,7 @@ public:
 
         uiRenderer_.init();
         font_.createDebugFont();
+        loadMsdfFont();
     }
 
     void onUpdate(Engine& engine, Registry& /*registry*/, float dt) override
@@ -310,6 +317,16 @@ public:
                      (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF, hue_,
                      brightness_);
             drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH * 1.5f;
+
+            // MSDF font test line
+            if (msdfFont_.glyphCount() > 0)
+            {
+                const glm::vec4 yellow{1.f, 0.95f, 0.4f, 1.f};
+                drawList_.drawText({leftMargin, y}, "ChunkFive MSDF: The quick brown fox!", yellow,
+                                   &msdfFont_, fontSize * 1.5f);
+                y += lineH * 2.f;
+            }
 
             // Render UI on view 48 (kViewGameUi)
             uiRenderer_.render(drawList_, 48, engine.fbWidth(), engine.fbHeight());
@@ -334,7 +351,36 @@ private:
     // UI text rendering (works on both desktop and Android)
     engine::ui::UiRenderer uiRenderer_;
     engine::ui::BitmapFont font_;
+    engine::ui::MsdfFont msdfFont_;
     engine::ui::UiDrawList drawList_;
+
+    void loadMsdfFont()
+    {
+#ifdef __ANDROID__
+        AAssetManager* am = engine::platform::getAssetManager();
+        if (!am)
+            return;
+        auto readAsset = [&](const char* path) -> std::vector<uint8_t>
+        {
+            AAsset* asset = AAssetManager_open(am, path, AASSET_MODE_BUFFER);
+            if (!asset)
+                return {};
+            auto len = AAsset_getLength(asset);
+            const void* buf = AAsset_getBuffer(asset);
+            std::vector<uint8_t> data(static_cast<size_t>(len));
+            std::memcpy(data.data(), buf, data.size());
+            AAsset_close(asset);
+            return data;
+        };
+        auto json = readAsset("fonts/ChunkFive-msdf.json");
+        auto png = readAsset("fonts/ChunkFive-msdf.png");
+        if (!json.empty() && !png.empty())
+            msdfFont_.loadFromMemory(json.data(), json.size(), png.data(), png.size());
+#else
+        msdfFont_.loadFromFile("assets/fonts/ChunkFive-msdf.json",
+                               "assets/fonts/ChunkFive-msdf.png");
+#endif
+    }
 };
 
 // ---------------------------------------------------------------------------

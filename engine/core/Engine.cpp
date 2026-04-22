@@ -135,20 +135,6 @@ bool Engine::init(const EngineDesc& desc)
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigWindowsMoveFromTitleBarOnly = true;
 
-        io.KeyMap[ImGuiKey_UpArrow] = GLFW_KEY_UP;
-        io.KeyMap[ImGuiKey_DownArrow] = GLFW_KEY_DOWN;
-        io.KeyMap[ImGuiKey_LeftArrow] = GLFW_KEY_LEFT;
-        io.KeyMap[ImGuiKey_RightArrow] = GLFW_KEY_RIGHT;
-        io.KeyMap[ImGuiKey_PageUp] = GLFW_KEY_PAGE_UP;
-        io.KeyMap[ImGuiKey_PageDown] = GLFW_KEY_PAGE_DOWN;
-        io.KeyMap[ImGuiKey_Home] = GLFW_KEY_HOME;
-        io.KeyMap[ImGuiKey_End] = GLFW_KEY_END;
-        io.KeyMap[ImGuiKey_Enter] = GLFW_KEY_ENTER;
-        io.KeyMap[ImGuiKey_Escape] = GLFW_KEY_ESCAPE;
-        io.KeyMap[ImGuiKey_Space] = GLFW_KEY_SPACE;
-        io.KeyMap[ImGuiKey_Backspace] = GLFW_KEY_BACKSPACE;
-        io.KeyMap[ImGuiKey_Tab] = GLFW_KEY_TAB;
-
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     }
 
@@ -269,12 +255,23 @@ bool Engine::beginFrame(float& outDt)
         if (glfwGetMouseButton(glfwHandle_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS)
             imguiButtons |= IMGUI_MBUT_MIDDLE;
 
-        // Feed keyboard nav state for ImGui.
-        ImGuiIO& io = ImGui::GetIO();
-        static const int kNavKeys[] = {GLFW_KEY_UP,        GLFW_KEY_DOWN, GLFW_KEY_PAGE_UP,
-                                       GLFW_KEY_PAGE_DOWN, GLFW_KEY_HOME, GLFW_KEY_END};
-        for (int k : kNavKeys)
-            io.KeysDown[k] = (glfwGetKey(glfwHandle_, k) == GLFW_PRESS);
+        // Feed keyboard nav state for ImGui via the modern AddKeyEvent API.
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            struct GlfwImGuiKeyMapping
+            {
+                int glfwKey;
+                ImGuiKey imguiKey;
+            };
+            static const GlfwImGuiKeyMapping kNavKeys[] = {
+                {GLFW_KEY_UP, ImGuiKey_UpArrow},     {GLFW_KEY_DOWN, ImGuiKey_DownArrow},
+                {GLFW_KEY_PAGE_UP, ImGuiKey_PageUp}, {GLFW_KEY_PAGE_DOWN, ImGuiKey_PageDown},
+                {GLFW_KEY_HOME, ImGuiKey_Home},      {GLFW_KEY_END, ImGuiKey_End},
+            };
+            for (const auto& mapping : kNavKeys)
+                io.AddKeyEvent(mapping.imguiKey,
+                               glfwGetKey(glfwHandle_, mapping.glfwKey) == GLFW_PRESS);
+        }
 
         imguiBeginFrame(static_cast<int32_t>(mx * contentScaleX_),
                         static_cast<int32_t>(my * contentScaleY_), imguiButtons,

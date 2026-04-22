@@ -12,7 +12,7 @@ void main()
     model[1] = i_data1;
     model[2] = i_data2;
     model[3] = i_data3;
-    vec4 worldPos = instMul(model, vec4(a_position, 1.0));
+    vec4 worldPos = mul(model, vec4(a_position, 1.0));
     v_worldPos    = worldPos.xyz;
     gl_Position   = mul(u_viewProj, worldPos);
 }

@@ -28,6 +28,10 @@ if [ ! -x "$SHADERC" ]; then
     SHADERC="${PROJECT_ROOT}/build/_deps/bgfx_cmake-build/shaderc"
 fi
 if [ ! -x "$SHADERC" ]; then
+    # bkaradzic/bgfx.cmake puts shaderc under cmake/bgfx/
+    SHADERC="${PROJECT_ROOT}/build/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+fi
+if [ ! -x "$SHADERC" ]; then
     SHADERC=$(command -v shaderc 2>/dev/null || true)
 fi
 if [ -z "$SHADERC" ] || [ ! -x "$SHADERC" ]; then
@@ -78,12 +82,13 @@ echo "  shaderc: $SHADERC"
 echo "  output:  $OUT_DIR"
 echo ""
 
-# Minimum set: sprite + rounded_rect (for UiRenderer + BitmapFont)
+# Minimum set: sprite + rounded_rect + msdf (for UiRenderer + BitmapFont + MsdfFont)
 echo "[Minimum] UiRenderer shaders:"
 compile_shader vertex   "$SHADER_DIR/vs_sprite.sc"        "$OUT_DIR/vs_sprite.bin"
 compile_shader fragment "$SHADER_DIR/fs_sprite.sc"        "$OUT_DIR/fs_sprite.bin"
 compile_shader vertex   "$SHADER_DIR/vs_rounded_rect.sc"  "$OUT_DIR/vs_rounded_rect.bin"
 compile_shader fragment "$SHADER_DIR/fs_rounded_rect.sc"  "$OUT_DIR/fs_rounded_rect.bin"
+compile_shader fragment "$SHADER_DIR/fs_msdf.sc"          "$OUT_DIR/fs_msdf.bin"
 
 if [ "$COMPILE_ALL" = true ]; then
     echo ""

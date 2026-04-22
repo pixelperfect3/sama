@@ -45,6 +45,10 @@ public:
     // default-constructed state on failure (safe to re-try).
     bool loadFromFile(const char* metricsPath, const char* atlasPath);
 
+    // Load from in-memory buffers (e.g. read from Android APK assets).
+    bool loadFromMemory(const void* jsonData, std::size_t jsonSize, const void* pngData,
+                        std::size_t pngSize);
+
     // Release GPU resources (atlas texture, program, uniform). Safe to call
     // multiple times or when load never succeeded.
     void shutdown();

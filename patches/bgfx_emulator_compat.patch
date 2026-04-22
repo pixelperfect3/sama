@@ -1,0 +1,21 @@
+diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
+index 1234567..abcdefg 100644
+--- a/bgfx/src/renderer_vk.cpp
++++ b/bgfx/src/renderer_vk.cpp
+@@ -1602,8 +1602,14 @@ VK_IMPORT_DEVICE
+ 				if (vkGetPhysicalDeviceProperties2KHR) {
+ 					VkPhysicalDeviceProperties2KHR pdp2;
+ 					pdp2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+-					pdp2.pNext = &m_deviceShadingRateImageProperties;
+-
++					// Only chain fragment shading rate properties when the
++					// extension is reported as supported.  Chaining unsupported
++					// structs is valid per the Vulkan spec, but the Android
++					// emulator's gfxstream layer aborts on unknown pNext types.
++					pdp2.pNext = s_extension[Extension::KHR_fragment_shading_rate].m_supported
++						? (void*)&m_deviceShadingRateImageProperties
++						: NULL
++						;
+ 					vkGetPhysicalDeviceProperties2KHR(m_physicalDevice, &pdp2);
+ 					m_deviceProperties = pdp2.properties;
+ 				} else

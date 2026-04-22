@@ -247,6 +247,15 @@ if [ -d "${PROJECT_ROOT}/assets/shaders/spirv" ]; then
     echo "  Copied pre-compiled SPIRV shaders"
 fi
 
+# Copy raw MSDF font files (JSON + PNG) — the asset tool converts PNGs to KTX
+# but MsdfFont::loadFromMemory needs the original JSON metrics and PNG atlas.
+if [ -d "${PROJECT_ROOT}/assets/fonts" ]; then
+    mkdir -p "${ASSETS_OUTPUT}/fonts"
+    cp "${PROJECT_ROOT}/assets/fonts"/*-msdf.json "${ASSETS_OUTPUT}/fonts/" 2>/dev/null
+    cp "${PROJECT_ROOT}/assets/fonts"/*-msdf.png "${ASSETS_OUTPUT}/fonts/" 2>/dev/null
+    echo "  Copied MSDF font assets (JSON + PNG)"
+fi
+
 # ── Step 3: Create APK staging directory ────────────────────────────────────
 
 echo "[3/7] Staging APK contents..."

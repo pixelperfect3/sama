@@ -38,13 +38,13 @@ void main()
     gl_Position = mul(u_viewProj, worldPos);
 
     // Extract upper-left 3x3 from the skin matrix for normal transform.
-    mat3 m3 = mtxFromCols3(skinMatrix[0].xyz, skinMatrix[1].xyz, skinMatrix[2].xyz);
+    mat3 m3 = mtxFromCols(skinMatrix[0].xyz, skinMatrix[1].xyz, skinMatrix[2].xyz);
 #else
     // Static mesh path: single world transform from u_model[0].
     vec4 worldPos = mul(u_model[0], vec4(a_position, 1.0));
     gl_Position = mul(u_modelViewProj, vec4(a_position, 1.0));
 
-    mat3 m3 = mtxFromCols3(u_model[0][0].xyz, u_model[0][1].xyz, u_model[0][2].xyz);
+    mat3 m3 = mtxFromCols(u_model[0][0].xyz, u_model[0][1].xyz, u_model[0][2].xyz);
 #endif
 
     v_worldPos = worldPos.xyz;

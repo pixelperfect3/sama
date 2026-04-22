@@ -1498,9 +1498,30 @@ The Android event loop in `Engine::beginFrame()` uses `ALooper_pollAll(timeout, 
 
 On desktop, `beginFrame()` sets up the post-process framebuffer (bloom, FXAA, tone mapping) and begins an ImGui frame. On Android, shaders are stubbed so the post-process pipeline cannot function. Rather than conditionally initializing an incomplete post-process chain, Android calls `renderer_.beginFrameDirect()` which targets the swapchain directly. This means games on Android render to view 0 without any intermediate framebuffer. The tradeoff is no post-effects, but the benefit is simplicity and guaranteed correctness -- there is no half-broken pipeline producing artifacts. When shader loading is implemented, the Android path can switch to the full `beginFrame` pipeline.
 
-**Shader stubs return `BGFX_INVALID_HANDLE` (games can still clear screen)**
+**SPIRV shader pipeline for Android**
 
-On Android, `ShaderLoader.cpp` returns `BGFX_INVALID_HANDLE` for all shader programs. This is intentional rather than loading placeholder shaders, because: (1) shader compilation for Android requires cross-compiling with `shaderc` to SPIR-V, which the build pipeline does not yet do, (2) returning invalid handles is safe -- bgfx silently skips draw calls with invalid programs, (3) games that only need `bgfx::setViewClear()` + `bgfx::touch()` work perfectly without shaders, and (4) it provides a clear signal to game code (`bgfx::isValid(program)`) for conditional rendering paths.
+Android shaders are cross-compiled to SPIRV using the desktop-built `shaderc` binary (`android/compile_shaders.sh`). The compiled `.bin` files are packaged into the APK's `assets/shaders/spirv/` directory and loaded at runtime via `AAssetManager`. The minimum shader set (sprite, rounded_rect, msdf) is compiled by default; `--all` compiles the full engine shader suite. The `fs_msdf` shader is included in the minimum set to support `MsdfFont` text rendering on Android.
+
+**bgfx.cmake dependency update (bkaradzic/bgfx.cmake)**
+
+Switched from the stale `widberg/bgfx.cmake` fork to the official `bkaradzic/bgfx.cmake` repo. This resolved the Vulkan swapchain image count issue natively (`kMaxBackBuffers = max(BGFX_CONFIG_MAX_BACK_BUFFERS, 10)`) and removed the need for our CMake patch. The update required several API adaptations:
+
+- `shaderc_parse` → `_bgfx_shaderc_parse`, `shaderc` target → `bgfx::shaderc`
+- `mtxFromCols3` → `mtxFromCols` (shader function renamed)
+- `instMul` → `mul` (removed from bgfx_shader.sh)
+- ImGui `KeyMap`/`KeysDown` → `AddKeyEvent()` (newer dear-imgui bundled)
+- Disabled WGSL shader support (`BGFX_PLATFORM_SUPPORTS_WGSL=0`) since we don't compile WGSL shaders
+- Added `bimg` link to `engine_debug` (bgfx imgui wrapper now requires it)
+
+Two Vulkan-specific fixes for Android:
+
+1. **Surface format:** bgfx defaults `formatColor` to BGRA8 (`VK_FORMAT_B8G8R8A8_UNORM`), which is optional on mobile Vulkan. Android Mali/Adreno GPUs typically only expose RGBA8 (`VK_FORMAT_R8G8B8A8_UNORM`). We set `init.resolution.formatColor = RGBA8` on Android. Without this, swapchain creation fails silently and bgfx falls back to OpenGL ES.
+
+2. **Fragment shading rate pNext crash (emulator):** bgfx unconditionally chains `VK_KHR_fragment_shading_rate` properties into `vkGetPhysicalDeviceProperties2` pNext. While valid per the Vulkan spec, the Android emulator's gfxstream layer aborts on unknown struct types. Patched via `patches/bgfx_emulator_compat.patch` to only chain when the extension is supported. Verified working on emulator (sama_low/mid/high AVDs) and real hardware (Pixel 9).
+
+**MsdfFont::loadFromMemory for Android**
+
+Added `MsdfFont::loadFromMemory(jsonData, jsonSize, pngData, pngSize)` to support loading MSDF fonts from APK assets via `AAssetManager`. The existing `loadFromFile` was refactored to delegate to `loadFromMemory`. The raw JSON + PNG font files are copied into the APK alongside the asset-tool-processed KTX files, since `MsdfFont` needs the original format. Verified ChunkFive MSDF rendering on Pixel 9 and emulator.
 
 **`libc++_shared.so` must be packaged in APK with `c++_shared` STL**
 

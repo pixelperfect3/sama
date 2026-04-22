@@ -48,9 +48,15 @@ bool Renderer::init(const RendererDesc& desc)
     init.resolution.reset = BGFX_RESET_VSYNC;
 
 #ifdef __ANDROID__
-    __android_log_print(4, "SamaEngine", "bgfx::init type=%d nwh=%p w=%u h=%u",
-                        (int)init.type, init.platformData.nwh,
-                        init.resolution.width, init.resolution.height);
+    // Android Vulkan surfaces typically support RGBA8, not BGRA8 (the bgfx default).
+    // Mali GPUs report VK_FORMAT_R8G8B8A8_UNORM; using BGRA8 causes swapchain creation
+    // to fail and bgfx silently falls back to OpenGL ES.
+    init.resolution.formatColor = bgfx::TextureFormat::RGBA8;
+#endif
+
+#ifdef __ANDROID__
+    __android_log_print(4, "SamaEngine", "bgfx::init type=%d nwh=%p w=%u h=%u", (int)init.type,
+                        init.platformData.nwh, init.resolution.width, init.resolution.height);
 #endif
 
     if (!bgfx::init(init))
