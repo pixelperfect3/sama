@@ -1030,11 +1030,7 @@ engine::ui::UiDrawList dl;
 dl.drawText({12.f, 12.f}, "Hello, world",
             {1.f, 1.f, 1.f, 1.f}, &font, 18.f);
 
-bgfx::setViewName(viewId, "HUD");
-bgfx::setViewRect(viewId, 0, 0, fbW, fbH);
-bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
-bgfx::touch(viewId);
-ui.render(dl, viewId, fbW, fbH);
+ui.render(dl, viewId, fbW, fbH);  // view setup handled internally
 
 // At shutdown:
 font.shutdown();
@@ -1046,6 +1042,30 @@ pixels**. `fontSize` is in pixels; the renderer scales each glyph quad by
 `fontSize / font.nominalSize()`. Pass `nullptr` for the font argument to
 use `engine::ui::defaultFont()` (a 96-glyph 8×8 ASCII bitmap baked into the
 binary — useful as a no-asset fallback).
+
+#### DebugHud (quick stats overlay)
+
+For debug/status text without setting up fonts or draw lists, use
+`engine::ui::DebugHud`. It uses character-cell coordinates (col, row)
+matching the old `bgfx::dbgTextPrintf` convention, and works on Android.
+
+```cpp
+#include "engine/ui/DebugHud.h"
+
+engine::ui::DebugHud hud;
+hud.init();
+
+// Per frame:
+hud.begin(engine.fbWidth(), engine.fbHeight());
+hud.printf(1, 1, "FPS: %.1f", 1.0f / dt);
+hud.printf(1, 2, 0xFF00FFFF, "Entities: %d", count);  // yellow
+hud.end();
+
+// At shutdown:
+hud.shutdown();
+```
+
+Each cell is 8×16 pixels. Color is packed RGBA (`0xRRGGBBAA`), default white.
 
 #### Picking a font backend
 
@@ -1993,6 +2013,19 @@ needs the window for cursor capture or scroll callbacks, guard those calls:
 
 Most games do not need `window()` -- use `eng.inputState()` instead, which works on
 both platforms.
+
+### Calling bgfx directly from game code
+
+**Symptom:** Code doesn't work on Android, or duplicates engine boilerplate.
+
+Game code should never call `bgfx::` functions directly. Use engine abstractions:
+
+| Instead of | Use |
+|---|---|
+| `bgfx::setViewClear(0, ...)` | `engine.setClearColor(rgba)` |
+| `bgfx::setViewRect` + `bgfx::touch` + `uiRenderer.render()` | Just `uiRenderer.render(drawList, viewId, w, h)` — view setup is internal |
+| `bgfx::dbgTextPrintf()` | `engine::ui::DebugHud` (works on Android too) |
+| `bgfx::createTexture2D` (white fallback) | `engine.resources().whiteTex` |
 
 ### Collider half-extents vs entity scale
 
