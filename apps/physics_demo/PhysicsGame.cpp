@@ -242,6 +242,9 @@ void PhysicsGame::onInit(Engine& engine, Registry& registry)
         registry.emplace<VisibleTag>(lightIndicator_);
     }
 
+    // -- DebugHud -------------------------------------------------------------
+    hud_.init();
+
     // -- Camera ---------------------------------------------------------------
     cam_.distance = 25.0f;
     cam_.pitch = 30.0f;
@@ -390,13 +393,13 @@ void PhysicsGame::onRender(Engine& engine)
     }
 
     // -- HUD --------------------------------------------------------------
-    bgfx::dbgTextClear();
-    bgfx::dbgTextPrintf(1, 1, 0x0f, "Physics Demo v2  |  %.1f fps  |  render %.3f ms",
-                        renderMs_ > 0 ? 1000.f / renderMs_ : 0.f, renderMs_);
-    bgfx::dbgTextPrintf(1, 2, 0x07, "Arrows=tilt  |  R=reset  |  RMB=orbit  |  Scroll=zoom");
-    bgfx::dbgTextPrintf(1, 3, 0x07, "Arena: %zu KB / %zu KB used",
-                        engine.frameArena().bytesUsed() / 1024,
-                        engine.frameArena().capacity() / 1024);
+    hud_.begin(static_cast<uint32_t>(fbW), static_cast<uint32_t>(fbH));
+    hud_.printf(1, 1, "Physics Demo v2  |  %.1f fps  |  render %.3f ms",
+                renderMs_ > 0 ? 1000.f / renderMs_ : 0.f, renderMs_);
+    hud_.printf(1, 2, "Arrows=tilt  |  R=reset  |  RMB=orbit  |  Scroll=zoom");
+    hud_.printf(1, 3, "Arena: %zu KB / %zu KB used", engine.frameArena().bytesUsed() / 1024,
+                engine.frameArena().capacity() / 1024);
+    hud_.end();
 
     // -- ImGui panel ------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(10, 60), ImGuiCond_FirstUseEver);
@@ -449,6 +452,7 @@ void PhysicsGame::onRender(Engine& engine)
 
 void PhysicsGame::onShutdown(Engine& engine, Registry& registry)
 {
+    hud_.shutdown();
     ibl_.shutdown();
     physics_.shutdown();
 }

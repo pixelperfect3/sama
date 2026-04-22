@@ -656,6 +656,7 @@ add_library(engine_debug STATIC
     ${_DEAR_IMGUI_DIR}/imgui.cpp          # dear-imgui core
     ${_DEAR_IMGUI_DIR}/imgui_draw.cpp     # dear-imgui draw list
     ${_DEAR_IMGUI_DIR}/imgui_widgets.cpp  # dear-imgui widgets
+    ${_DEAR_IMGUI_DIR}/imgui_tables.cpp   # dear-imgui tables
     engine/debug/DebugTexturePanel.cpp
 )
 
@@ -1365,6 +1366,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(helmet_demo PRIVATE
         engine_core
         engine_assets
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1396,6 +1398,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(hierarchy_demo PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(hierarchy_demo PRIVATE
         engine_core
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1418,6 +1421,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(physics_demo PRIVATE
         engine_core
         engine_physics
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1444,6 +1448,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(physics_demo_v2 PRIVATE
         engine_game
         engine_physics
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1466,6 +1471,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(audio_demo PRIVATE
         engine_core
         engine_audio
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1490,6 +1496,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(scene_demo PRIVATE
         engine_assets
         engine_input_glfw
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1513,6 +1520,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         engine_core
         engine_assets
         engine_animation
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1544,6 +1552,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         engine_core
         engine_assets
         engine_animation
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"
@@ -1575,6 +1584,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         engine_core
         engine_assets
         engine_animation
+        engine_ui
         "-framework Cocoa"
         "-framework QuartzCore"
         "-framework Metal"

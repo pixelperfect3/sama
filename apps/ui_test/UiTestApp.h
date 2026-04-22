@@ -8,6 +8,7 @@
 #include "engine/game/IGame.h"
 #include "engine/math/Types.h"
 #include "engine/ui/BitmapFont.h"
+#include "engine/ui/DebugHud.h"
 #include "engine/ui/MsdfFont.h"
 #include "engine/ui/SlugFont.h"
 #include "engine/ui/UiCanvas.h"
@@ -151,6 +152,9 @@ private:
     // Dialog state
     engine::ui::UiPanel* dialogOverlay_ = nullptr;
     bool dialogVisible_ = false;
+
+    // Debug HUD
+    engine::ui::DebugHud hud_;
 
     // Mouse tracking for event dispatch
     double prevMouseX_ = 0.0;

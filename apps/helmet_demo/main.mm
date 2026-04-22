@@ -42,6 +42,7 @@
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
+#include "engine/ui/DebugHud.h"
 #include "imgui.h"
 
 using namespace engine::assets;
@@ -126,6 +127,9 @@ int main()
     float lightAngle = 0.f;
 
     float renderMs = 0.f;
+
+    engine::ui::DebugHud hud;
+    hud.init();
 
     // -- Main loop ------------------------------------------------------------
     engine::core::OrbitCamera cam;
@@ -288,26 +292,25 @@ int main()
         drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
-        bgfx::dbgTextClear();
+        hud.begin(eng.fbWidth(), eng.fbHeight());
         if (showHud)
         {
-            bgfx::dbgTextPrintf(1, 1, 0x0f,
-                                "Helmet Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
-                                dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
-            bgfx::dbgTextPrintf(1, 4, 0x07, "Arena: %zu KB / %zu KB used",
-                                eng.frameArena().bytesUsed() / 1024,
-                                eng.frameArena().capacity() / 1024);
+            hud.printf(1, 1, "Helmet Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
+                       dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
+            hud.printf(1, 4, "Arena: %zu KB / %zu KB used", eng.frameArena().bytesUsed() / 1024,
+                       eng.frameArena().capacity() / 1024);
 
             if (helmetState == AssetState::Ready)
-                bgfx::dbgTextPrintf(1, 2, 0x0a, "DamagedHelmet.glb — Ready");
+                hud.printf(1, 2, "DamagedHelmet.glb — Ready");
             else if (helmetState == AssetState::Failed)
-                bgfx::dbgTextPrintf(1, 2, 0x0c, "DamagedHelmet.glb — FAILED: %s",
-                                    assets.error(helmetHandle).c_str());
+                hud.printf(1, 2, "DamagedHelmet.glb — FAILED: %s",
+                           assets.error(helmetHandle).c_str());
             else
-                bgfx::dbgTextPrintf(1, 2, 0x0e, "DamagedHelmet.glb — Loading...");
+                hud.printf(1, 2, "DamagedHelmet.glb — Loading...");
 
-            bgfx::dbgTextPrintf(1, 3, 0x07, "Drag=orbit  |  WASD/QE=move  |  Shift=fast  |  F=HUD");
+            hud.printf(1, 3, "Drag=orbit  |  WASD/QE=move  |  Shift=fast  |  F=HUD");
         }
+        hud.end();
 
         // -- ImGui texture panel ----------------------------------------------
         texPanel.show();
@@ -319,6 +322,7 @@ int main()
     }
 
     // -- Cleanup --------------------------------------------------------------
+    hud.shutdown();
     assets.release(helmetHandle);
     ibl.shutdown();
 

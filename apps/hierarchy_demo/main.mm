@@ -39,6 +39,7 @@
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/SceneGraph.h"
 #include "engine/scene/TransformSystem.h"
+#include "engine/ui/DebugHud.h"
 #include "imgui.h"
 
 using namespace engine::core;
@@ -281,6 +282,9 @@ int main()
         }
     };
 
+    engine::ui::DebugHud hud;
+    hud.init();
+
     // -- Main loop --------------------------------------------------------
     float dt = 0.f;
     while (eng.beginFrame(dt))
@@ -505,10 +509,11 @@ int main()
         drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         // -- HUD ----------------------------------------------------------
-        bgfx::dbgTextClear();
-        bgfx::dbgTextPrintf(1, 1, 0x0f, "Hierarchy Demo  |  %.1f fps  |  %.3f ms",
-                            dt > 0 ? 1.f / dt : 0.f, dt * 1000.f);
-        bgfx::dbgTextPrintf(1, 2, 0x07, "LMB=pick/drag  |  RMB=orbit  |  Scroll=zoom");
+        hud.begin(eng.fbWidth(), eng.fbHeight());
+        hud.printf(1, 1, "Hierarchy Demo  |  %.1f fps  |  %.3f ms", dt > 0 ? 1.f / dt : 0.f,
+                   dt * 1000.f);
+        hud.printf(1, 2, "LMB=pick/drag  |  RMB=orbit  |  Scroll=zoom");
+        hud.end();
 
         // -- ImGui hierarchy panel ----------------------------------------
         ImGui::SetNextWindowPos(ImVec2(10, 60), ImGuiCond_FirstUseEver);
@@ -549,6 +554,7 @@ int main()
         eng.endFrame();
     }
 
+    hud.shutdown();
     ibl.shutdown();
 
     return 0;

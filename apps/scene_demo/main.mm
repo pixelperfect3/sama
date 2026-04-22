@@ -15,7 +15,7 @@
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>  // GLFW_CURSOR_DISABLED, glfwSetInputMode, glfwGetFramebufferSize
-#include <bgfx/bgfx.h>   // debug text
+#include <bgfx/bgfx.h>
 
 #include <cmath>
 #include <cstdio>
@@ -45,6 +45,7 @@
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/threading/ThreadPool.h"
+#include "engine/ui/DebugHud.h"
 
 using namespace engine::assets;
 using namespace engine::ecs;
@@ -266,6 +267,9 @@ int main()
     // -------------------------------------------------------------------------
     // Main loop
     // -------------------------------------------------------------------------
+    engine::ui::DebugHud hud;
+    hud.init();
+
     Camera cam;
     bool showHud = true;
     int prevFbW = 0;
@@ -363,23 +367,25 @@ int main()
         // Do NOT set setViewRect(0, ...) here — that would override the shadow
         // pass's 2048×2048 atlas viewport set by beginCascade above.
         // bgfx debug text renders to the full backbuffer regardless of view rects.
-        bgfx::dbgTextClear();
+        hud.begin(static_cast<uint32_t>(fbW), static_cast<uint32_t>(fbH));
 
         if (showHud)
         {
-            bgfx::dbgTextPrintf(1, 1, 0x0f, "Scene Demo  |  %.1f fps  |  %.3f ms",
-                                dt > 0 ? 1.f / dt : 0.f, dt * 1000.f);
+            hud.printf(1, 1, "Scene Demo  |  %.1f fps  |  %.3f ms", dt > 0 ? 1.f / dt : 0.f,
+                       dt * 1000.f);
 
-            bgfx::dbgTextPrintf(1, 2, 0x0e, "Camera  pos (%.1f, %.1f, %.1f)  yaw %.0f  pitch %.0f",
-                                cam.pos.x, cam.pos.y, cam.pos.z, cam.yaw, cam.pitch);
+            hud.printf(1, 2, "Camera  pos (%.1f, %.1f, %.1f)  yaw %.0f  pitch %.0f", cam.pos.x,
+                       cam.pos.y, cam.pos.z, cam.yaw, cam.pitch);
 
             if (mouseCaptured)
-                bgfx::dbgTextPrintf(1, 3, 0x0a, "Mouse: CAPTURED   Esc = release");
+                hud.printf(1, 3, "Mouse: CAPTURED   Esc = release");
             else
-                bgfx::dbgTextPrintf(1, 3, 0x07, "Click to capture mouse   F = toggle HUD");
+                hud.printf(1, 3, "Click to capture mouse   F = toggle HUD");
 
-            bgfx::dbgTextPrintf(1, 4, 0x07, "WASD = move   Q/E = down/up   Shift = fast");
+            hud.printf(1, 4, "WASD = move   Q/E = down/up   Shift = fast");
         }
+
+        hud.end();
 
         // -- Asset uploads (before endFrame so bgfx::frame() submits them this tick) --
         assets.processUploads();
@@ -391,6 +397,7 @@ int main()
     // -------------------------------------------------------------------------
     // Cleanup
     // -------------------------------------------------------------------------
+    hud.shutdown();
     shadow.shutdown();
     if (bgfx::isValid(shadowProg))
         bgfx::destroy(shadowProg);

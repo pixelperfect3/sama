@@ -9,6 +9,7 @@
 #include "engine/physics/PhysicsSystem.h"
 #include "engine/rendering/IblResources.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/ui/DebugHud.h"
 
 class PhysicsGame : public engine::game::IGame
 {
@@ -46,6 +47,7 @@ private:
     double prevMouseY_ = 0.0;
 
     // Rendering
+    engine::ui::DebugHud hud_;
     float renderMs_ = 0.0f;
 
     // Registry pointer (set during onInit, valid for the runner's lifetime)

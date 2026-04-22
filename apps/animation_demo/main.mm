@@ -63,6 +63,7 @@
 #include "engine/scene/HierarchyComponents.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
+#include "engine/ui/DebugHud.h"
 #include "imgui.h"
 
 using namespace engine::animation;
@@ -255,6 +256,9 @@ int main()
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
     float renderMs = 0.f;
+
+    engine::ui::DebugHud hud;
+    hud.init();
 
     // -- Main loop ------------------------------------------------------------
     float dt = 0.f;
@@ -762,51 +766,46 @@ int main()
         }
 
         // -- HUD (debug text overlay) -----------------------------------------
-        bgfx::dbgTextClear();
+        hud.begin(eng.fbWidth(), eng.fbHeight());
         if (showHud)
         {
             int row = 1;
-            bgfx::dbgTextPrintf(1, row++, 0x0f,
-                                "Animation Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
-                                dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
-            bgfx::dbgTextPrintf(1, row++, 0x07, "Arena: %zu KB / %zu KB",
-                                eng.frameArena().bytesUsed() / 1024,
-                                eng.frameArena().capacity() / 1024);
+            hud.printf(1, row++, "Animation Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
+                       dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
+            hud.printf(1, row++, "Arena: %zu KB / %zu KB", eng.frameArena().bytesUsed() / 1024,
+                       eng.frameArena().capacity() / 1024);
 
             if (modelState == AssetState::Ready)
-                bgfx::dbgTextPrintf(1, row++, 0x0a, "Fox.glb -- Ready");
+                hud.printf(1, row++, "Fox.glb -- Ready");
             else if (modelState == AssetState::Failed)
-                bgfx::dbgTextPrintf(1, row++, 0x0c, "Fox.glb -- FAILED");
+                hud.printf(1, row++, "Fox.glb -- FAILED");
             else
-                bgfx::dbgTextPrintf(1, row++, 0x0e, "Fox.glb -- Loading...");
+                hud.printf(1, row++, "Fox.glb -- Loading...");
 
             row++;
-            bgfx::dbgTextPrintf(1, row++, 0x0f,
-                                "Selected Instance: %d/%d  |  Clip: %s  |  Joints: %u",
-                                selectedInstance + 1, kNumInstances, clipName, jointCount);
-            bgfx::dbgTextPrintf(1, row++, 0x0f, "Time: %.2f / %.2f s  |  Speed: %.2fx  |  %s",
-                                currentTime, clipDuration, animSpeed,
-                                isPlaying ? "PLAYING" : "PAUSED");
+            hud.printf(1, row++, "Selected Instance: %d/%d  |  Clip: %s  |  Joints: %u",
+                       selectedInstance + 1, kNumInstances, clipName, jointCount);
+            hud.printf(1, row++, "Time: %.2f / %.2f s  |  Speed: %.2fx  |  %s", currentTime,
+                       clipDuration, animSpeed, isPlaying ? "PLAYING" : "PAUSED");
 
             if (isBlending)
             {
-                bgfx::dbgTextPrintf(1, row++, 0x0e, "Blending -> %s  [%.0f%%]", nextClipName,
-                                    blendProgress * 100.0f);
+                hud.printf(1, row++, "Blending -> %s  [%.0f%%]", nextClipName,
+                           blendProgress * 100.0f);
             }
-            bgfx::dbgTextPrintf(1, row++, 0x07, "IK: %s  |  Weight: %.2f", enableIk ? "ON" : "OFF",
-                                ikBlendWeight);
-            bgfx::dbgTextPrintf(1, row++, 0x07, "Clips available: %u", totalClipCount);
+            hud.printf(1, row++, "IK: %s  |  Weight: %.2f", enableIk ? "ON" : "OFF", ikBlendWeight);
+            hud.printf(1, row++, "Clips available: %u", totalClipCount);
 
             // Animation events display.
             if (!recentEvents.empty())
             {
-                bgfx::dbgTextPrintf(1, row++, 0x0d, "Events (last 3s):");
+                hud.printf(1, row++, "Events (last 3s):");
                 int shown = 0;
                 for (int ei = static_cast<int>(recentEvents.size()) - 1; ei >= 0 && shown < 5;
                      --ei, ++shown)
                 {
-                    bgfx::dbgTextPrintf(3, row++, 0x05, "  [%.1fs ago] %s", recentEvents[ei].age,
-                                        recentEvents[ei].name.c_str());
+                    hud.printf(3, row++, "  [%.1fs ago] %s", recentEvents[ei].age,
+                               recentEvents[ei].name.c_str());
                 }
             }
 
@@ -818,21 +817,19 @@ int main()
                 if (smComp && smComp->machine)
                 {
                     const auto& state = smComp->machine->states[smComp->currentState];
-                    bgfx::dbgTextPrintf(1, row++, 0x0b,
-                                        "State Machine (#3): %s  |  param speed=%.2f",
-                                        state.name.c_str(), smSpeedParam);
-                    bgfx::dbgTextPrintf(1, row++, 0x06,
-                                        "  Left/Right arrows to change speed param");
+                    hud.printf(1, row++, "State Machine (#3): %s  |  param speed=%.2f",
+                               state.name.c_str(), smSpeedParam);
+                    hud.printf(1, row++, "  Left/Right arrows to change speed param");
                 }
             }
 
             row++;
-            bgfx::dbgTextPrintf(1, row++, 0x06, "--- Controls ---");
-            bgfx::dbgTextPrintf(1, row++, 0x06, "Space=play/pause  Up/Down=speed  B=blend");
-            bgfx::dbgTextPrintf(1, row++, 0x06, "1-9=clip  I=toggle IK  R=reset  H=hide HUD");
-            bgfx::dbgTextPrintf(1, row++, 0x06,
-                                "Left/Right=state machine speed  RMB=orbit  WASD=move");
+            hud.printf(1, row++, "--- Controls ---");
+            hud.printf(1, row++, "Space=play/pause  Up/Down=speed  B=blend");
+            hud.printf(1, row++, "1-9=clip  I=toggle IK  R=reset  H=hide HUD");
+            hud.printf(1, row++, "Left/Right=state machine speed  RMB=orbit  WASD=move");
         }
+        hud.end();
 
         // -- ImGui panel (anchored to right side) --------------------------------
         ImGui::SetNextWindowPos(ImVec2(fbW - 340.0f, 10.0f), ImGuiCond_FirstUseEver);
@@ -1052,6 +1049,7 @@ int main()
     }
 
     // -- Cleanup --------------------------------------------------------------
+    hud.shutdown();
     assets.release(modelHandle);
     ibl.shutdown();
 

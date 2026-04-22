@@ -114,6 +114,7 @@ void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
 
     canvas_ = std::make_unique<UiCanvas>(screenW_, screenH_);
     uiRenderer_.init();
+    hud_.init();
 
     // Try to load all three font backends. The bitmap path uses the same
     // embedded debug atlas as engine::ui::defaultFont() and always succeeds.
@@ -372,6 +373,7 @@ void UiTestApp::onRender(Engine& engine)
 
 void UiTestApp::onShutdown(Engine& /*engine*/, engine::ecs::Registry& /*registry*/)
 {
+    hud_.shutdown();
     uiRenderer_.shutdown();
     canvas_.reset();
 }
@@ -1414,15 +1416,15 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
     // the IFont path working. This lets the user verify that F cycling is
     // actually happening even when the selected backend (e.g. Slug) hasn't
     // wired up its UiRenderer integration yet.
-    bgfx::dbgTextClear();
+    hud_.begin(fbW, fbH);
     static const char* screenNames[] = {"Main Menu", "HUD", "Settings", "Inventory"};
-    bgfx::dbgTextPrintf(1, 1, 0x0f, "UI Test - %s   [Font: %s]",
-                        screenNames[static_cast<int>(currentScreen_)], fontBackendLabel());
-    bgfx::dbgTextPrintf(1, 2, 0x07, "Loaded: Bitmap=%s  MSDF=%s  Slug=%s    F or click here=cycle",
-                        fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
-                        fontLoaded_[2] ? "yes" : "no");
-    bgfx::dbgTextPrintf(1, 3, 0x0a, "Cycle counter: %d (increments on every F press)",
-                        fontCycleCount_);
+    hud_.printf(1, 1, "UI Test - %s   [Font: %s]", screenNames[static_cast<int>(currentScreen_)],
+                fontBackendLabel());
+    hud_.printf(1, 2, "Loaded: Bitmap=%s  MSDF=%s  Slug=%s    F or click here=cycle",
+                fontLoaded_[0] ? "yes" : "no", fontLoaded_[1] ? "yes" : "no",
+                fontLoaded_[2] ? "yes" : "no");
+    hud_.printf(1, 3, "Cycle counter: %d (increments on every F press)", fontCycleCount_);
+    hud_.end();
 
     // Sample line — rendered via drawText with the currently selected font.
     // If the backend can render text properly, this line appears. If it

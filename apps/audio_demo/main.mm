@@ -41,6 +41,7 @@
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
+#include "engine/ui/DebugHud.h"
 #include "imgui.h"
 
 using namespace engine::audio;
@@ -374,6 +375,9 @@ int main()
     float ambientVolume = 1.0f;
     float uiVolume = 1.0f;
 
+    engine::ui::DebugHud hud;
+    hud.init();
+
     // -- Main loop ------------------------------------------------------------
     float dt = 0.f;
     while (eng.beginFrame(dt))
@@ -515,10 +519,11 @@ int main()
         drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
-        bgfx::dbgTextClear();
-        bgfx::dbgTextPrintf(1, 1, 0x0f, "Audio Demo  |  %.1f fps  |  %.3f ms",
-                            dt > 0 ? 1.f / dt : 0.f, dt * 1000.f);
-        bgfx::dbgTextPrintf(1, 2, 0x07, "WASD=move  |  LMB=ping  |  RMB=orbit  |  Scroll=zoom");
+        hud.begin(eng.fbWidth(), eng.fbHeight());
+        hud.printf(1, 1, "Audio Demo  |  %.1f fps  |  %.3f ms", dt > 0 ? 1.f / dt : 0.f,
+                   dt * 1000.f);
+        hud.printf(1, 2, "WASD=move  |  LMB=ping  |  RMB=orbit  |  Scroll=zoom");
+        hud.end();
 
         // -- ImGui panel ------------------------------------------------------
         ImGui::SetNextWindowPos(ImVec2(10, 60), ImGuiCond_FirstUseEver);
@@ -572,6 +577,7 @@ int main()
     }
 
     // -- Cleanup --------------------------------------------------------------
+    hud.shutdown();
     ibl.shutdown();
     audioEngine.stopAll();
     audioEngine.shutdown();

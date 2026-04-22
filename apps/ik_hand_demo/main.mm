@@ -50,6 +50,7 @@
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
+#include "engine/ui/DebugHud.h"
 #include "imgui.h"
 
 using namespace engine::animation;
@@ -387,6 +388,9 @@ int main()
     double prevMouseX = 0.0, prevMouseY = 0.0;
 
     float renderMs = 0.f;
+
+    engine::ui::DebugHud hud;
+    hud.init();
 
     // -- IK state -------------------------------------------------------------
     float ikBlendWeight = 1.0f;
@@ -798,18 +802,19 @@ int main()
         }
 
         // -- HUD --------------------------------------------------------------
-        bgfx::dbgTextClear();
-        bgfx::dbgTextPrintf(1, 1, 0x0f, "IK Hand Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
-                            dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
-        bgfx::dbgTextPrintf(1, 2, 0x07,
-                            "LMB=move hand  |  RMB=orbit  |  Scroll=zoom  |  WASD=move");
+        hud.begin(eng.fbWidth(), eng.fbHeight());
+        hud.printf(1, 1, "IK Hand Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
+                   dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
+        hud.printf(1, 2, "LMB=move hand  |  RMB=orbit  |  Scroll=zoom  |  WASD=move");
 
         if (modelState == AssetState::Ready)
-            bgfx::dbgTextPrintf(1, 3, 0x0a, "BrainStem.glb — Ready");
+            hud.printf(1, 3, "BrainStem.glb — Ready");
         else if (modelState == AssetState::Failed)
-            bgfx::dbgTextPrintf(1, 3, 0x0c, "BrainStem.glb — FAILED");
+            hud.printf(1, 3, "BrainStem.glb — FAILED");
         else
-            bgfx::dbgTextPrintf(1, 3, 0x0e, "BrainStem.glb — Loading...");
+            hud.printf(1, 3, "BrainStem.glb — Loading...");
+
+        hud.end();
 
         // -- ImGui panel ------------------------------------------------------
         ImGui::SetNextWindowPos(ImVec2(10, 80), ImGuiCond_FirstUseEver);
@@ -865,6 +870,7 @@ int main()
     }
 
     // -- Cleanup --------------------------------------------------------------
+    hud.shutdown();
     assets.release(modelHandle);
     ibl.shutdown();
 
