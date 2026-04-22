@@ -446,7 +446,9 @@ adb emu kill
 
 2. **Missing `beginFrameDirect` call.** On Android, the post-process pipeline is disabled (shaders are stubs), so `beginFrame()` on Android must call `renderer_.beginFrameDirect()` instead of the desktop's ImGui-based begin frame. Without this, bgfx had no active encoder and `bgfx::touch(0)` was a no-op.
 
-3. **`libc++_shared.so` not packaged in APK.** The NDK build uses `ANDROID_STL=c++_shared` (required for exception support across shared library boundaries), but the runtime library was not being copied into the APK's `lib/<abi>/` directory. Fix: `build_apk.sh` now copies `libc++_shared.so` from the NDK sysroot into the staging directory alongside `libsama_android.so`.
+3. **Touch input not reaching game code.** `AndroidInputBackend` only emitted `TouchBegin`/`TouchMove`/`TouchEnd` raw events but never synthesized `MouseButtonDown`/`MouseButtonUp`/`MouseMove`. Game code using `isMouseButtonHeld(MouseButton::Left)` for UI buttons (the standard desktop pattern) never saw touch input. Fix: the primary touch pointer now synthesizes corresponding mouse events, making all desktop mouse-based game code work on Android automatically.
+
+4. **`libc++_shared.so` not packaged in APK.** The NDK build uses `ANDROID_STL=c++_shared` (required for exception support across shared library boundaries), but the runtime library was not being copied into the APK's `lib/<abi>/` directory. Fix: `build_apk.sh` now copies `libc++_shared.so` from the NDK sysroot into the staging directory alongside `libsama_android.so`.
 
 ---
 
