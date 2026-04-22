@@ -378,7 +378,8 @@ int32_t Engine::handleAndroidInput(struct android_app* app, AInputEvent* event)
         return 0;
 
     auto* backend = static_cast<input::AndroidInputBackend*>(engine->inputBackend_.get());
-    return backend->processEvent(event) ? 1 : 0;
+    bool handled = backend->processEvent(event);
+    return handled ? 1 : 0;
 }
 
 bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)

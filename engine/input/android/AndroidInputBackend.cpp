@@ -196,6 +196,14 @@ bool AndroidInputBackend::processEvent(AInputEvent* event)
             lastTouchX_ = x;
             lastTouchY_ = y;
             writeBuffer_.push_back(RawEvent::touchBegin(id, x, y));
+
+            // Synthesize mouse events from the primary pointer so game code
+            // using isMouseButtonHeld(Left) and mouseX/Y works on Android.
+            if (actionMasked == AMOTION_EVENT_ACTION_DOWN)
+            {
+                writeBuffer_.push_back(RawEvent::mouseMove(x, y));
+                writeBuffer_.push_back(RawEvent::mouseButtonDown(MouseButton::Left));
+            }
             return true;
         }
 
@@ -211,6 +219,13 @@ bool AndroidInputBackend::processEvent(AInputEvent* event)
                 lastTouchY_ = y;
                 writeBuffer_.push_back(RawEvent::touchMove(id, x, y));
             }
+
+            // Synthesize mouse move from primary pointer (index 0).
+            if (count > 0)
+            {
+                writeBuffer_.push_back(
+                    RawEvent::mouseMove(AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0)));
+            }
             return true;
         }
 
@@ -222,6 +237,13 @@ bool AndroidInputBackend::processEvent(AInputEvent* event)
             const float x = AMotionEvent_getX(event, ptrIndex);
             const float y = AMotionEvent_getY(event, ptrIndex);
             writeBuffer_.push_back(RawEvent::touchEnd(id, x, y));
+
+            // Synthesize mouse-up when the primary pointer lifts.
+            if (actionMasked == AMOTION_EVENT_ACTION_UP ||
+                actionMasked == AMOTION_EVENT_ACTION_CANCEL)
+            {
+                writeBuffer_.push_back(RawEvent::mouseButtonUp(MouseButton::Left));
+            }
             return true;
         }
     }
