@@ -5,9 +5,9 @@
 # Uses the desktop-built shaderc binary to cross-compile .sc shader sources
 # into .bin files suitable for bgfx on Vulkan/Android.
 #
-# Usage: ./android/compile_shaders.sh [--all]
-#   Default: compile only the minimum shaders needed for UiRenderer + BitmapFont
-#   --all:   compile all engine shaders
+# Usage: ./android/compile_shaders.sh [--minimum]
+#   Default:    compile all engine shaders (UI + PBR + shadows + post-process)
+#   --minimum:  compile only the minimum shaders needed for UiRenderer + BitmapFont
 #
 # The output .bin files go into assets/shaders/spirv/ and are packaged into
 # the APK by build_apk.sh.
@@ -42,6 +42,7 @@ fi
 
 SHADER_DIR="${PROJECT_ROOT}/engine/shaders"
 VARYING="${SHADER_DIR}/varying.def.sc"
+VARYING_PP="${SHADER_DIR}/varying_pp.def.sc"
 OUT_DIR="${PROJECT_ROOT}/assets/shaders/spirv"
 
 # bgfx include dirs needed by shaderc for bgfx_shader.sh etc.
@@ -53,15 +54,23 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-COMPILE_ALL=false
-if [[ "${1:-}" == "--all" ]]; then
+# Default behaviour: compile every shader. Pass --minimum to compile only the
+# UiRenderer / BitmapFont set (useful for a quick rebuild).
+COMPILE_ALL=true
+if [[ "${1:-}" == "--minimum" ]]; then
+    COMPILE_ALL=false
+elif [[ "${1:-}" == "--all" ]]; then
+    # Accept --all for backward compatibility (it is now the default).
     COMPILE_ALL=true
 fi
 
+# compile_shader <type> <input.sc> <output.bin> [varying_def_path]
+# If varying_def_path is omitted, the standard varying.def.sc is used.
 compile_shader() {
     local TYPE=$1      # vertex or fragment
     local INPUT=$2     # full path to .sc file
     local OUTPUT=$3    # full path to output .bin file
+    local VDEF=${4:-$VARYING}
     local NAME
     NAME=$(basename "$INPUT")
 
@@ -72,7 +81,7 @@ compile_shader() {
         --type "$TYPE" \
         --platform linux \
         -p spirv \
-        --varyingdef "$VARYING" \
+        --varyingdef "$VDEF" \
         -i "$BGFX_INCLUDE" \
         -i "$SHADER_DIR"
 }
@@ -92,7 +101,7 @@ compile_shader fragment "$SHADER_DIR/fs_msdf.sc"          "$OUT_DIR/fs_msdf.bin"
 
 if [ "$COMPILE_ALL" = true ]; then
     echo ""
-    echo "[All] Remaining shaders:"
+    echo "[Scene] Unlit / PBR / shadow / instanced / skinned shaders:"
     compile_shader vertex   "$SHADER_DIR/vs_unlit.sc"          "$OUT_DIR/vs_unlit.bin"
     compile_shader fragment "$SHADER_DIR/fs_unlit.sc"          "$OUT_DIR/fs_unlit.bin"
     compile_shader vertex   "$SHADER_DIR/vs_pbr.sc"            "$OUT_DIR/vs_pbr.bin"
@@ -101,23 +110,24 @@ if [ "$COMPILE_ALL" = true ]; then
     compile_shader vertex   "$SHADER_DIR/vs_shadow.sc"         "$OUT_DIR/vs_shadow.bin"
     compile_shader fragment "$SHADER_DIR/fs_shadow.sc"         "$OUT_DIR/fs_shadow.bin"
     compile_shader vertex   "$SHADER_DIR/vs_shadow_skinned.sc" "$OUT_DIR/vs_shadow_skinned.bin"
+    compile_shader vertex   "$SHADER_DIR/vs_instanced.sc"      "$OUT_DIR/vs_instanced.bin"
     compile_shader vertex   "$SHADER_DIR/vs_gizmo.sc"          "$OUT_DIR/vs_gizmo.bin"
     compile_shader fragment "$SHADER_DIR/fs_gizmo.sc"          "$OUT_DIR/fs_gizmo.bin"
     compile_shader vertex   "$SHADER_DIR/vs_skybox.sc"         "$OUT_DIR/vs_skybox.bin"
     compile_shader fragment "$SHADER_DIR/fs_skybox.sc"         "$OUT_DIR/fs_skybox.bin"
-    compile_shader fragment "$SHADER_DIR/fs_msdf.sc"           "$OUT_DIR/fs_msdf.bin"
     compile_shader vertex   "$SHADER_DIR/vs_slug.sc"           "$OUT_DIR/vs_slug.bin"
     compile_shader fragment "$SHADER_DIR/fs_slug.sc"           "$OUT_DIR/fs_slug.bin"
 
-    # Post-processing shaders (may not exist yet — compile if present)
-    for NAME in vs_postprocess fs_postprocess vs_ssao fs_ssao vs_blur fs_blur; do
-        SRC="$SHADER_DIR/${NAME}.sc"
-        if [ -f "$SRC" ]; then
-            TYPE="vertex"
-            if [[ "$NAME" == fs_* ]]; then TYPE="fragment"; fi
-            compile_shader "$TYPE" "$SRC" "$OUT_DIR/${NAME}.bin"
-        fi
-    done
+    echo ""
+    echo "[Post-process] fullscreen vertex + bloom / tonemap / fxaa / ssao:"
+    # Post-process shaders use a different varying def (vec2 v_uv only).
+    compile_shader vertex   "$SHADER_DIR/vs_fullscreen.sc"       "$OUT_DIR/vs_fullscreen.bin"     "$VARYING_PP"
+    compile_shader fragment "$SHADER_DIR/fs_bloom_threshold.sc"  "$OUT_DIR/fs_bloom_threshold.bin" "$VARYING_PP"
+    compile_shader fragment "$SHADER_DIR/fs_bloom_downsample.sc" "$OUT_DIR/fs_bloom_downsample.bin" "$VARYING_PP"
+    compile_shader fragment "$SHADER_DIR/fs_bloom_upsample.sc"   "$OUT_DIR/fs_bloom_upsample.bin"   "$VARYING_PP"
+    compile_shader fragment "$SHADER_DIR/fs_tonemap.sc"          "$OUT_DIR/fs_tonemap.bin"          "$VARYING_PP"
+    compile_shader fragment "$SHADER_DIR/fs_fxaa.sc"             "$OUT_DIR/fs_fxaa.bin"             "$VARYING_PP"
+    compile_shader fragment "$SHADER_DIR/fs_ssao.sc"             "$OUT_DIR/fs_ssao.bin"             "$VARYING_PP"
 fi
 
 echo ""

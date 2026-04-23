@@ -198,11 +198,12 @@ echo ""
 
 # ── Step 1: Build native library ────────────────────────────────────────────
 
-# ── Step 0: Compile shaders to SPIRV if not already present ─────────────────
-if [ ! -f "${PROJECT_ROOT}/assets/shaders/spirv/vs_sprite.bin" ]; then
-    echo "[0/7] Compiling shaders to SPIRV for Android..."
-    "${PROJECT_ROOT}/android/compile_shaders.sh"
-fi
+# ── Step 0: Compile shaders to SPIRV ────────────────────────────────────────
+# Always run the full compile so PBR / shadow / post-process shaders stay in
+# sync with their .sc sources. compile_shaders.sh is idempotent and fast
+# (~5s); it is not worth caching.
+echo "[0/7] Compiling shaders to SPIRV for Android..."
+"${PROJECT_ROOT}/android/compile_shaders.sh"
 
 echo "[1/7] Building native library..."
 "${PROJECT_ROOT}/android/build_android.sh" "$ABI" "$BUILD_TYPE"
