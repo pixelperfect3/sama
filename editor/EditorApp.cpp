@@ -227,6 +227,17 @@ struct EditorApp::Impl
     size_t lastLogCount = 0;
     EntityID lastSelectedEntity = INVALID_ENTITY;
 
+    // Viewport dirty-flag: when false, the run loop skips the heavy 3D scene
+    // submission (DrawCallBuildSystem, selection outline, skybox, gizmos, HUD)
+    // and just touches the relevant bgfx views so the swapchain re-presents
+    // the previous frame. Set to true on any state change that affects the
+    // viewport image (camera, selection, transform edits, undo/redo, resize,
+    // scene load, component add/remove, asset hot-reload). Forced true every
+    // frame while in Play mode (physics + animation are mutating state).
+    // Default-true so the very first frame renders.
+    bool viewportDirty = true;
+    uint64_t viewportRedrawCount = 0;
+
     // Menu action pending from native menu click (set by static callback).
     std::string pendingMenuAction;
 
@@ -449,6 +460,7 @@ bool EditorApp::Impl::addComponentToSelection(const std::string& type)
 
     propertiesDirty = true;
     hierarchyDirty = true;
+    viewportDirty = true;
     return true;
 }
 
@@ -1234,6 +1246,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         {
             impl_->editorState.select(static_cast<EntityID>(entityId));
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
         });
 
     // Wire name editing in the hierarchy panel to update NameComponent.
@@ -1255,6 +1268,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             }
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            // Name doesn't affect viewport image, but defensively keep this in
+            // sync — rename doesn't change geometry, so skip viewport dirty.
             EditorLog::instance().info((std::string("Renamed entity to: ") + newName).c_str());
         });
 
@@ -1285,6 +1300,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             }
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            // Reparenting can change a child's world transform.
+            impl_->viewportDirty = true;
         });
 
     // Wire context menu: create child entity.
@@ -1300,6 +1317,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             impl_->editorState.select(child);
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
             EditorLog::instance().info("Created child entity");
         });
 
@@ -1311,6 +1329,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             engine::scene::detach(impl_->registry, eid);
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
             EditorLog::instance().info("Detached entity from parent");
         });
 
@@ -1326,6 +1345,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             }
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
             EditorLog::instance().info("Deleted entity and its children");
         });
 
@@ -1334,6 +1354,9 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         [this]()
         {
             impl_->propertiesDirty = true;
+            // Selection outline / gizmo target both depend on the selected
+            // entity, so the viewport image changes whenever selection does.
+            impl_->viewportDirty = true;
             // Also update hierarchy selection highlight.
             auto* hView = impl_->window->hierarchyView();
             if (hView)
@@ -1543,6 +1566,10 @@ bool EditorApp::init(uint32_t width, uint32_t height)
             // Don't set propertiesDirty here — rebuilding the panel while the user
             // is editing fires controlTextDidEndEditing on the old field, causing a
             // re-entrant callback loop that corrupts entity state.
+            // Viewport must redraw to reflect the new transform / material /
+            // light value — safe because dirtying the viewport doesn't rebuild
+            // any AppKit panels.
+            impl_->viewportDirty = true;
         });
 
     // Wire native properties view color-changed callback.
@@ -1567,6 +1594,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 }
             }
             // Don't set propertiesDirty — same re-entrancy issue as above.
+            impl_->viewportDirty = true;
         });
 
     // Wire native properties view int-changed callback (dropdowns).
@@ -1595,6 +1623,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                     cc->shape = static_cast<engine::physics::ColliderShape>(newIndex);
                 }
             }
+            impl_->viewportDirty = true;
         });
 
     // Wire native properties view "+ Add Component" button.
@@ -1651,6 +1680,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                     break;
             }
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
         });
 
     // Wire native properties view texture-clear callback.
@@ -1696,6 +1726,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                     break;
             }
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
         });
 
     impl_->window->propertiesView()->setBoolChangedCallback(
@@ -1711,6 +1742,7 @@ bool EditorApp::init(uint32_t width, uint32_t height)
                 else if (!newValue && impl_->registry.has<VisibleTag>(entity))
                     impl_->registry.remove<VisibleTag>(entity);
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
         });
 
@@ -2545,6 +2577,7 @@ void EditorApp::run()
             bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(fbW), static_cast<uint16_t>(fbH));
             impl_->fbW = static_cast<uint16_t>(fbW);
             impl_->fbH = static_cast<uint16_t>(fbH);
+            impl_->viewportDirty = true;
         }
 
         if (fbW == 0 || fbH == 0)
@@ -2556,8 +2589,13 @@ void EditorApp::run()
         // -- Camera (only when mouse is over viewport) ------------------------
         if (impl_->window->isMouseOverViewport() && impl_->window->isRightMouseDown())
         {
-            impl_->camera.orbit(static_cast<float>(impl_->window->mouseDeltaX()),
-                                -static_cast<float>(impl_->window->mouseDeltaY()), 0.25f);
+            const double dx = impl_->window->mouseDeltaX();
+            const double dy = impl_->window->mouseDeltaY();
+            if (std::abs(dx) > 0.0 || std::abs(dy) > 0.0)
+            {
+                impl_->camera.orbit(static_cast<float>(dx), -static_cast<float>(dy), 0.25f);
+                impl_->viewportDirty = true;
+            }
         }
 
         if (impl_->window->isMouseOverViewport())
@@ -2566,6 +2604,7 @@ void EditorApp::run()
             if (std::abs(scrollY) > 0.01)
             {
                 impl_->camera.zoom(static_cast<float>(scrollY * 0.1), 1.0f, 1.0f, 100.0f);
+                impl_->viewportDirty = true;
             }
         }
 
@@ -2573,7 +2612,17 @@ void EditorApp::run()
         float aspect = static_cast<float>(fbW) / static_cast<float>(fbH);
         glm::mat4 viewMtx = impl_->camera.view();
         glm::mat4 projMtx = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 200.0f);
+        const GizmoAxis prevHover = impl_->gizmo->hoveredAxis();
+        const bool wasDragging = impl_->gizmo->isDragging();
+        const GizmoMode prevMode = impl_->gizmo->mode();
         impl_->gizmo->update(dt, viewMtx, projMtx);
+        // Hover-color change, mode change (W/E/R), or any drag activity
+        // (start / continue / end) means the gizmo overlay needs a fresh frame.
+        if (impl_->gizmo->hoveredAxis() != prevHover || impl_->gizmo->mode() != prevMode ||
+            impl_->gizmo->isDragging() || wasDragging)
+        {
+            impl_->viewportDirty = true;
+        }
 
         // -- Viewport click-to-select (ray-AABB picking) ----------------------
         // Only fire on left-click when mouse is over the viewport, gizmo is
@@ -2686,6 +2735,7 @@ void EditorApp::run()
         if (impl_->gizmo->isDragging())
         {
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
 
             // Sync directional light direction from rotation when rotating a light entity.
             EntityID selE = impl_->editorState.primarySelection();
@@ -2772,6 +2822,7 @@ void EditorApp::run()
                     impl_->currentScenePath = path;
                     impl_->hierarchyDirty = true;
                     impl_->propertiesDirty = true;
+                    impl_->viewportDirty = true;
                     impl_->commandStack.clear();
                     EditorLog::instance().info(
                         ("Opened " + path.substr(path.find_last_of('/') + 1)).c_str());
@@ -2794,6 +2845,7 @@ void EditorApp::run()
                 impl_->editorState.clearSelection();
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
                 impl_->window->setWindowTitle("Sama Editor");
                 EditorLog::instance().info("New scene");
             }
@@ -2802,12 +2854,14 @@ void EditorApp::run()
                 impl_->commandStack.undo();
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
             else if (action == "redo")
             {
                 impl_->commandStack.redo();
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
             else if (action == "delete")
             {
@@ -2819,6 +2873,7 @@ void EditorApp::run()
                     impl_->commandStack.execute(std::move(cmd));
                     impl_->hierarchyDirty = true;
                     impl_->propertiesDirty = true;
+                    impl_->viewportDirty = true;
                 }
             }
             else if (action == "create_empty")
@@ -2828,6 +2883,7 @@ void EditorApp::run()
                 impl_->commandStack.execute(std::move(cmd));
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
             else if (action == "create_cube")
             {
@@ -2849,6 +2905,7 @@ void EditorApp::run()
                 }
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
             else if (action == "create_light")
             {
@@ -2866,10 +2923,12 @@ void EditorApp::run()
                 }
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
             else if (action.rfind("add_component:", 0) == 0)
             {
                 impl_->addComponentToSelection(action.substr(14));
+                impl_->viewportDirty = true;
             }
             else if (action == "load_environment")
             {
@@ -2889,6 +2948,7 @@ void EditorApp::run()
                             snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
                                      "Loaded environment: %.80s", name.c_str());
                             impl_->statusTimer = 3.0f;
+                            impl_->viewportDirty = true;
                             EditorLog::instance().info("Loaded environment");
                         }
                         else
@@ -2924,6 +2984,7 @@ void EditorApp::run()
                             snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
                                      "Loaded HDR: %.80s", name.c_str());
                             impl_->statusTimer = 3.0f;
+                            impl_->viewportDirty = true;
                             EditorLog::instance().info("Loaded HDR environment");
                         }
                         else
@@ -2962,6 +3023,7 @@ void EditorApp::run()
                             snprintf(impl_->statusMsg, sizeof(impl_->statusMsg),
                                      "Loaded cubemap: %.80s", name.c_str());
                             impl_->statusTimer = 3.0f;
+                            impl_->viewportDirty = true;
                             EditorLog::instance().info("Loaded cubemap environment");
                         }
                         else
@@ -3027,6 +3089,7 @@ void EditorApp::run()
                 {
                     snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Reset to default sky");
                     impl_->statusTimer = 3.0f;
+                    impl_->viewportDirty = true;
                     EditorLog::instance().info("Reset environment to default");
                 }
                 else
@@ -3170,6 +3233,7 @@ void EditorApp::run()
 
                     impl_->hierarchyDirty = true;
                     impl_->propertiesDirty = true;
+                    impl_->viewportDirty = true;
                 }
             }
             else if (action == "build_android_low" || action == "build_android_mid" ||
@@ -3239,6 +3303,7 @@ void EditorApp::run()
             }
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
         }
 
         // -- Keyboard shortcuts -----------------------------------------------
@@ -3298,6 +3363,7 @@ void EditorApp::run()
                     impl_->editorState.clearSelection();
                     impl_->hierarchyDirty = true;
                     impl_->propertiesDirty = true;
+                    impl_->viewportDirty = true;
 
                     snprintf(impl_->statusMsg, sizeof(impl_->statusMsg), "Opened %s",
                              path.substr(path.find_last_of('/') + 1).c_str());
@@ -3325,6 +3391,7 @@ void EditorApp::run()
             EditorLog::instance().info("Created new entity");
             impl_->hierarchyDirty = true;
             impl_->propertiesDirty = true;
+            impl_->viewportDirty = true;
         }
 
         // Cmd+I = import 3D asset
@@ -3347,6 +3414,7 @@ void EditorApp::run()
                 EditorLog::instance().info("Deleted entity");
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
         }
 
@@ -3473,6 +3541,7 @@ void EditorApp::run()
                 EditorLog::instance().info("Stopped play mode, transforms restored");
                 impl_->hierarchyDirty = true;
                 impl_->propertiesDirty = true;
+                impl_->viewportDirty = true;
             }
         }
 
@@ -3480,12 +3549,25 @@ void EditorApp::run()
         if (impl_->statusTimer > 0.0f)
         {
             impl_->statusTimer -= dt;
+            // Status message is overlaid on the viewport; keep redrawing while
+            // it's visible (and one extra frame after it expires so the message
+            // gets cleared).
+            impl_->viewportDirty = true;
+        }
+
+        // The "Add Component" overlay appears in the HUD; redraw while it's open.
+        if (impl_->addComponentMenuOpen)
+        {
+            impl_->viewportDirty = true;
         }
 
         // -- Physics simulation (Play mode only) ------------------------------
         if (impl_->editorState.playState() == EditorPlayState::Playing)
         {
             impl_->physicsSys.update(impl_->registry, impl_->physics, dt);
+            // While the simulation is running, the world geometry is
+            // continuously updated; force a viewport redraw every frame.
+            impl_->viewportDirty = true;
         }
 
         // -- Transform system -------------------------------------------------
@@ -3496,6 +3578,9 @@ void EditorApp::run()
         const auto H = impl_->fbH;
 
         // Touch views 1..8 with minimal 1x1 clear to prevent pink artifacts.
+        // Always done — bgfx needs every used view touched per frame so the
+        // swapchain can present (idle frames keep the previously-rendered
+        // viewport on screen rather than going blank).
         bgfx::setViewRect(0, 0, 0, W, H);
         bgfx::setViewClear(0, BGFX_CLEAR_NONE);
         bgfx::touch(0);
@@ -3506,125 +3591,143 @@ void EditorApp::run()
             bgfx::touch(v);
         }
 
+        // Main scene view setup is always applied (cheap; just state). When
+        // viewportDirty is false we still touch the view but skip the heavy
+        // DrawCallBuildSystem / FrustumCullSystem / selection / skybox / gizmo
+        // submission below, so the GPU just re-presents the previous frame.
+        const bool renderViewport = impl_->viewportDirty;
+
         // Main scene on kViewOpaque (view 9).
         bgfx::setViewRect(kViewOpaque, 0, 0, W, H);
         bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
         bgfx::setViewTransform(kViewOpaque, glm::value_ptr(viewMtx), glm::value_ptr(projMtx));
-
-        // Directional light — read from the first DirectionalLightComponent entity.
-        // Falls back to a default sun direction if no light entity exists.
-        glm::vec3 lightDir = glm::normalize(glm::vec3(0.4f, 0.7f, 0.5f));
-        glm::vec3 lightColor = {1.0f, 0.95f, 0.85f};
-        float lightIntensity = 6.0f;
+        if (!renderViewport)
         {
-            auto dlView = impl_->registry.view<DirectionalLightComponent>();
-            dlView.each(
-                [&](EntityID /*e*/, const DirectionalLightComponent& dl)
-                {
-                    lightDir = glm::normalize(dl.direction);
-                    lightColor = dl.color;
-                    lightIntensity = dl.intensity;
-                });
-        }
-        const float lightData[8] = {lightDir.x,
-                                    lightDir.y,
-                                    lightDir.z,
-                                    0.0f,
-                                    lightColor.x * lightIntensity,
-                                    lightColor.y * lightIntensity,
-                                    lightColor.z * lightIntensity,
-                                    0.0f};
-
-        // Dummy shadow matrix (identity -- no shadows in Phase 1).
-        glm::mat4 identMat(1.0f);
-        PbrFrameParams frame{};
-        frame.lightData = lightData;
-        frame.shadowMatrix = glm::value_ptr(identMat);
-        frame.shadowAtlas = impl_->dummyShadowTex;
-        frame.viewportW = W;
-        frame.viewportH = H;
-        frame.nearPlane = 0.05f;
-        frame.farPlane = 200.0f;
-
-        glm::vec3 camPos = impl_->camera.position();
-        frame.camPos[0] = camPos.x;
-        frame.camPos[1] = camPos.y;
-        frame.camPos[2] = camPos.z;
-
-        impl_->drawCallSys.update(impl_->registry, impl_->resources, impl_->pbrProgram,
-                                  impl_->uniforms, frame);
-
-        // -- Skinned PBR pass (skeletal animation) --------------------------------
-        const auto* boneBuffer = impl_->animationSystem.boneBuffer();
-        if (boneBuffer)
-        {
-            impl_->drawCallSys.updateSkinned(impl_->registry, impl_->resources,
-                                             impl_->skinnedPbrProgram, impl_->uniforms, frame,
-                                             boneBuffer);
+            bgfx::touch(kViewOpaque);
         }
 
-        // -- Selection highlight -------------------------------------------------
+        if (renderViewport)
         {
-            EntityID selE = impl_->editorState.primarySelection();
-            if (selE != INVALID_ENTITY)
+            // Directional light — read from the first DirectionalLightComponent entity.
+            // Falls back to a default sun direction if no light entity exists.
+            glm::vec3 lightDir = glm::normalize(glm::vec3(0.4f, 0.7f, 0.5f));
+            glm::vec3 lightColor = {1.0f, 0.95f, 0.85f};
+            float lightIntensity = 6.0f;
             {
-                auto* wt = impl_->registry.get<WorldTransformComponent>(selE);
-                auto* mc = impl_->registry.get<MeshComponent>(selE);
-                if (wt && mc)
-                {
-                    const Mesh* mesh = impl_->resources.getMesh(mc->mesh);
-                    if (mesh && mesh->isValid())
+                auto dlView = impl_->registry.view<DirectionalLightComponent>();
+                dlView.each(
+                    [&](EntityID /*e*/, const DirectionalLightComponent& dl)
                     {
-                        glm::mat4 outlineMtx = glm::scale(wt->matrix, glm::vec3(1.02f));
-                        bgfx::setTransform(glm::value_ptr(outlineMtx));
+                        lightDir = glm::normalize(dl.direction);
+                        lightColor = dl.color;
+                        lightIntensity = dl.intensity;
+                    });
+            }
+            const float lightData[8] = {lightDir.x,
+                                        lightDir.y,
+                                        lightDir.z,
+                                        0.0f,
+                                        lightColor.x * lightIntensity,
+                                        lightColor.y * lightIntensity,
+                                        lightColor.z * lightIntensity,
+                                        0.0f};
 
-                        const float matData[8] = {
-                            1.0f, 0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                        };
-                        bgfx::setUniform(impl_->uniforms.u_material, matData, 2);
-                        bgfx::setUniform(impl_->uniforms.u_dirLight, lightData, 2);
+            // Dummy shadow matrix (identity -- no shadows in Phase 1).
+            glm::mat4 identMat(1.0f);
+            PbrFrameParams frame{};
+            frame.lightData = lightData;
+            frame.shadowMatrix = glm::value_ptr(identMat);
+            frame.shadowAtlas = impl_->dummyShadowTex;
+            frame.viewportW = W;
+            frame.viewportH = H;
+            frame.nearPlane = 0.05f;
+            frame.farPlane = 200.0f;
 
-                        bgfx::setTexture(0, impl_->uniforms.s_albedo,
-                                         impl_->resources.whiteTexture());
-                        bgfx::setTexture(1, impl_->uniforms.s_normal,
-                                         impl_->resources.neutralNormalTexture());
-                        bgfx::setTexture(2, impl_->uniforms.s_orm, impl_->resources.whiteTexture());
+            glm::vec3 camPos = impl_->camera.position();
+            frame.camPos[0] = camPos.x;
+            frame.camPos[1] = camPos.y;
+            frame.camPos[2] = camPos.z;
 
-                        bgfx::setVertexBuffer(0, mesh->positionVbh);
-                        if (bgfx::isValid(mesh->surfaceVbh))
+            impl_->drawCallSys.update(impl_->registry, impl_->resources, impl_->pbrProgram,
+                                      impl_->uniforms, frame);
+
+            // -- Skinned PBR pass (skeletal animation)
+            // ---------------------------------
+            const auto* boneBuffer = impl_->animationSystem.boneBuffer();
+            if (boneBuffer)
+            {
+                impl_->drawCallSys.updateSkinned(impl_->registry, impl_->resources,
+                                                 impl_->skinnedPbrProgram, impl_->uniforms, frame,
+                                                 boneBuffer);
+            }
+
+            // -- Selection highlight
+            // -------------------------------------------------
+            {
+                EntityID selE = impl_->editorState.primarySelection();
+                if (selE != INVALID_ENTITY)
+                {
+                    auto* wt = impl_->registry.get<WorldTransformComponent>(selE);
+                    auto* mc = impl_->registry.get<MeshComponent>(selE);
+                    if (wt && mc)
+                    {
+                        const Mesh* mesh = impl_->resources.getMesh(mc->mesh);
+                        if (mesh && mesh->isValid())
                         {
-                            bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+                            glm::mat4 outlineMtx = glm::scale(wt->matrix, glm::vec3(1.02f));
+                            bgfx::setTransform(glm::value_ptr(outlineMtx));
+
+                            const float matData[8] = {
+                                1.0f, 0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                            };
+                            bgfx::setUniform(impl_->uniforms.u_material, matData, 2);
+                            bgfx::setUniform(impl_->uniforms.u_dirLight, lightData, 2);
+
+                            bgfx::setTexture(0, impl_->uniforms.s_albedo,
+                                             impl_->resources.whiteTexture());
+                            bgfx::setTexture(1, impl_->uniforms.s_normal,
+                                             impl_->resources.neutralNormalTexture());
+                            bgfx::setTexture(2, impl_->uniforms.s_orm,
+                                             impl_->resources.whiteTexture());
+
+                            bgfx::setVertexBuffer(0, mesh->positionVbh);
+                            if (bgfx::isValid(mesh->surfaceVbh))
+                            {
+                                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+                            }
+                            bgfx::setIndexBuffer(mesh->ibh);
+
+                            bgfx::setState(BGFX_STATE_DEFAULT | BGFX_STATE_PT_LINES);
+
+                            bgfx::submit(kViewOpaque, impl_->pbrProgram);
                         }
-                        bgfx::setIndexBuffer(mesh->ibh);
-
-                        bgfx::setState(BGFX_STATE_DEFAULT | BGFX_STATE_PT_LINES);
-
-                        bgfx::submit(kViewOpaque, impl_->pbrProgram);
                     }
                 }
             }
-        }
 
-        // -- Skybox -----------------------------------------------------------
-        // Submitted on the same view as the opaque pass AFTER all opaque
-        // draws so it fills only those pixels where nothing else has been
-        // drawn (depth test = LESS_EQUAL with the vertex shader forcing
-        // depth = 1.0). The cubemap is mip 0 of the prefiltered IBL.
-        impl_->skybox.render(kViewOpaque, impl_->iblResources.prefiltered());
+            // -- Skybox -----------------------------------------------------------
+            // Submitted on the same view as the opaque pass AFTER all opaque
+            // draws so it fills only those pixels where nothing else has been
+            // drawn (depth test = LESS_EQUAL with the vertex shader forcing
+            // depth = 1.0). The cubemap is mip 0 of the prefiltered IBL.
+            impl_->skybox.render(kViewOpaque, impl_->iblResources.prefiltered());
 
-        // -- Gizmo rendering --------------------------------------------------
-        // Hide all editor gizmos in Play/Paused mode so the viewport shows a
-        // clean preview of the running game (Unity/Unreal/Godot convention).
-        if (impl_->editorState.playState() == EditorPlayState::Editing)
-        {
-            EntityID selE = impl_->editorState.primarySelection();
-            if (selE != INVALID_ENTITY)
+            // -- Gizmo rendering --------------------------------------------------
+            // Hide all editor gizmos in Play/Paused mode so the viewport shows a
+            // clean preview of the running game (Unity/Unreal/Godot convention).
+            if (impl_->editorState.playState() == EditorPlayState::Editing)
             {
-                impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
+                EntityID selE = impl_->editorState.primarySelection();
+                if (selE != INVALID_ENTITY)
+                {
+                    impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
+                }
+
+                // Light gizmos (directional cylinder + arrows, point light icon).
+                impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
             }
 
-            // Light gizmos (directional cylinder + arrows, point light icon).
-            impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
+            ++impl_->viewportRedrawCount;
         }
 
         // -- Native panel updates (dirty-flag guarded) ------------------------
@@ -3640,105 +3743,123 @@ void EditorApp::run()
         impl_->syncConsoleView();
 
         // -- HUD (viewport overlay: FPS, gizmo mode, shortcuts, status) -------
-        // Built every frame as a UiDrawList of text commands and submitted on
-        // view kViewImGui through the engine's UiRenderer + the JetBrains Mono
-        // MSDF font (loaded once in init()). Falls back to bgfx debug text if
-        // the font failed to load.
-        bgfx::dbgTextClear();
-
-        const char* modeStr = "Translate";
-        if (impl_->gizmo->mode() == GizmoMode::Rotate)
-            modeStr = "Rotate";
-        else if (impl_->gizmo->mode() == GizmoMode::Scale)
-            modeStr = "Scale";
-
-        char fpsBuf[128];
-        snprintf(fpsBuf, sizeof(fpsBuf), "Sama Editor  |  %.1f fps  |  %.3f ms",
-                 dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f);
-        char shortcutBuf[256];
-        snprintf(shortcutBuf, sizeof(shortcutBuf),
-                 "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  "
-                 "Cmd+Shift+Z=redo",
-                 modeStr);
-
-        const char* playStr = "Space=play";
-        engine::math::Vec4 playColor{0.5f, 0.5f, 0.5f, 1.f};  // dark gray
+        // Built every frame the viewport is being redrawn as a UiDrawList of
+        // text commands and submitted on view kViewImGui through the engine's
+        // UiRenderer + the JetBrains Mono MSDF font (loaded once in init()).
+        // Falls back to bgfx debug text if the font failed to load. When the
+        // viewport is idle we still touch view kViewImGui so it persists, but
+        // we do not rebuild or resubmit the overlay (it's already on screen
+        // from the previous frame).
+        if (renderViewport)
         {
-            auto ps = impl_->editorState.playState();
-            if (ps == EditorPlayState::Playing)
+            bgfx::dbgTextClear();
+
+            const char* modeStr = "Translate";
+            if (impl_->gizmo->mode() == GizmoMode::Rotate)
+                modeStr = "Rotate";
+            else if (impl_->gizmo->mode() == GizmoMode::Scale)
+                modeStr = "Scale";
+
+            char fpsBuf[128];
+            snprintf(fpsBuf, sizeof(fpsBuf),
+                     "Sama Editor  |  %.1f fps  |  %.3f ms  |  redraws: %llu",
+                     dt > 0.0f ? 1.0f / dt : 0.0f, dt * 1000.0f,
+                     static_cast<unsigned long long>(impl_->viewportRedrawCount));
+            char shortcutBuf[256];
+            snprintf(shortcutBuf, sizeof(shortcutBuf),
+                     "Right-drag=orbit  Scroll=zoom  W/E/R=gizmo [%s]  Cmd+Z=undo  "
+                     "Cmd+Shift+Z=redo",
+                     modeStr);
+
+            const char* playStr = "Space=play";
+            engine::math::Vec4 playColor{0.5f, 0.5f, 0.5f, 1.f};  // dark gray
             {
-                playStr = "> PLAYING  (Space=pause, Esc=stop)";
-                playColor = {0.4f, 1.0f, 0.4f, 1.f};  // green
-            }
-            else if (ps == EditorPlayState::Paused)
-            {
-                playStr = "|| PAUSED  (Space=resume, Esc=stop)";
-                playColor = {1.0f, 1.0f, 0.4f, 1.f};  // yellow
-            }
-        }
-
-        if (impl_->hudFontLoaded)
-        {
-            // MSDF path: clear list, push text commands, submit on view 15.
-            impl_->hudDrawList.clear();
-            const auto* font = static_cast<const engine::ui::IFont*>(&impl_->hudFont);
-
-            const engine::math::Vec4 white{1.f, 1.f, 1.f, 1.f};
-            const engine::math::Vec4 gray{0.75f, 0.75f, 0.75f, 1.f};
-            const engine::math::Vec4 green{0.4f, 1.0f, 0.4f, 1.f};
-
-            impl_->hudDrawList.drawText({12.f, 8.f}, fpsBuf, white, font, 16.f);
-            impl_->hudDrawList.drawText({12.f, 28.f}, shortcutBuf, gray, font, 13.f);
-            impl_->hudDrawList.drawText({12.f, 46.f}, playStr, playColor, font, 14.f);
-
-            if (impl_->statusTimer > 0.0f)
-            {
-                impl_->hudDrawList.drawText({400.f, 8.f}, impl_->statusMsg, green, font, 16.f);
-            }
-
-            if (impl_->addComponentMenuOpen)
-            {
-                impl_->hudDrawList.drawText({24.f, 80.f}, "--- Add Component ---", white, font,
-                                            16.f);
-                impl_->hudDrawList.drawText({24.f, 100.f}, "1) DirectionalLight", gray, font, 14.f);
-                impl_->hudDrawList.drawText({24.f, 116.f}, "2) PointLight", gray, font, 14.f);
-                impl_->hudDrawList.drawText({24.f, 132.f}, "3) Mesh (cube)", gray, font, 14.f);
-                impl_->hudDrawList.drawText({24.f, 148.f}, "4) Rigid Body", gray, font, 14.f);
-                impl_->hudDrawList.drawText({24.f, 164.f}, "5) Box Collider", gray, font, 14.f);
-                impl_->hudDrawList.drawText({24.f, 184.f}, "Esc to cancel",
-                                            engine::math::Vec4{0.5f, 0.5f, 0.5f, 1.f}, font, 12.f);
+                auto ps = impl_->editorState.playState();
+                if (ps == EditorPlayState::Playing)
+                {
+                    playStr = "> PLAYING  (Space=pause, Esc=stop)";
+                    playColor = {0.4f, 1.0f, 0.4f, 1.f};  // green
+                }
+                else if (ps == EditorPlayState::Paused)
+                {
+                    playStr = "|| PAUSED  (Space=resume, Esc=stop)";
+                    playColor = {1.0f, 1.0f, 0.4f, 1.f};  // yellow
+                }
             }
 
-            // Set up view 15 to overlay text on top of the rendered scene
-            // without clearing colour. The depth state of UiRenderer's text
-            // pass already disables depth test/write, so the view doesn't
-            // need a depth attach either.
-            bgfx::setViewName(kViewImGui, "EditorHUD");
-            bgfx::setViewRect(kViewImGui, 0, 0, impl_->fbW, impl_->fbH);
-            bgfx::setViewClear(kViewImGui, BGFX_CLEAR_NONE);
-            bgfx::touch(kViewImGui);
-            impl_->uiRenderer.render(impl_->hudDrawList, kViewImGui, impl_->fbW, impl_->fbH);
+            if (impl_->hudFontLoaded)
+            {
+                // MSDF path: clear list, push text commands, submit on view 15.
+                impl_->hudDrawList.clear();
+                const auto* font = static_cast<const engine::ui::IFont*>(&impl_->hudFont);
+
+                const engine::math::Vec4 white{1.f, 1.f, 1.f, 1.f};
+                const engine::math::Vec4 gray{0.75f, 0.75f, 0.75f, 1.f};
+                const engine::math::Vec4 green{0.4f, 1.0f, 0.4f, 1.f};
+
+                impl_->hudDrawList.drawText({12.f, 8.f}, fpsBuf, white, font, 16.f);
+                impl_->hudDrawList.drawText({12.f, 28.f}, shortcutBuf, gray, font, 13.f);
+                impl_->hudDrawList.drawText({12.f, 46.f}, playStr, playColor, font, 14.f);
+
+                if (impl_->statusTimer > 0.0f)
+                {
+                    impl_->hudDrawList.drawText({400.f, 8.f}, impl_->statusMsg, green, font, 16.f);
+                }
+
+                if (impl_->addComponentMenuOpen)
+                {
+                    impl_->hudDrawList.drawText({24.f, 80.f}, "--- Add Component ---", white, font,
+                                                16.f);
+                    impl_->hudDrawList.drawText({24.f, 100.f}, "1) DirectionalLight", gray, font,
+                                                14.f);
+                    impl_->hudDrawList.drawText({24.f, 116.f}, "2) PointLight", gray, font, 14.f);
+                    impl_->hudDrawList.drawText({24.f, 132.f}, "3) Mesh (cube)", gray, font, 14.f);
+                    impl_->hudDrawList.drawText({24.f, 148.f}, "4) Rigid Body", gray, font, 14.f);
+                    impl_->hudDrawList.drawText({24.f, 164.f}, "5) Box Collider", gray, font, 14.f);
+                    impl_->hudDrawList.drawText({24.f, 184.f}, "Esc to cancel",
+                                                engine::math::Vec4{0.5f, 0.5f, 0.5f, 1.f}, font,
+                                                12.f);
+                }
+
+                // Set up view 15 to overlay text on top of the rendered scene
+                // without clearing colour. The depth state of UiRenderer's text
+                // pass already disables depth test/write, so the view doesn't
+                // need a depth attach either.
+                bgfx::setViewName(kViewImGui, "EditorHUD");
+                bgfx::setViewRect(kViewImGui, 0, 0, impl_->fbW, impl_->fbH);
+                bgfx::setViewClear(kViewImGui, BGFX_CLEAR_NONE);
+                bgfx::touch(kViewImGui);
+                impl_->uiRenderer.render(impl_->hudDrawList, kViewImGui, impl_->fbW, impl_->fbH);
+            }
+            else
+            {
+                // Fallback to bgfx debug text — same content, ugly font.
+                bgfx::dbgTextPrintf(1, 1, 0x0f, "%s", fpsBuf);
+                bgfx::dbgTextPrintf(1, 2, 0x07, "%s", shortcutBuf);
+                bgfx::dbgTextPrintf(1, 3, playColor.y > 0.7f ? 0x0a : 0x08, "%s", playStr);
+                if (impl_->statusTimer > 0.0f)
+                {
+                    bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
+                }
+                if (impl_->addComponentMenuOpen)
+                {
+                    bgfx::dbgTextPrintf(2, 4, 0x0f, "--- Add Component ---");
+                    bgfx::dbgTextPrintf(2, 5, 0x07, "1) DirectionalLight");
+                    bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
+                    bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
+                    bgfx::dbgTextPrintf(2, 8, 0x07, "4) Rigid Body");
+                    bgfx::dbgTextPrintf(2, 9, 0x07, "5) Box Collider");
+                    bgfx::dbgTextPrintf(2, 10, 0x08, "Esc to cancel");
+                }
+            }
         }
         else
         {
-            // Fallback to bgfx debug text — same content, ugly font.
-            bgfx::dbgTextPrintf(1, 1, 0x0f, "%s", fpsBuf);
-            bgfx::dbgTextPrintf(1, 2, 0x07, "%s", shortcutBuf);
-            bgfx::dbgTextPrintf(1, 3, playColor.y > 0.7f ? 0x0a : 0x08, "%s", playStr);
-            if (impl_->statusTimer > 0.0f)
-            {
-                bgfx::dbgTextPrintf(40, 1, 0x0a, "%s", impl_->statusMsg);
-            }
-            if (impl_->addComponentMenuOpen)
-            {
-                bgfx::dbgTextPrintf(2, 4, 0x0f, "--- Add Component ---");
-                bgfx::dbgTextPrintf(2, 5, 0x07, "1) DirectionalLight");
-                bgfx::dbgTextPrintf(2, 6, 0x07, "2) PointLight");
-                bgfx::dbgTextPrintf(2, 7, 0x07, "3) Mesh (cube)");
-                bgfx::dbgTextPrintf(2, 8, 0x07, "4) Rigid Body");
-                bgfx::dbgTextPrintf(2, 9, 0x07, "5) Box Collider");
-                bgfx::dbgTextPrintf(2, 10, 0x08, "Esc to cancel");
-            }
+            // Idle path: keep the HUD overlay view alive so the swapchain
+            // re-presents the previously-submitted text.
+            bgfx::setViewRect(kViewImGui, 0, 0, impl_->fbW, impl_->fbH);
+            bgfx::setViewClear(kViewImGui, BGFX_CLEAR_NONE);
+            bgfx::touch(kViewImGui);
         }
 
         // -- Animation system + panel ----------------------------------------
@@ -3770,6 +3891,28 @@ void EditorApp::run()
                 rView->updateStats(impl_->resourcePanel.currentStats());
             }
         }
+
+        // Clear the per-frame viewport dirty flag now that all rendering has
+        // been submitted (or skipped). Anything that still needs a redraw on
+        // the next frame must set the flag again from its event handler (or
+        // the explicit per-frame checks below for animation playback).
+        impl_->viewportDirty = false;
+
+        // -- Animation playback dirties the viewport --------------------------
+        // The animation system (run above) advances clip time and writes new
+        // bone matrices when an animator has kFlagPlaying or kFlagSampleOnce.
+        // Mark the viewport dirty so the *next* frame re-submits the skinned
+        // pass with the freshly-sampled bones. (kFlagSampleOnce was just
+        // consumed by AnimationSystem::update so this also covers panel
+        // scrubbing while paused.)
+        impl_->registry.view<engine::animation::AnimatorComponent>().each(
+            [&](ecs::EntityID, const engine::animation::AnimatorComponent& a)
+            {
+                if (a.flags & engine::animation::AnimatorComponent::kFlagPlaying)
+                {
+                    impl_->viewportDirty = true;
+                }
+            });
 
         // -- End frame --------------------------------------------------------
         impl_->frameArena->reset();
