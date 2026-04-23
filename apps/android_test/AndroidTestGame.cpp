@@ -20,7 +20,10 @@
 #endif
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <vector>
 
 #include "engine/core/Engine.h"
@@ -29,6 +32,13 @@
 #include "engine/game/IGame.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
+#include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/Material.h"
+#include "engine/rendering/MeshBuilder.h"
+#include "engine/rendering/RenderPass.h"
+#include "engine/rendering/ViewIds.h"
+#include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/scene/TransformSystem.h"
 #include "engine/ui/BitmapFont.h"
 #include "engine/ui/MsdfFont.h"
 #include "engine/ui/UiDrawList.h"
@@ -98,7 +108,7 @@ uint32_t hsvToRgba(float h, float s, float v)
 class AndroidTestGame : public IGame
 {
 public:
-    void onInit(Engine& /*engine*/, Registry& /*registry*/) override
+    void onInit(Engine& engine, Registry& registry) override
     {
         elapsed_ = 0.0f;
         hue_ = 200.0f;
@@ -107,9 +117,35 @@ public:
         uiRenderer_.init();
         font_.createDebugFont();
         loadMsdfFont();
+
+        // ----------------------------------------------------------------
+        // Spawn a single PBR cube to verify the full lighting pipeline
+        // works on Android (PBR shader + shadow pass).
+        // ----------------------------------------------------------------
+        MeshData cubeData = makeCubeMeshData();
+        Mesh cubeMesh = buildMesh(cubeData);
+        cubeMeshId_ = engine.resources().addMesh(std::move(cubeMesh));
+
+        Material mat;
+        mat.albedo = {0.85f, 0.45f, 0.20f, 1.0f};  // warm orange
+        mat.roughness = 0.4f;
+        mat.metallic = 0.0f;
+        cubeMatId_ = engine.resources().addMaterial(mat);
+
+        cubeEntity_ = registry.createEntity();
+        TransformComponent tc;
+        tc.position = {0.0f, 0.0f, 0.0f};
+        tc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        tc.scale = {1.0f, 1.0f, 1.0f};
+        tc.flags = 1;
+        registry.emplace<TransformComponent>(cubeEntity_, tc);
+        registry.emplace<WorldTransformComponent>(cubeEntity_);
+        registry.emplace<MeshComponent>(cubeEntity_, cubeMeshId_);
+        registry.emplace<MaterialComponent>(cubeEntity_, cubeMatId_);
+        registry.emplace<VisibleTag>(cubeEntity_);
     }
 
-    void onUpdate(Engine& engine, Registry& /*registry*/, float dt) override
+    void onUpdate(Engine& engine, Registry& registry, float dt) override
     {
         elapsed_ += dt;
         frameCount_++;
@@ -204,6 +240,55 @@ public:
         // renderer setup on Android where shaders are stubbed).
         uint32_t bgColor = hsvToRgba(hue_, 0.6f, brightness_);
         engine.setClearColor(bgColor);
+
+        // --- Spin the cube and submit PBR draw calls ----------------------
+        if (auto* tc = registry.get<TransformComponent>(cubeEntity_))
+        {
+            float yawRad = elapsed_ * 0.6f;
+            float pitchRad = elapsed_ * 0.4f;
+            tc->rotation = glm::quat(glm::vec3(pitchRad, yawRad, 0.0f));
+            tc->flags |= 1;
+        }
+
+        transformSys_.update(registry);
+
+        // Camera orbits 4 m above and 6 m back, looking at the cube origin.
+        const float aspect = (fbH > 0.f) ? (fbW / fbH) : 1.0f;
+        const glm::vec3 camPos{0.0f, 1.5f, 4.5f};
+        const glm::mat4 viewMat = glm::lookAt(camPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
+        const glm::mat4 projMat = glm::perspective(glm::radians(50.f), aspect, 0.05f, 50.f);
+
+        // Directional light + shadow projection.
+        const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.4f, 1.0f, 0.6f));
+        constexpr float kLightIntens = 5.0f;
+        const float lightData[8] = {
+            kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
+            1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
+        const glm::vec3 lightPos = kLightDir * 8.f;
+        const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
+        const glm::mat4 lightProj = glm::ortho(-3.f, 3.f, -3.f, 3.f, 0.1f, 25.f);
+
+        // Shadow pass — depth-only into cascade 0.
+        engine.shadow().beginCascade(0, lightView, lightProj);
+        drawCallSys_.submitShadowDrawCalls(registry, engine.resources(), engine.shadowProgram(), 0);
+
+        // Opaque PBR pass.
+        const auto W = engine.fbWidth();
+        const auto H = engine.fbHeight();
+        RenderPass(kViewOpaque)
+            .rect(0, 0, W, H)
+            .clearColorAndDepth(bgColor)
+            .transform(viewMat, projMat);
+
+        const glm::mat4 shadowMat = engine.shadow().shadowMatrix(0);
+        PbrFrameParams frame{
+            lightData, glm::value_ptr(shadowMat), engine.shadow().atlasTexture(), W, H, 0.05f, 50.f,
+        };
+        frame.camPos[0] = camPos.x;
+        frame.camPos[1] = camPos.y;
+        frame.camPos[2] = camPos.z;
+        drawCallSys_.update(registry, engine.resources(), engine.pbrProgram(), engine.uniforms(),
+                            frame);
 
         // --- Text overlay via UiRenderer ---
         {
@@ -348,6 +433,13 @@ private:
     engine::ui::BitmapFont font_;
     engine::ui::MsdfFont msdfFont_;
     engine::ui::UiDrawList drawList_;
+
+    // PBR cube — verifies the full lighting + shadow pipeline.
+    engine::scene::TransformSystem transformSys_;
+    DrawCallBuildSystem drawCallSys_;
+    EntityID cubeEntity_ = INVALID_ENTITY;
+    uint32_t cubeMeshId_ = 0;
+    uint32_t cubeMatId_ = 0;
 
     void loadMsdfFont()
     {

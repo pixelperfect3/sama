@@ -560,7 +560,12 @@ bool Engine::beginFrame(float& outDt)
         androidGyro_->update(inputState_);
     }
 
-    // -- Renderer begin (bypass post-processing on Android) ---------------
+    // -- Renderer begin (direct-to-backbuffer) ----------------------------
+    // Matches all desktop demos: Engine sets up a direct-render frame and any
+    // app that wants post-processing calls renderer().beginFrame() +
+    // renderer().postProcess().submit() itself. Post-process shaders are
+    // available on Android (see android/compile_shaders.sh) so apps can opt
+    // in identically to desktop.
     renderer_.beginFrameDirect();
 
     // -- View 0 clear / rect / touch --------------------------------------

@@ -1,19 +1,20 @@
 #include "engine/rendering/systems/PostProcessSystem.h"
 
+#include <bgfx/bgfx.h>
+
 #ifdef __ANDROID__
-// Post-processing requires embedded shaders not yet available on Android.
-// Provide stub implementations so the engine compiles.
+// On Android, post-process programs are loaded from pre-compiled SPIRV
+// shipped in the APK (see android/compile_shaders.sh). The declarations
+// below shadow forward-only entry points exposed by ShaderLoader.cpp.
 namespace engine::rendering
 {
-bool PostProcessSystem::init(uint16_t, uint16_t) { return true; }
-void PostProcessSystem::shutdown() {}
-void PostProcessSystem::resize(uint16_t, uint16_t) {}
-bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings&, const ShaderUniforms&,
-                                        bgfx::ViewId firstViewId) { return firstViewId; }
+bgfx::ProgramHandle loadBloomThresholdProgram();
+bgfx::ProgramHandle loadBloomDownsampleProgram();
+bgfx::ProgramHandle loadBloomUpsampleProgram();
+bgfx::ProgramHandle loadTonemapProgram();
+bgfx::ProgramHandle loadFxaaProgram();
 }  // namespace engine::rendering
 #else
-
-#include <bgfx/bgfx.h>
 #include <bgfx/embedded_shader.h>
 
 // Generated shader bytecode headers — produced by shaderc via CMake custom commands.
@@ -41,17 +42,19 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings&, const ShaderU
 #include "generated/shaders/vs_fullscreen_glsl.bin.h"
 #include "generated/shaders/vs_fullscreen_mtl.bin.h"
 #include "generated/shaders/vs_fullscreen_spv.bin.h"
+#endif
 
 namespace engine::rendering
 {
 
 // ---------------------------------------------------------------------------
-// Embedded shader tables
+// Embedded shader tables (desktop only — Android uses asset-loaded programs)
 // ---------------------------------------------------------------------------
 
 namespace
 {
 
+#ifndef __ANDROID__
 static const bgfx::EmbeddedShader kBloomThreshShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_fullscreen),
     BGFX_EMBEDDED_SHADER(fs_bloom_threshold),
@@ -104,6 +107,7 @@ bgfx::ProgramHandle loadEmbeddedProgram(const bgfx::EmbeddedShader* shaders, con
 
     return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
 }
+#endif  // __ANDROID__
 
 // Submit a full-screen triangle pass using a pre-built vertex buffer.
 void submitFullscreenPass(bgfx::ViewId viewId, bgfx::FrameBufferHandle targetFb, uint16_t w,
@@ -146,6 +150,13 @@ bool PostProcessSystem::init(uint16_t w, uint16_t h)
     const bgfx::Memory* mem = bgfx::makeRef(kFsTriVerts, sizeof(kFsTriVerts));
     fsTriVb_ = bgfx::createVertexBuffer(mem, fsTriLayout_);
 
+#ifdef __ANDROID__
+    bloomThreshProgram_ = loadBloomThresholdProgram();
+    bloomDownProgram_ = loadBloomDownsampleProgram();
+    bloomUpProgram_ = loadBloomUpsampleProgram();
+    tonemapProgram_ = loadTonemapProgram();
+    fxaaProgram_ = loadFxaaProgram();
+#else
     bloomThreshProgram_ =
         loadEmbeddedProgram(kBloomThreshShaders, "vs_fullscreen", "fs_bloom_threshold");
     bloomDownProgram_ =
@@ -153,6 +164,7 @@ bool PostProcessSystem::init(uint16_t w, uint16_t h)
     bloomUpProgram_ = loadEmbeddedProgram(kBloomUpShaders, "vs_fullscreen", "fs_bloom_upsample");
     tonemapProgram_ = loadEmbeddedProgram(kTonemapShaders, "vs_fullscreen", "fs_tonemap");
     fxaaProgram_ = loadEmbeddedProgram(kFxaaShaders, "vs_fullscreen", "fs_fxaa");
+#endif
 
     // Programs will be BGFX_INVALID_HANDLE in headless (Noop) mode; that is
     // expected — submit() guards each bgfx::submit call with isValid().
@@ -356,5 +368,3 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
 }
 
 }  // namespace engine::rendering
-
-#endif  // __ANDROID__
