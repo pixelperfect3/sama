@@ -435,10 +435,11 @@ adb emu kill
 
 ### Known Limitations (Current State)
 
-- **PBR rendering not yet ported.** UiRenderer and BitmapFont text rendering work via SPIRV shaders, but the full PBR pipeline (shadows, IBL, SSAO) has not been ported to Android yet.
-- **Post-processing disabled.** `Engine::beginFrame()` on Android calls `renderer_.beginFrameDirect()` which bypasses the post-process framebuffer setup entirely. There is no bloom, FXAA, or tone mapping on Android.
-- **SSAO disabled.** `SsaoSystem` returns early on Android (shader handle is invalid).
-- **No ImGui on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false.
+- [ ] **Port PBR rendering to Android.** UiRenderer and BitmapFont text rendering work via SPIRV shaders, but the full PBR pipeline (shadows, IBL, SSAO) has not been ported. *Why:* Games beyond the test app need lit 3D rendering. Requires compiling all PBR shaders to SPIRV in `compile_shaders.sh --all` and verifying on Pixel 9.
+- [ ] **Re-enable post-processing on Android.** `Engine::beginFrame()` calls `renderer_.beginFrameDirect()` which bypasses the post-process framebuffer setup. No bloom, FXAA, or tone mapping. *Why:* Cinematic look requires post-processing; currently disabled because shader stubs returned `BGFX_INVALID_HANDLE`. With SPIRV pipeline in place, can be re-enabled.
+- [ ] **Re-enable SSAO on Android.** `SsaoSystem` returns early on Android because the shader handle is invalid. *Why:* Same as post-processing; gated on full PBR shader port.
+- [ ] **ImGui support on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false. *Why:* No debug overlay or in-game tools on device. Requires bgfx imgui wrapper to compile for Android (currently desktop-only) and SPIRV versions of `vs_ocornut_imgui`/`fs_ocornut_imgui`.
+- [ ] **Pre-init Vulkan surface format query for robustness.** `Renderer::init()` hardcodes `formatColor = RGBA8` on Android. RGBA8 is mandatory per the Android CDD so this works on all real devices, but a future device or rendering target could need different. *Why:* Defensive against future hardware. Implementation: create temporary VkInstance + surface in `Renderer::init()` before `bgfx::init()`, call `vkGetPhysicalDeviceSurfaceFormatsKHR`, pick the first supported format from a priority list (RGBA8 → BGRA8 → R10G10B10A2 → ...), tear down, pass to bgfx.
 
 ### Bugs Fixed During Hardware Bring-up
 
