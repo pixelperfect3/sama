@@ -120,20 +120,37 @@ bgfx::ProgramHandle loadSlugProgram()
     return loadProgramFromAssets("shaders/spirv/vs_slug.bin", "shaders/spirv/fs_slug.bin");
 }
 
-bgfx::ProgramHandle loadPostProcessProgram()
+bgfx::ProgramHandle loadBloomThresholdProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_postprocess.bin",
-                                 "shaders/spirv/fs_postprocess.bin");
+    return loadProgramFromAssets("shaders/spirv/vs_fullscreen.bin",
+                                 "shaders/spirv/fs_bloom_threshold.bin");
+}
+
+bgfx::ProgramHandle loadBloomDownsampleProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_fullscreen.bin",
+                                 "shaders/spirv/fs_bloom_downsample.bin");
+}
+
+bgfx::ProgramHandle loadBloomUpsampleProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_fullscreen.bin",
+                                 "shaders/spirv/fs_bloom_upsample.bin");
+}
+
+bgfx::ProgramHandle loadTonemapProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_fullscreen.bin", "shaders/spirv/fs_tonemap.bin");
+}
+
+bgfx::ProgramHandle loadFxaaProgram()
+{
+    return loadProgramFromAssets("shaders/spirv/vs_fullscreen.bin", "shaders/spirv/fs_fxaa.bin");
 }
 
 bgfx::ProgramHandle loadSsaoProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_ssao.bin", "shaders/spirv/fs_ssao.bin");
-}
-
-bgfx::ProgramHandle loadBlurProgram()
-{
-    return loadProgramFromAssets("shaders/spirv/vs_blur.bin", "shaders/spirv/fs_blur.bin");
+    return loadProgramFromAssets("shaders/spirv/vs_fullscreen.bin", "shaders/spirv/fs_ssao.bin");
 }
 
 }  // namespace engine::rendering

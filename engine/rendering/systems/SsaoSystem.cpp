@@ -1,19 +1,16 @@
 #include "engine/rendering/systems/SsaoSystem.h"
 
+#include <bgfx/bgfx.h>
+
+#include <cmath>
+
 #ifdef __ANDROID__
 namespace engine::rendering
 {
-void SsaoSystem::init(uint16_t, uint16_t) {}
-void SsaoSystem::shutdown() {}
-void SsaoSystem::submit(const SsaoSettings&, const ShaderUniforms&,
-                         bgfx::TextureHandle, bgfx::ViewId, bgfx::VertexBufferHandle) {}
+bgfx::ProgramHandle loadSsaoProgram();
 }  // namespace engine::rendering
 #else
-
-#include <bgfx/bgfx.h>
 #include <bgfx/embedded_shader.h>
-
-#include <cmath>
 
 // Generated shader bytecode headers — produced by shaderc via CMake.
 #include "generated/shaders/fs_ssao_essl.bin.h"
@@ -24,17 +21,19 @@ void SsaoSystem::submit(const SsaoSettings&, const ShaderUniforms&,
 #include "generated/shaders/vs_fullscreen_glsl.bin.h"
 #include "generated/shaders/vs_fullscreen_mtl.bin.h"
 #include "generated/shaders/vs_fullscreen_spv.bin.h"
+#endif
 
 namespace engine::rendering
 {
 
 // ---------------------------------------------------------------------------
-// Embedded shader table
+// Embedded shader table (desktop only — Android uses asset-loaded programs)
 // ---------------------------------------------------------------------------
 
 namespace
 {
 
+#ifndef __ANDROID__
 static const bgfx::EmbeddedShader kSsaoShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_fullscreen),
     BGFX_EMBEDDED_SHADER(fs_ssao),
@@ -63,6 +62,7 @@ bgfx::ProgramHandle loadEmbeddedProgram(const bgfx::EmbeddedShader* shaders, con
 
     return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
 }
+#endif  // __ANDROID__
 
 // Pseudo-random float in [0, 1) using a simple LCG.  Fixed seed for
 // deterministic kernel generation across all platforms.
@@ -129,7 +129,11 @@ void SsaoSystem::init(uint16_t w, uint16_t h)
     // -----------------------------------------------------------------
     // SSAO shader program
     // -----------------------------------------------------------------
+#ifdef __ANDROID__
+    program_ = loadSsaoProgram();
+#else
     program_ = loadEmbeddedProgram(kSsaoShaders, "vs_fullscreen", "fs_ssao");
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -198,5 +202,3 @@ void SsaoSystem::submit(const SsaoSettings& settings, const ShaderUniforms& unif
 }
 
 }  // namespace engine::rendering
-
-#endif  // __ANDROID__
