@@ -157,8 +157,8 @@ public:
         groundMeshId_ = engine.resources().addMesh(std::move(cubeMesh));
 
         Material groundMat;
-        groundMat.albedo = {0.35f, 0.35f, 0.40f, 1.0f};
-        groundMat.roughness = 0.85f;
+        groundMat.albedo = {0.85f, 0.82f, 0.78f, 1.0f};  // light beige for shadow contrast
+        groundMat.roughness = 0.9f;
         groundMat.metallic = 0.0f;
         groundMatId_ = engine.resources().addMaterial(groundMat);
 
@@ -166,13 +166,38 @@ public:
         TransformComponent gtc;
         gtc.position = {0.0f, -0.55f, 0.0f};
         gtc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        gtc.scale = {4.0f, 0.05f, 4.0f};
+        gtc.scale = {20.0f, 0.05f, 20.0f};
         gtc.flags = 1;
         registry.emplace<TransformComponent>(groundEntity_, gtc);
         registry.emplace<WorldTransformComponent>(groundEntity_);
         registry.emplace<MeshComponent>(groundEntity_, groundMeshId_);
         registry.emplace<MaterialComponent>(groundEntity_, groundMatId_);
         registry.emplace<VisibleTag>(groundEntity_);
+        // Receive shadows (and cast — but it's flat so no visible self-shadow).
+        registry.emplace<ShadowVisibleTag>(groundEntity_, ShadowVisibleTag{0xFF});
+
+        // ----------------------------------------------------------------
+        // Light indicator — small emissive cube placed at the light
+        // position each frame so you can see where the light is.
+        // ----------------------------------------------------------------
+        Material lightMat;
+        lightMat.albedo = {1.0f, 0.9f, 0.3f, 1.0f};
+        lightMat.emissiveScale = 5.0f;
+        lightMat.roughness = 1.0f;
+        lightMatId_ = engine.resources().addMaterial(lightMat);
+
+        lightEntity_ = registry.createEntity();
+        TransformComponent ltc;
+        ltc.position = {0.0f, 3.0f, 0.0f};
+        ltc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        ltc.scale = {0.4f, 0.4f, 0.4f};
+        ltc.flags = 1;
+        registry.emplace<TransformComponent>(lightEntity_, ltc);
+        registry.emplace<WorldTransformComponent>(lightEntity_);
+        registry.emplace<MeshComponent>(lightEntity_, groundMeshId_);  // reuse cube mesh
+        registry.emplace<MaterialComponent>(lightEntity_, lightMatId_);
+        registry.emplace<VisibleTag>(lightEntity_);
+        // Light cube does NOT cast shadow on itself / scene.
     }
 
     void onUpdate(Engine& engine, Registry& registry, float dt) override
@@ -282,16 +307,20 @@ public:
                 engine::assets::GltfSceneSpawner::spawn(*helmet, registry, engine.resources());
                 helmetSpawned_ = true;
 
-                // Scale the spawned helmet down to ~half size so the ground
-                // plane and the cast shadow are clearly visible in frame.
-                registry.view<TransformComponent>().each(
-                    [&](EntityID e, TransformComponent& tc)
+                // Float the spawned helmet above the ground (keep its
+                // original ~1m size so it casts a substantial shadow),
+                // and tag every spawned mesh as a shadow caster.
+                // IMPORTANT: skip the ground and the light indicator —
+                // we manage their positions ourselves.
+                registry.view<TransformComponent, MeshComponent>().each(
+                    [&](EntityID e, TransformComponent& tc, const MeshComponent&)
                     {
-                        if (e != groundEntity_)
-                        {
-                            tc.scale *= 0.5f;
-                            tc.flags |= 1;
-                        }
+                        if (e == groundEntity_ || e == lightEntity_)
+                            return;
+                        tc.position.y += 0.8f;
+                        tc.flags |= 1;
+                        if (!registry.has<ShadowVisibleTag>(e))
+                            registry.emplace<ShadowVisibleTag>(e, ShadowVisibleTag{0xFF});
                     });
 
                 // Tweak roughness slightly so the helmet looks less mirror-like.
@@ -307,21 +336,32 @@ public:
 
         transformSys_.update(registry);
 
-        // Camera pulled back and tilted down so both the helmet and the
-        // ground plane (with cast shadow) are clearly visible.
+        // Camera pulled way back so the entire scene — helmet, ground,
+        // light indicator cube, and the helmet's cast shadow — all fit
+        // comfortably in frame.
         const float aspect = (fbH > 0.f) ? (fbW / fbH) : 1.0f;
-        const glm::vec3 camPos{0.0f, 1.2f, 3.0f};
-        const glm::vec3 camTarget{0.0f, -0.25f, 0.0f};
+        const glm::vec3 camPos{0.0f, 5.0f, 13.0f};
+        const glm::vec3 camTarget{0.0f, 0.0f, 0.0f};
         const glm::mat4 viewMat = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
-        // Orbiting directional light so the shadow sweeps across the ground.
-        const float lightAngle = elapsed_ * 0.5f;
-        const float kLightElevation = 0.65f;
+        // Orbiting directional light. Elevation 0.55 keeps the light fairly
+        // high so it doesn't dip below the horizon, while still casting a
+        // visible shadow that sweeps across the ground.
+        const float lightAngle = elapsed_ * 0.45f;
+        const float kLightElevation = 0.55f;
         const float cosE = std::sqrt(1.0f - kLightElevation * kLightElevation);
         const glm::vec3 kLightDir = glm::normalize(
             glm::vec3(cosE * std::sin(lightAngle), kLightElevation, cosE * std::cos(lightAngle)));
-        constexpr float kLightIntens = 8.0f;
+        constexpr float kLightIntens = 18.0f;
+
+        // Move the light indicator cube to follow the directional light.
+        // 5m away from the helmet keeps it clearly outside the model.
+        if (auto* ltc = registry.get<TransformComponent>(lightEntity_))
+        {
+            ltc->position = kLightDir * 5.0f;
+            ltc->flags |= 1;
+        }
         const float lightData[8] = {
             kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
             1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
@@ -531,8 +571,10 @@ private:
     engine::assets::AssetHandle<engine::assets::GltfAsset> helmetHandle_{};
     bool helmetSpawned_ = false;
     EntityID groundEntity_ = INVALID_ENTITY;
+    EntityID lightEntity_ = INVALID_ENTITY;
     uint32_t groundMeshId_ = 0;
     uint32_t groundMatId_ = 0;
+    uint32_t lightMatId_ = 0;
 
     void loadMsdfFont()
     {
