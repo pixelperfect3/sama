@@ -174,10 +174,7 @@ public:
         registry.emplace<MaterialComponent>(groundEntity_, groundMatId_);
         registry.emplace<VisibleTag>(groundEntity_);
         // NOTE: deliberately no ShadowVisibleTag on the ground — it should
-        // only RECEIVE shadows (via the PBR shader sampling the atlas), not
-        // CAST them. Tagging it as a caster makes the 20×20 ground render
-        // itself into the shadow atlas and produces self-shadowing artefacts
-        // that look like a giant shadow shape unrelated to the helmet.
+        // only RECEIVE shadows (via the PBR shader sampling the atlas).
 
         // ----------------------------------------------------------------
         // Light indicator — small emissive cube placed at the light
@@ -327,8 +324,7 @@ public:
                         tc.flags |= 1;
                     });
                 // Defensive: never let the light cube or the ground become
-                // a shadow caster. The light represents the source itself
-                // and must not occlude; the ground only RECEIVES shadows.
+                // a shadow caster.
                 if (registry.has<ShadowVisibleTag>(lightEntity_))
                     registry.remove<ShadowVisibleTag>(lightEntity_);
                 if (registry.has<ShadowVisibleTag>(groundEntity_))
@@ -403,6 +399,21 @@ public:
 #ifdef __ANDROID__
         if (frameCount_ == 60)  // log once after first second
         {
+            // bgfx view stats — list each view + GPU time (proxy for "had draws")
+            const bgfx::Stats* stats = bgfx::getStats();
+            if (stats && stats->viewStats)
+            {
+                for (uint16_t i = 0; i < stats->numViews && i < 12; ++i)
+                {
+                    const bgfx::ViewStats& vs = stats->viewStats[i];
+                    __android_log_print(4, "SamaEngine", "view %u name=%s gpu=%lld cpu=%lld",
+                                        vs.view, vs.name,
+                                        (long long)(vs.gpuTimeEnd - vs.gpuTimeBegin),
+                                        (long long)(vs.cpuTimeEnd - vs.cpuTimeBegin));
+                }
+                __android_log_print(4, "SamaEngine", "stats: numDraw=%u numViews=%u numCompute=%u",
+                                    stats->numDraw, stats->numViews, stats->numCompute);
+            }
             __android_log_print(4, "SamaEngine", "shadow atlas valid=%d idx=%u",
                                 bgfx::isValid(shadowAtlas) ? 1 : 0, shadowAtlas.idx);
             __android_log_print(4, "SamaEngine", "shadow matrix row0: %.3f %.3f %.3f %.3f",
@@ -419,17 +430,24 @@ public:
             __android_log_print(4, "SamaEngine",
                                 "shadow probe ground (0,-0.55,0) -> (%.3f, %.3f, %.3f, %.3f)", sg.x,
                                 sg.y, sg.z, sg.w);
-            // Print the actual world position of every shadow caster
-            // to confirm the helmet is where we think it is.
-            registry.view<ShadowVisibleTag, WorldTransformComponent>().each(
-                [&](EntityID e, const ShadowVisibleTag&, const WorldTransformComponent& wtc)
+            // Print the actual world position + mesh stats of every
+            // shadow caster, to confirm the helmet has valid geometry.
+            registry.view<ShadowVisibleTag, WorldTransformComponent, MeshComponent>().each(
+                [&](EntityID e, const ShadowVisibleTag&, const WorldTransformComponent& wtc,
+                    const MeshComponent& mc)
                 {
-                    if (e == groundEntity_ || e == lightEntity_)
-                        return;
+                    const auto* mesh = engine.resources().getMesh(mc.mesh);
+                    bool meshValid = mesh && mesh->isValid();
+                    bool posValid = mesh && bgfx::isValid(mesh->positionVbh);
+                    bool ibValid = mesh && bgfx::isValid(mesh->ibh);
                     __android_log_print(4, "SamaEngine",
-                                        "shadow caster entity=%u world pos: (%.3f, %.3f, %.3f)",
-                                        static_cast<uint32_t>(e), wtc.matrix[3][0],
-                                        wtc.matrix[3][1], wtc.matrix[3][2]);
+                                        "caster e=%u meshId=%u verts=%u idx=%u "
+                                        "world=(%.2f,%.2f,%.2f) "
+                                        "meshValid=%d posVbh=%d ibh=%d",
+                                        static_cast<uint32_t>(e), mc.mesh,
+                                        mesh ? mesh->vertexCount : 0, mesh ? mesh->indexCount : 0,
+                                        wtc.matrix[3][0], wtc.matrix[3][1], wtc.matrix[3][2],
+                                        meshValid ? 1 : 0, posValid ? 1 : 0, ibValid ? 1 : 0);
                 });
         }
 #endif
