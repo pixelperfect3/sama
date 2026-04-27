@@ -357,8 +357,9 @@ public:
         const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
         // Orbiting directional light. Elevation 0.55 keeps the light fairly
-        // high so it doesn't dip below the horizon, while still casting a
-        // visible shadow that sweeps across the ground.
+        // high so it doesn't dip below the horizon. NOTE: must NOT be
+        // (0, 1, 0) — lookAt(lightPos, origin, up=(0,1,0)) is degenerate
+        // when the look direction is parallel to up, producing NaN matrices.
         const float lightAngle = elapsed_ * 0.45f;
         const float kLightElevation = 0.55f;
         const float cosE = std::sqrt(1.0f - kLightElevation * kLightElevation);
@@ -398,20 +399,51 @@ public:
             .transform(viewMat, projMat);
 
         const glm::mat4 shadowMat = engine.shadow().shadowMatrix(0);
+        const auto shadowAtlas = engine.shadow().atlasTexture();
+#ifdef __ANDROID__
+        if (frameCount_ == 60)  // log once after first second
+        {
+            __android_log_print(4, "SamaEngine", "shadow atlas valid=%d idx=%u",
+                                bgfx::isValid(shadowAtlas) ? 1 : 0, shadowAtlas.idx);
+            __android_log_print(4, "SamaEngine", "shadow matrix row0: %.3f %.3f %.3f %.3f",
+                                shadowMat[0][0], shadowMat[0][1], shadowMat[0][2], shadowMat[0][3]);
+            __android_log_print(4, "SamaEngine", "shadow matrix row3: %.3f %.3f %.3f %.3f",
+                                shadowMat[3][0], shadowMat[3][1], shadowMat[3][2], shadowMat[3][3]);
+            // Probe the shadow projection of the helmet position (0, 0.8, 0)
+            glm::vec4 sc = shadowMat * glm::vec4(0.f, 0.8f, 0.f, 1.f);
+            __android_log_print(4, "SamaEngine",
+                                "shadow probe helmet (0,0.8,0) -> (%.3f, %.3f, %.3f, %.3f)", sc.x,
+                                sc.y, sc.z, sc.w);
+            // Probe the ground position right under the helmet
+            glm::vec4 sg = shadowMat * glm::vec4(0.f, -0.55f, 0.f, 1.f);
+            __android_log_print(4, "SamaEngine",
+                                "shadow probe ground (0,-0.55,0) -> (%.3f, %.3f, %.3f, %.3f)", sg.x,
+                                sg.y, sg.z, sg.w);
+            // Print the actual world position of every shadow caster
+            // to confirm the helmet is where we think it is.
+            registry.view<ShadowVisibleTag, WorldTransformComponent>().each(
+                [&](EntityID e, const ShadowVisibleTag&, const WorldTransformComponent& wtc)
+                {
+                    if (e == groundEntity_ || e == lightEntity_)
+                        return;
+                    __android_log_print(4, "SamaEngine",
+                                        "shadow caster entity=%u world pos: (%.3f, %.3f, %.3f)",
+                                        static_cast<uint32_t>(e), wtc.matrix[3][0],
+                                        wtc.matrix[3][1], wtc.matrix[3][2]);
+                });
+        }
+#endif
         PbrFrameParams frame{
-            lightData, glm::value_ptr(shadowMat), engine.shadow().atlasTexture(), W, H, 0.05f, 50.f,
+            lightData, glm::value_ptr(shadowMat), shadowAtlas, W, H, 0.05f, 50.f,
         };
         frame.camPos[0] = camPos.x;
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
-        if (ibl_.isValid())
-        {
-            frame.iblEnabled = true;
-            frame.maxMipLevels = 8.0f;
-            frame.irradiance = ibl_.irradiance();
-            frame.prefiltered = ibl_.prefiltered();
-            frame.brdfLut = ibl_.brdfLut();
-        }
+        // IBL disabled to make the helmet's cast shadow visible against the
+        // ground. With IBL fill, the shadowed area still receives strong
+        // ambient illumination from the environment and the shadow gets
+        // washed out almost entirely.
+        // if (ibl_.isValid()) { ... }
         drawCallSys_.update(registry, engine.resources(), engine.pbrProgram(), engine.uniforms(),
                             frame);
 
@@ -549,6 +581,21 @@ public:
                 drawList_.drawText({leftMargin, y}, "ChunkFive MSDF: The quick brown fox!", yellow,
                                    &msdfFont_, fontSize * 1.5f);
                 y += lineH * 2.f;
+            }
+
+            // Shadow atlas debug viewer — bottom-left corner. Shows what the
+            // light "sees" — should contain the helmet's silhouette in white
+            // (close to light) on a black background (cleared depth = far).
+            const auto shadowAtlas = engine.shadow().atlasTexture();
+            if (bgfx::isValid(shadowAtlas))
+            {
+                const float panel = 240.f;
+                drawList_.drawRect({18.f, fbH - panel - 18.f}, {panel + 4.f, panel + 4.f},
+                                   {0.0f, 0.0f, 0.0f, 1.0f}, 0.f);
+                drawList_.drawTexturedRect({20.f, fbH - panel - 16.f}, {panel, panel}, shadowAtlas,
+                                           {0.f, 0.f, 1.f, 1.f}, {1.f, 1.f, 1.f, 1.f});
+                drawList_.drawText({22.f, fbH - panel - 36.f}, "shadow atlas (depth)", white,
+                                   &font_, 12.f);
             }
 
             // Render UI on view 48 (kViewGameUi)
