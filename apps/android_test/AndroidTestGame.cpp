@@ -173,8 +173,11 @@ public:
         registry.emplace<MeshComponent>(groundEntity_, groundMeshId_);
         registry.emplace<MaterialComponent>(groundEntity_, groundMatId_);
         registry.emplace<VisibleTag>(groundEntity_);
-        // Receive shadows (and cast — but it's flat so no visible self-shadow).
-        registry.emplace<ShadowVisibleTag>(groundEntity_, ShadowVisibleTag{0xFF});
+        // NOTE: deliberately no ShadowVisibleTag on the ground — it should
+        // only RECEIVE shadows (via the PBR shader sampling the atlas), not
+        // CAST them. Tagging it as a caster makes the 20×20 ground render
+        // itself into the shadow atlas and produces self-shadowing artefacts
+        // that look like a giant shadow shape unrelated to the helmet.
 
         // ----------------------------------------------------------------
         // Light indicator — small emissive cube placed at the light
@@ -308,10 +311,13 @@ public:
                 helmetSpawned_ = true;
 
                 // Float the spawned helmet above the ground (keep its
-                // original ~1m size so it casts a substantial shadow),
-                // and tag every spawned mesh as a shadow caster.
+                // original ~1m size so it casts a substantial shadow).
+                // GltfSceneSpawner already adds ShadowVisibleTag to spawned
+                // mesh entities, so we don't need to do that ourselves.
                 // IMPORTANT: skip the ground and the light indicator —
-                // we manage their positions ourselves.
+                // we manage their positions ourselves and they must NOT
+                // be touched (especially: light cube must never become a
+                // shadow caster).
                 registry.view<TransformComponent, MeshComponent>().each(
                     [&](EntityID e, TransformComponent& tc, const MeshComponent&)
                     {
@@ -319,9 +325,14 @@ public:
                             return;
                         tc.position.y += 0.8f;
                         tc.flags |= 1;
-                        if (!registry.has<ShadowVisibleTag>(e))
-                            registry.emplace<ShadowVisibleTag>(e, ShadowVisibleTag{0xFF});
                     });
+                // Defensive: never let the light cube or the ground become
+                // a shadow caster. The light represents the source itself
+                // and must not occlude; the ground only RECEIVES shadows.
+                if (registry.has<ShadowVisibleTag>(lightEntity_))
+                    registry.remove<ShadowVisibleTag>(lightEntity_);
+                if (registry.has<ShadowVisibleTag>(groundEntity_))
+                    registry.remove<ShadowVisibleTag>(groundEntity_);
 
                 // Tweak roughness slightly so the helmet looks less mirror-like.
                 registry.view<MaterialComponent>().each(
