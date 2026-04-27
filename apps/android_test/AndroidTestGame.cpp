@@ -26,6 +26,12 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
 
+#include "engine/assets/AssetManager.h"
+#include "engine/assets/GltfAsset.h"
+#include "engine/assets/GltfLoader.h"
+#include "engine/assets/GltfSceneSpawner.h"
+#include "engine/assets/StdFileSystem.h"
+#include "engine/assets/TextureLoader.h"
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
 #include "engine/game/GameRunner.h"
@@ -33,12 +39,14 @@
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/IblResources.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
+#include "engine/threading/ThreadPool.h"
 #include "engine/ui/BitmapFont.h"
 #include "engine/ui/MsdfFont.h"
 #include "engine/ui/UiDrawList.h"
@@ -46,6 +54,7 @@
 #ifdef __ANDROID__
 #include <android/asset_manager.h>
 
+#include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidGlobals.h"
 #endif
 
@@ -119,30 +128,51 @@ public:
         loadMsdfFont();
 
         // ----------------------------------------------------------------
-        // Spawn a single PBR cube to verify the full lighting pipeline
-        // works on Android (PBR shader + shadow pass).
+        // Asset system: thread pool + platform filesystem + AssetManager.
+        // Android reads from APK assets via AAssetManager; desktop reads
+        // from the working directory.
+        // ----------------------------------------------------------------
+        threadPool_ = std::make_unique<engine::threading::ThreadPool>(2);
+#ifdef __ANDROID__
+        fileSystem_ = std::make_unique<engine::platform::AndroidFileSystem>(
+            engine::platform::getAssetManager());
+#else
+        fileSystem_ = std::make_unique<engine::assets::StdFileSystem>("assets");
+#endif
+        assetManager_ = std::make_unique<engine::assets::AssetManager>(*threadPool_, *fileSystem_);
+        assetManager_->registerLoader(std::make_unique<engine::assets::TextureLoader>());
+        assetManager_->registerLoader(std::make_unique<engine::assets::GltfLoader>());
+
+        // Procedural sky/ground IBL — gives the helmet realistic env reflections.
+        ibl_.generateDefault();
+
+        // Kick off async helmet load (will spawn on first frame it's Ready).
+        helmetHandle_ = assetManager_->load<engine::assets::GltfAsset>("DamagedHelmet.glb");
+
+        // ----------------------------------------------------------------
+        // Ground plane (a thin scaled cube) to receive the helmet's shadow.
         // ----------------------------------------------------------------
         MeshData cubeData = makeCubeMeshData();
         Mesh cubeMesh = buildMesh(cubeData);
-        cubeMeshId_ = engine.resources().addMesh(std::move(cubeMesh));
+        groundMeshId_ = engine.resources().addMesh(std::move(cubeMesh));
 
-        Material mat;
-        mat.albedo = {0.85f, 0.45f, 0.20f, 1.0f};  // warm orange
-        mat.roughness = 0.4f;
-        mat.metallic = 0.0f;
-        cubeMatId_ = engine.resources().addMaterial(mat);
+        Material groundMat;
+        groundMat.albedo = {0.35f, 0.35f, 0.40f, 1.0f};
+        groundMat.roughness = 0.85f;
+        groundMat.metallic = 0.0f;
+        groundMatId_ = engine.resources().addMaterial(groundMat);
 
-        cubeEntity_ = registry.createEntity();
-        TransformComponent tc;
-        tc.position = {0.0f, 0.0f, 0.0f};
-        tc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        tc.scale = {1.0f, 1.0f, 1.0f};
-        tc.flags = 1;
-        registry.emplace<TransformComponent>(cubeEntity_, tc);
-        registry.emplace<WorldTransformComponent>(cubeEntity_);
-        registry.emplace<MeshComponent>(cubeEntity_, cubeMeshId_);
-        registry.emplace<MaterialComponent>(cubeEntity_, cubeMatId_);
-        registry.emplace<VisibleTag>(cubeEntity_);
+        groundEntity_ = registry.createEntity();
+        TransformComponent gtc;
+        gtc.position = {0.0f, -1.2f, 0.0f};
+        gtc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        gtc.scale = {6.0f, 0.1f, 6.0f};
+        gtc.flags = 1;
+        registry.emplace<TransformComponent>(groundEntity_, gtc);
+        registry.emplace<WorldTransformComponent>(groundEntity_);
+        registry.emplace<MeshComponent>(groundEntity_, groundMeshId_);
+        registry.emplace<MaterialComponent>(groundEntity_, groundMatId_);
+        registry.emplace<VisibleTag>(groundEntity_);
     }
 
     void onUpdate(Engine& engine, Registry& registry, float dt) override
@@ -241,32 +271,49 @@ public:
         uint32_t bgColor = hsvToRgba(hue_, 0.6f, brightness_);
         engine.setClearColor(bgColor);
 
-        // --- Spin the cube and submit PBR draw calls ----------------------
-        if (auto* tc = registry.get<TransformComponent>(cubeEntity_))
+        // --- Asset uploads + spawn helmet on Ready ------------------------
+        assetManager_->processUploads();
+        const engine::assets::AssetState helmetState = assetManager_->state(helmetHandle_);
+        if (!helmetSpawned_ && helmetState == engine::assets::AssetState::Ready)
         {
-            float yawRad = elapsed_ * 0.6f;
-            float pitchRad = elapsed_ * 0.4f;
-            tc->rotation = glm::quat(glm::vec3(pitchRad, yawRad, 0.0f));
-            tc->flags |= 1;
+            const auto* helmet = assetManager_->get<engine::assets::GltfAsset>(helmetHandle_);
+            if (helmet)
+            {
+                engine::assets::GltfSceneSpawner::spawn(*helmet, registry, engine.resources());
+                helmetSpawned_ = true;
+
+                // Tweak roughness slightly so the helmet looks less mirror-like.
+                registry.view<MaterialComponent>().each(
+                    [&](EntityID, MaterialComponent& mc)
+                    {
+                        auto* mat = engine.resources().getMaterialMut(mc.material);
+                        if (mat && mc.material != groundMatId_)
+                            mat->roughness = 0.55f;
+                    });
+            }
         }
 
         transformSys_.update(registry);
 
-        // Camera orbits 4 m above and 6 m back, looking at the cube origin.
+        // Camera orbits a bit above, looking at the helmet origin.
         const float aspect = (fbH > 0.f) ? (fbW / fbH) : 1.0f;
-        const glm::vec3 camPos{0.0f, 1.5f, 4.5f};
-        const glm::mat4 viewMat = glm::lookAt(camPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
-        const glm::mat4 projMat = glm::perspective(glm::radians(50.f), aspect, 0.05f, 50.f);
+        const glm::vec3 camPos{0.0f, 0.6f, 3.2f};
+        const glm::mat4 viewMat = glm::lookAt(camPos, glm::vec3(0.f, 0.f, 0.f), glm::vec3(0, 1, 0));
+        const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
-        // Directional light + shadow projection.
-        const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.4f, 1.0f, 0.6f));
-        constexpr float kLightIntens = 5.0f;
+        // Orbiting directional light so the shadow sweeps across the ground.
+        const float lightAngle = elapsed_ * 0.5f;
+        const float kLightElevation = 0.65f;
+        const float cosE = std::sqrt(1.0f - kLightElevation * kLightElevation);
+        const glm::vec3 kLightDir = glm::normalize(
+            glm::vec3(cosE * std::sin(lightAngle), kLightElevation, cosE * std::cos(lightAngle)));
+        constexpr float kLightIntens = 8.0f;
         const float lightData[8] = {
             kLightDir.x,         kLightDir.y,          kLightDir.z,          0.f,
             1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
-        const glm::vec3 lightPos = kLightDir * 8.f;
+        const glm::vec3 lightPos = kLightDir * 10.f;
         const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
-        const glm::mat4 lightProj = glm::ortho(-3.f, 3.f, -3.f, 3.f, 0.1f, 25.f);
+        const glm::mat4 lightProj = glm::ortho(-3.f, 3.f, -3.f, 3.f, 0.1f, 30.f);
 
         // Shadow pass — depth-only into cascade 0.
         engine.shadow().beginCascade(0, lightView, lightProj);
@@ -287,6 +334,14 @@ public:
         frame.camPos[0] = camPos.x;
         frame.camPos[1] = camPos.y;
         frame.camPos[2] = camPos.z;
+        if (ibl_.isValid())
+        {
+            frame.iblEnabled = true;
+            frame.maxMipLevels = 8.0f;
+            frame.irradiance = ibl_.irradiance();
+            frame.prefiltered = ibl_.prefiltered();
+            frame.brdfLut = ibl_.brdfLut();
+        }
         drawCallSys_.update(registry, engine.resources(), engine.pbrProgram(), engine.uniforms(),
                             frame);
 
@@ -397,6 +452,24 @@ public:
                      (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF, hue_,
                      brightness_);
             drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            // Helmet asset status
+            const char* helmetStatus = "Loading…";
+            glm::vec4 helmetColor = gray;
+            if (helmetSpawned_)
+            {
+                helmetStatus = "Ready (PBR + shadow)";
+                helmetColor = green;
+            }
+            else if (assetManager_ &&
+                     assetManager_->state(helmetHandle_) == engine::assets::AssetState::Failed)
+            {
+                helmetStatus = "FAILED to load";
+                helmetColor = glm::vec4{1.f, 0.4f, 0.4f, 1.f};
+            }
+            snprintf(buf, sizeof(buf), "DamagedHelmet.glb: %s", helmetStatus);
+            drawList_.drawText({leftMargin, y}, buf, helmetColor, &font_, fontSize);
             y += lineH * 1.5f;
 
             // MSDF font test line
@@ -434,12 +507,18 @@ private:
     engine::ui::MsdfFont msdfFont_;
     engine::ui::UiDrawList drawList_;
 
-    // PBR cube — verifies the full lighting + shadow pipeline.
+    // PBR scene — DamagedHelmet on a ground plane, lit by an orbiting light.
     engine::scene::TransformSystem transformSys_;
     DrawCallBuildSystem drawCallSys_;
-    EntityID cubeEntity_ = INVALID_ENTITY;
-    uint32_t cubeMeshId_ = 0;
-    uint32_t cubeMatId_ = 0;
+    std::unique_ptr<engine::threading::ThreadPool> threadPool_;
+    std::unique_ptr<engine::assets::IFileSystem> fileSystem_;
+    std::unique_ptr<engine::assets::AssetManager> assetManager_;
+    engine::rendering::IblResources ibl_;
+    engine::assets::AssetHandle<engine::assets::GltfAsset> helmetHandle_{};
+    bool helmetSpawned_ = false;
+    EntityID groundEntity_ = INVALID_ENTITY;
+    uint32_t groundMeshId_ = 0;
+    uint32_t groundMatId_ = 0;
 
     void loadMsdfFont()
     {

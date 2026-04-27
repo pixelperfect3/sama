@@ -1333,6 +1333,7 @@ if(NOT SAMA_ANDROID)
         engine_io
         engine_threading
         engine_input_glfw
+        engine_assets
     )
 endif()
 
