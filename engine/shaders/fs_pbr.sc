@@ -21,7 +21,11 @@ SAMPLER2D(s_normal,    1);
 SAMPLER2D(s_orm,       2);
 SAMPLER2D(s_emissive,  3);
 SAMPLER2D(s_occlusion, 4);
-SAMPLER2DSHADOW(s_shadowMap, 5);
+// Use a regular SAMPLER2D and do manual depth comparison.  Mali-G715 on
+// Vulkan does not produce correct results with hardware depth-comparison
+// samplers (SAMPLER2DSHADOW + shadow2D / Dref); a regular sample + step
+// works on every platform we care about.
+SAMPLER2D(s_shadowMap, 5);
 
 // Light data textures — Phase 6.
 // s_lightData:  256x4 RGBA32F  (row 0=pos/r, row 1=col/type, row 2=dir/cosOuter, row 3=cosInner)
@@ -177,10 +181,16 @@ void main()
             float slopeFactor = clamp(1.0 - dot(Ngeom, L), 0.0, 1.0);
             float shadowBias = mix(0.002, 0.02, slopeFactor);
             float shadowZ = shadowCoord.z - shadowBias;
-            shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowZ));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowZ));
+            // Manual PCF 2x2 — explicit step compare instead of hardware
+            // shadow2D, because Mali-G715 mishandles depth-comparison samplers.
+            float d0 = texture2D(s_shadowMap, shadowCoord.xy + vec2(-texelSize, -texelSize)).x;
+            float d1 = texture2D(s_shadowMap, shadowCoord.xy + vec2( texelSize, -texelSize)).x;
+            float d2 = texture2D(s_shadowMap, shadowCoord.xy + vec2(-texelSize,  texelSize)).x;
+            float d3 = texture2D(s_shadowMap, shadowCoord.xy + vec2( texelSize,  texelSize)).x;
+            shadow  = step(shadowZ, d0);
+            shadow += step(shadowZ, d1);
+            shadow += step(shadowZ, d2);
+            shadow += step(shadowZ, d3);
             shadow *= 0.25;
         }
     }

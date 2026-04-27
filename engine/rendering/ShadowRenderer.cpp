@@ -21,12 +21,15 @@ bool ShadowRenderer::init(const ShadowDesc& desc)
     const uint32_t res = desc_.resolution;
 
     // Create the shadow atlas texture with depth format.
-    // BGFX_SAMPLER_COMPARE_LEQUAL enables hardware PCF comparison sampling
-    // (shadow2D in shaderc macros) when the texture is sampled in the PBR pass.
     // BGFX_TEXTURE_RT marks it as a render target so it can be attached to a
     // framebuffer for the shadow depth pass.
-    const uint64_t textureFlags =
-        BGFX_TEXTURE_RT | static_cast<uint64_t>(BGFX_SAMPLER_COMPARE_LEQUAL);
+    // NOTE: We deliberately do NOT set BGFX_SAMPLER_COMPARE_LEQUAL — the PBR
+    // shader does manual depth comparison (`step(refZ, sampledDepth)`) instead
+    // of hardware shadow2D, because Mali-G715 (Pixel 9) mishandles
+    // depth-comparison samplers and produces no shadow at all.
+    // Use point sampling so depth values are read exactly without filtering.
+    const uint64_t textureFlags = BGFX_TEXTURE_RT | static_cast<uint64_t>(BGFX_SAMPLER_MIN_POINT) |
+                                  static_cast<uint64_t>(BGFX_SAMPLER_MAG_POINT);
 
     atlas_ = bgfx::createTexture2D(static_cast<uint16_t>(res), static_cast<uint16_t>(res), false, 1,
                                    bgfx::TextureFormat::D32F, textureFlags);
