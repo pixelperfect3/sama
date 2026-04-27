@@ -166,7 +166,7 @@ public:
         TransformComponent gtc;
         gtc.position = {0.0f, -0.55f, 0.0f};
         gtc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        gtc.scale = {20.0f, 0.05f, 20.0f};
+        gtc.scale = {8.0f, 0.05f, 8.0f};
         gtc.flags = 1;
         registry.emplace<TransformComponent>(groundEntity_, gtc);
         registry.emplace<WorldTransformComponent>(groundEntity_);
@@ -378,7 +378,12 @@ public:
             1.0f * kLightIntens, 0.95f * kLightIntens, 0.85f * kLightIntens, 0.f};
         const glm::vec3 lightPos = kLightDir * 10.f;
         const glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.f), glm::vec3(0, 1, 0));
-        const glm::mat4 lightProj = glm::ortho(-3.f, 3.f, -3.f, 3.f, 0.1f, 30.f);
+        // Ortho frustum sized to cover the entire 8x8 ground (with margin
+        // for light-angle skew) so every ground fragment sees the shadow
+        // check. With a smaller frustum, the shader's [0,1] range check
+        // creates a visible boundary on the ground that looks like a
+        // cube-shaped shadow.
+        const glm::mat4 lightProj = glm::ortho(-6.f, 6.f, -6.f, 6.f, 0.1f, 30.f);
 
         // Shadow pass — depth-only into cascade 0.
         engine.shadow().beginCascade(0, lightView, lightProj);
