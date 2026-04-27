@@ -164,9 +164,9 @@ public:
 
         groundEntity_ = registry.createEntity();
         TransformComponent gtc;
-        gtc.position = {0.0f, -1.2f, 0.0f};
+        gtc.position = {0.0f, -0.55f, 0.0f};
         gtc.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        gtc.scale = {6.0f, 0.1f, 6.0f};
+        gtc.scale = {4.0f, 0.05f, 4.0f};
         gtc.flags = 1;
         registry.emplace<TransformComponent>(groundEntity_, gtc);
         registry.emplace<WorldTransformComponent>(groundEntity_);
@@ -282,6 +282,18 @@ public:
                 engine::assets::GltfSceneSpawner::spawn(*helmet, registry, engine.resources());
                 helmetSpawned_ = true;
 
+                // Scale the spawned helmet down to ~half size so the ground
+                // plane and the cast shadow are clearly visible in frame.
+                registry.view<TransformComponent>().each(
+                    [&](EntityID e, TransformComponent& tc)
+                    {
+                        if (e != groundEntity_)
+                        {
+                            tc.scale *= 0.5f;
+                            tc.flags |= 1;
+                        }
+                    });
+
                 // Tweak roughness slightly so the helmet looks less mirror-like.
                 registry.view<MaterialComponent>().each(
                     [&](EntityID, MaterialComponent& mc)
@@ -295,10 +307,12 @@ public:
 
         transformSys_.update(registry);
 
-        // Camera orbits a bit above, looking at the helmet origin.
+        // Camera pulled back and tilted down so both the helmet and the
+        // ground plane (with cast shadow) are clearly visible.
         const float aspect = (fbH > 0.f) ? (fbW / fbH) : 1.0f;
-        const glm::vec3 camPos{0.0f, 0.6f, 3.2f};
-        const glm::mat4 viewMat = glm::lookAt(camPos, glm::vec3(0.f, 0.f, 0.f), glm::vec3(0, 1, 0));
+        const glm::vec3 camPos{0.0f, 1.2f, 3.0f};
+        const glm::vec3 camTarget{0.0f, -0.25f, 0.0f};
+        const glm::mat4 viewMat = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
         // Orbiting directional light so the shadow sweeps across the ground.
