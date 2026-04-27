@@ -98,6 +98,7 @@ FetchContent_Declare(
     GIT_TAG        98d6c112a427bf218b9c9aaee0128af3b0336584
     PATCH_COMMAND  ${CMAKE_COMMAND} -E env git apply --whitespace=nowarn
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_emulator_compat.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_mali_shadow_fix.patch
                    || ${CMAKE_COMMAND} -E echo "Patch already applied or not needed"
 )
 

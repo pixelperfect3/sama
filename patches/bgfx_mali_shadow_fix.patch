@@ -1,0 +1,18 @@
+diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
+--- a/bgfx/src/renderer_vk.cpp
++++ b/bgfx/src/renderer_vk.cpp
+@@ -3476,8 +3476,12 @@
+ 			sd[0].pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+ 			sd[0].inputAttachmentCount    = 0;
+ 			sd[0].pInputAttachments       = NULL;
+-			sd[0].colorAttachmentCount    = bx::max<uint32_t>(numColorAr, 1);
+-			sd[0].pColorAttachments       = colorAr;
++			// bgfx#3486 fix: don't declare a phantom color attachment for
++			// depth-only passes. Mali-G715 (Pixel 9) silently produces an
++			// empty depth atlas otherwise, breaking shadow comparison.
++			// Same APK shows correct shadows on the Android emulator.
++			sd[0].colorAttachmentCount    = numColorAr;
++			sd[0].pColorAttachments       = numColorAr ? colorAr : NULL;
+ 			sd[0].pResolveAttachments     = resolveAr;
+ 			sd[0].pDepthStencilAttachment = &depthAr;
+ 			sd[0].preserveAttachmentCount = 0;
