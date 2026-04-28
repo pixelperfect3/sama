@@ -14,9 +14,9 @@ TEST_CASE("RigidBodyComponent is 28 bytes", "[physics][components]")
     CHECK(sizeof(RigidBodyComponent) == 28);
 }
 
-TEST_CASE("ColliderComponent is 32 bytes", "[physics][components]")
+TEST_CASE("ColliderComponent is 36 bytes", "[physics][components]")
 {
-    CHECK(sizeof(ColliderComponent) == 32);
+    CHECK(sizeof(ColliderComponent) == 36);
 }
 
 TEST_CASE("RigidBodyComponent field offsets", "[physics][components]")
@@ -37,6 +37,8 @@ TEST_CASE("ColliderComponent field offsets", "[physics][components]")
     CHECK(offsetof(ColliderComponent, halfExtents) == 12);
     CHECK(offsetof(ColliderComponent, radius) == 24);
     CHECK(offsetof(ColliderComponent, shape) == 28);
+    CHECK(offsetof(ColliderComponent, isSensor) == 29);
+    CHECK(offsetof(ColliderComponent, shapeID) == 32);
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +71,8 @@ TEST_CASE("ColliderComponent default values", "[physics][components]")
     CHECK(col.halfExtents.z == 0.5f);
     CHECK(col.radius == 0.5f);
     CHECK(col.shape == ColliderShape::Box);
+    CHECK(col.isSensor == 0);
+    CHECK(col.shapeID == ~0u);
 }
 
 TEST_CASE("PhysicsBodyCreatedTag is a tag component", "[physics][components]")
