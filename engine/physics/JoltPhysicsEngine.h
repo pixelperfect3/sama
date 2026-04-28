@@ -6,6 +6,7 @@
 
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <ankerl/unordered_dense.h>
 
@@ -54,6 +55,12 @@ public:
     const std::vector<ContactEvent>& getContactBeginEvents() const override;
     const std::vector<ContactEvent>& getContactEndEvents() const override;
 
+    uint32_t createMeshShape(const float* positions, size_t vertexCount, const uint32_t* indices,
+                             size_t indexCount) override;
+    void destroyMeshShape(uint32_t shapeID) override;
+    uint32_t createCompoundShape(const CompoundChild* children, size_t count) override;
+    void destroyCompoundShape(uint32_t shapeID) override;
+
     // For cleanup: map of body ID -> entity ID
     const ankerl::unordered_dense::map<uint32_t, ecs::EntityID>& getBodyEntityMap() const;
 
@@ -71,6 +78,18 @@ private:
 
     // Entity <-> body mappings
     ankerl::unordered_dense::map<uint32_t, ecs::EntityID> bodyToEntity_;
+
+    // Pre-built shape registries. The JPH::ShapeRefC keeps the underlying shape
+    // alive as long as any body still references it; erasing a registry entry
+    // simply drops the engine's hold and lets Jolt's intrinsic refcount handle
+    // the rest.
+    struct ShapeEntry
+    {
+        JPH::ShapeRefC shape;
+    };
+    ankerl::unordered_dense::map<uint32_t, ShapeEntry> meshShapes_;
+    ankerl::unordered_dense::map<uint32_t, ShapeEntry> compoundShapes_;
+    uint32_t nextShapeID_ = 1;
 
     bool initialized_ = false;
 };

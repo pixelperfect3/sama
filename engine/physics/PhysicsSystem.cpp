@@ -98,6 +98,7 @@ void PhysicsSystem::registerNewBodies(ecs::Registry& reg, IPhysicsEngine& physic
         desc.layer = rb->layer;
         desc.isSensor = (col->isSensor != 0);
         desc.entity = entity;
+        desc.shapeID = col->shapeID;
 
         uint32_t bodyID = physics.addBody(desc);
         if (bodyID != ~0u)

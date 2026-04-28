@@ -7,7 +7,9 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
@@ -99,6 +101,12 @@ void JoltPhysicsEngine::shutdown()
     }
     bodyToEntity_.clear();
 
+    // Drop the engine's hold on every pre-built shape. Any shape still
+    // referenced by a body that already lived through the loop above would
+    // already be unreferenced here; in practice both maps are empty by now.
+    meshShapes_.clear();
+    compoundShapes_.clear();
+
     physicsSystem_.reset();
     jobSystem_.reset();
     tempAllocator_.reset();
@@ -144,7 +152,6 @@ uint32_t JoltPhysicsEngine::addBody(const BodyDesc& desc)
     switch (desc.shape)
     {
         case ColliderShape::Box:
-        case ColliderShape::Mesh:  // mesh not yet supported, fall back to box
         {
             math::Vec3 half = sanitizeHalf(desc.halfExtents);
             float minHalf = std::min({half.x, half.y, half.z});
@@ -176,6 +183,34 @@ uint32_t JoltPhysicsEngine::addBody(const BodyDesc& desc)
             float halfH = std::max(desc.halfExtents.y, kMinHalfExtent);
             float r = std::max(desc.radius, kMinHalfExtent);
             shape = new JPH::CapsuleShape(halfH, r);
+            break;
+        }
+        case ColliderShape::Mesh:
+        {
+            auto it = meshShapes_.find(desc.shapeID);
+            if (it == meshShapes_.end())
+            {
+                fprintf(stderr,
+                        "[physics] addBody: ColliderShape::Mesh requires a valid shapeID "
+                        "(got %u) for entity %u — refusing to create body\n",
+                        desc.shapeID, static_cast<uint32_t>(desc.entity));
+                return ~0u;
+            }
+            shape = it->second.shape;
+            break;
+        }
+        case ColliderShape::Compound:
+        {
+            auto it = compoundShapes_.find(desc.shapeID);
+            if (it == compoundShapes_.end())
+            {
+                fprintf(stderr,
+                        "[physics] addBody: ColliderShape::Compound requires a valid shapeID "
+                        "(got %u) for entity %u — refusing to create body\n",
+                        desc.shapeID, static_cast<uint32_t>(desc.entity));
+                return ~0u;
+            }
+            shape = it->second.shape;
             break;
         }
     }
@@ -464,6 +499,132 @@ const ankerl::unordered_dense::map<uint32_t, ecs::EntityID>& JoltPhysicsEngine::
     const
 {
     return bodyToEntity_;
+}
+
+uint32_t JoltPhysicsEngine::createMeshShape(const float* positions, size_t vertexCount,
+                                            const uint32_t* indices, size_t indexCount)
+{
+    if (!initialized_ || !positions || !indices || vertexCount == 0 || indexCount < 3 ||
+        (indexCount % 3) != 0)
+    {
+        return ~0u;
+    }
+
+    JPH::TriangleList tris;
+    tris.reserve(indexCount / 3);
+
+    auto vert = [&](uint32_t idx) -> JPH::Float3
+    {
+        const float* p = positions + (idx * 3);
+        return JPH::Float3(p[0], p[1], p[2]);
+    };
+
+    for (size_t i = 0; i < indexCount; i += 3)
+    {
+        const uint32_t i0 = indices[i + 0];
+        const uint32_t i1 = indices[i + 1];
+        const uint32_t i2 = indices[i + 2];
+        if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount)
+        {
+            return ~0u;
+        }
+        tris.emplace_back(vert(i0), vert(i1), vert(i2));
+    }
+
+    JPH::MeshShapeSettings settings(std::move(tris));
+    settings.SetEmbedded();
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError())
+    {
+        fprintf(stderr, "[physics] createMeshShape failed: %s\n", result.GetError().c_str());
+        return ~0u;
+    }
+
+    const uint32_t id = nextShapeID_++;
+    meshShapes_.emplace(id, ShapeEntry{result.Get()});
+    return id;
+}
+
+void JoltPhysicsEngine::destroyMeshShape(uint32_t shapeID)
+{
+    // Erasing the registry entry drops the engine's JPH::ShapeRefC. Bodies
+    // already referencing the shape keep their own refs; the underlying shape
+    // outlives this call as long as any body references it.
+    meshShapes_.erase(shapeID);
+}
+
+uint32_t JoltPhysicsEngine::createCompoundShape(const CompoundChild* children, size_t count)
+{
+    if (!initialized_ || !children || count == 0)
+    {
+        return ~0u;
+    }
+
+    constexpr float kMinHalfExtent = 1e-4f;
+
+    JPH::StaticCompoundShapeSettings settings;
+    settings.SetEmbedded();
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        const CompoundChild& child = children[i];
+        JPH::ShapeRefC childShape;
+        switch (child.shape)
+        {
+            case ColliderShape::Box:
+            {
+                math::Vec3 half{std::max(child.halfExtents.x, kMinHalfExtent),
+                                std::max(child.halfExtents.y, kMinHalfExtent),
+                                std::max(child.halfExtents.z, kMinHalfExtent)};
+                float minHalf = std::min({half.x, half.y, half.z});
+                float convexRadius = std::min(0.05f, minHalf * 0.5f);
+                if (convexRadius < 0.0f)
+                    convexRadius = 0.0f;
+                childShape = new JPH::BoxShape(toJolt(half), convexRadius);
+                break;
+            }
+            case ColliderShape::Sphere:
+            {
+                float r = std::max(child.radius, kMinHalfExtent);
+                childShape = new JPH::SphereShape(r);
+                break;
+            }
+            case ColliderShape::Capsule:
+            {
+                float halfH = std::max(child.halfHeight, kMinHalfExtent);
+                float r = std::max(child.radius, kMinHalfExtent);
+                childShape = new JPH::CapsuleShape(halfH, r);
+                break;
+            }
+            case ColliderShape::Mesh:
+            case ColliderShape::Compound:
+            default:
+                fprintf(stderr,
+                        "[physics] createCompoundShape: child %zu uses unsupported shape "
+                        "(only Box / Sphere / Capsule allowed)\n",
+                        i);
+                return ~0u;
+        }
+        settings.AddShape(toJolt(child.localPosition), toJolt(child.localRotation), childShape);
+    }
+
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError())
+    {
+        fprintf(stderr, "[physics] createCompoundShape failed: %s\n", result.GetError().c_str());
+        return ~0u;
+    }
+
+    const uint32_t id = nextShapeID_++;
+    compoundShapes_.emplace(id, ShapeEntry{result.Get()});
+    return id;
+}
+
+void JoltPhysicsEngine::destroyCompoundShape(uint32_t shapeID)
+{
+    // Same lifetime model as destroyMeshShape: drop the engine's hold; bodies
+    // referencing the shape keep it alive via their own JPH::ShapeRefC.
+    compoundShapes_.erase(shapeID);
 }
 
 JPH::ObjectLayer JoltPhysicsEngine::bodyTypeToObjectLayer(BodyType type, uint8_t /*layer*/) const

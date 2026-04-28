@@ -20,7 +20,8 @@ enum class ColliderShape : uint8_t
     Box,
     Sphere,
     Capsule,
-    Mesh  // triangle mesh, static only
+    Mesh,     // triangle mesh, static only — backed by a pre-built MeshShape, referenced by shapeID
+    Compound  // rigid composition of N convex children — backed by a StaticCompoundShape
 };
 
 struct RigidBodyComponent  // offset  size
@@ -45,14 +46,16 @@ struct ColliderComponent  // offset  size
     math::Vec3 halfExtents{0.5f};              // 12      12
     float radius = 0.5f;                       // 24       4
     ColliderShape shape = ColliderShape::Box;  // 28       1
-    uint8_t isSensor = 0;                      // 29       1   1 = sensor (overlap only, no physical response)
-    uint8_t _pad[2] = {};                      // 30       2
-};  // total: 32 bytes
-static_assert(sizeof(ColliderComponent) == 32);
+    uint8_t isSensor = 0;    // 29       1   1 = sensor (overlap only, no physical response)
+    uint8_t _pad[2] = {};    // 30       2
+    uint32_t shapeID = ~0u;  // 32       4   for Mesh / Compound; ignored for primitives
+};  // total: 36 bytes
+static_assert(sizeof(ColliderComponent) == 36);
 static_assert(offsetof(ColliderComponent, halfExtents) == 12);
 static_assert(offsetof(ColliderComponent, radius) == 24);
 static_assert(offsetof(ColliderComponent, shape) == 28);
 static_assert(offsetof(ColliderComponent, isSensor) == 29);
+static_assert(offsetof(ColliderComponent, shapeID) == 32);
 
 struct PhysicsBodyCreatedTag
 {

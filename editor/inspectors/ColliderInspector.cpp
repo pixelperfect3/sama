@@ -46,6 +46,8 @@ static const char* shapeLabel(ColliderShape s)
             return "Capsule";
         case ColliderShape::Mesh:
             return "Mesh";
+        case ColliderShape::Compound:
+            return "Compound";
     }
     return "?";
 }

@@ -33,6 +33,7 @@ struct BodyDesc
     uint8_t layer = 0;
     bool isSensor = false;                       // sensor: overlap-only, no physical response
     ecs::EntityID entity = ecs::INVALID_ENTITY;  // back-reference for callbacks
+    uint32_t shapeID = ~0u;                      // for Mesh / Compound; ignored for primitives
 };
 
 class IPhysicsEngine
@@ -91,6 +92,48 @@ public:
 
     virtual const std::vector<ContactEvent>& getContactBeginEvents() const = 0;
     virtual const std::vector<ContactEvent>& getContactEndEvents() const = 0;
+
+    // ---- Pre-built shapes (shareable across bodies) ------------------------
+    //
+    // Lifetime model: a shape ID is owned by the engine until BOTH of:
+    //   (a) destroy*Shape(id) has been called, AND
+    //   (b) all bodies referencing it have been removed.
+    // Whichever event fires last triggers the actual deallocation. This is
+    // achieved via Jolt's intrinsic JPH::ShapeRefC refcount: bodies retain
+    // their reference through addBody, so destroy*Shape just drops the
+    // engine's hold while bodies keep the underlying shape alive.
+
+    /// Description of one child inside a compound shape. Mirrors a subset of
+    /// ColliderComponent fields, plus a local pose. Children must be convex
+    /// (Box | Sphere | Capsule). Nesting is not allowed.
+    struct CompoundChild
+    {
+        ColliderShape shape = ColliderShape::Box;  // Box | Sphere | Capsule
+        math::Vec3 localPosition{0.0f};            // relative to compound origin
+        math::Quat localRotation{1.0f, 0.0f, 0.0f, 0.0f};
+        math::Vec3 halfExtents{0.5f};  // Box
+        float radius = 0.5f;           // Sphere / Capsule
+        float halfHeight = 0.5f;       // Capsule cylindrical part
+    };
+
+    /// Build a static triangle-mesh shape. Vertices are flat xyz floats;
+    /// indices are 32-bit triangle list. Returns ~0u on failure (degenerate
+    /// input, allocation, etc.).
+    virtual uint32_t createMeshShape(const float* positions, size_t vertexCount,
+                                     const uint32_t* indices, size_t indexCount) = 0;
+
+    /// Decrement the engine's hold on a mesh shape ID. Bodies that already
+    /// reference it keep working; the underlying JPH::Shape is freed when the
+    /// last reference drops.
+    virtual void destroyMeshShape(uint32_t shapeID) = 0;
+
+    /// Build a static compound shape from N convex children. Returns ~0u on
+    /// failure (unsupported child shape, allocation, etc.).
+    virtual uint32_t createCompoundShape(const CompoundChild* children, size_t count) = 0;
+
+    /// Decrement the engine's hold on a compound shape ID. Same lifetime
+    /// semantics as destroyMeshShape.
+    virtual void destroyCompoundShape(uint32_t shapeID) = 0;
 };
 
 }  // namespace engine::physics
