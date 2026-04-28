@@ -2,6 +2,8 @@
 
 A detailed step-by-step explanation of how `TestSsHelmet.cpp` works — from file loading through GPU upload, ECS spawn, shadow pass, PBR shading, and final golden comparison.
 
+> **Skinned variant:** `tests/screenshot/TestSsAnimation.cpp` follows the same shape but loads `Fox.glb`, registers animation clips into `AnimationResources` (via the 4-arg `GltfSceneSpawner::spawn` overload), drives one entity's `AnimatorComponent` to a fixed `clipId` + `playbackTime`, runs `AnimationSystem::updatePoses` + `computeBoneMatrices` once with a `std::pmr::monotonic_buffer_resource` arena, then submits both `submitSkinnedShadowDrawCalls` and `updateSkinned` against the resulting `boneBuffer()`. Two cases (idle "Survey" at `t=0.5`, "Run" at `t=0.2`) lock in the full FK → bone matrix → `setTransform` → `u_model[N]` pipeline. Read this walkthrough first for the scaffolding (BgfxContext, capture FBO, golden compare) — those parts are identical.
+
 ---
 
 ## Setup: `BgfxContext` and `ScreenshotFixture`
