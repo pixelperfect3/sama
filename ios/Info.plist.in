@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+                       "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>@_IOS_TEST_BUNDLE_ID@</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>@_IOS_TEST_BUNDLE_NAME@</string>
+    <key>CFBundleDisplayName</key>
+    <string>@_IOS_TEST_BUNDLE_NAME@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>MinimumOSVersion</key>
+    <string>@SAMA_IOS_DEPLOYMENT@</string>
+
+    <!-- Note: device family is set via the TARGETED_DEVICE_FAMILY build
+         setting (XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY in CMakeLists.txt).
+         Xcode warns if both this Info.plist key and the build setting are
+         present, so we only specify it via the build setting. -->
+
+    <!-- Metal is required (no GLES fallback). -->
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+        <string>metal</string>
+    </array>
+
+    <!-- Orientations: portrait + both landscapes (no portrait-upside-down on
+         iPhone, which Apple's HIG recommends against). -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- iOS 14+ launch screen — empty dict draws a plain white screen, which
+         is enough for a Phase A sample.  Replace with a storyboard or asset
+         catalog entry for production builds. -->
+    <key>UILaunchScreen</key>
+    <dict/>
+
+    <!-- We do NOT use a storyboard — the app delegate creates UIWindow +
+         UIViewController programmatically.  Omitting UIMainStoryboardFile and
+         providing UISceneDelegate-free initialization keeps the bundle simple. -->
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+</dict>
+</plist>

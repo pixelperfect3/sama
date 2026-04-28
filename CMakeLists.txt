@@ -22,12 +22,28 @@ else()
 endif()
 
 option(SAMA_ANDROID      "Build for Android (NDK cross-compilation)" OFF)
+option(SAMA_IOS          "Build for iOS (Xcode + iphonesimulator/iphoneos)" OFF)
 
 # When building for Android, force off desktop-only targets.
 if(SAMA_ANDROID)
     set(_SAMA_IS_TOP_LEVEL OFF)
     if(NOT CMAKE_ANDROID_NDK)
         message(FATAL_ERROR "CMAKE_ANDROID_NDK not set")
+    endif()
+endif()
+
+# When building for iOS, force off desktop-only targets too — the editor,
+# desktop demos, GLFW window, and shaderc are all unavailable on iOS.  The
+# toolchain file (cmake/ios.toolchain.cmake) sets CMAKE_SYSTEM_NAME=iOS;
+# we double-check both knobs here so a user passing -DSAMA_IOS=ON without
+# the toolchain file gets a clear error instead of a confusing link failure
+# later.
+if(SAMA_IOS)
+    set(_SAMA_IS_TOP_LEVEL OFF)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        message(FATAL_ERROR
+            "SAMA_IOS=ON but CMAKE_SYSTEM_NAME='${CMAKE_SYSTEM_NAME}'. "
+            "Pass -DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/ios.toolchain.cmake")
     endif()
 endif()
 
@@ -60,7 +76,7 @@ FetchContent_Declare(
     GIT_TAG        1.0.1
 )
 
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     FetchContent_Declare(
         glfw
         GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -70,8 +86,11 @@ endif()
 
 # bgfx.cmake wraps bgfx/bx/bimg with proper CMake targets.
 # We disable all backends except Metal (macOS) and Vulkan.
-if(SAMA_ANDROID)
-    set(BGFX_BUILD_TOOLS    OFF CACHE BOOL "" FORCE) # no shaderc on Android
+if(SAMA_ANDROID OR SAMA_IOS)
+    # Cross-compile builds can't run host tools — shaderc is built separately
+    # on the host before the cross-compile step (see android/compile_shaders.sh
+    # and ios/build_ios.sh).
+    set(BGFX_BUILD_TOOLS    OFF CACHE BOOL "" FORCE)
 else()
     set(BGFX_BUILD_TOOLS    ON  CACHE BOOL "" FORCE) # build shaderc on desktop
 endif()
@@ -83,7 +102,7 @@ set(BGFX_CUSTOM_TARGETS   OFF CACHE BOOL "" FORCE)
 set(BGFX_USE_DEBUG_SUFFIX OFF CACHE BOOL "" FORCE)
 
 # GLFW: disable unneeded sub-targets (desktop only)
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -131,7 +150,7 @@ set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
 set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
 
-if(SAMA_ANDROID)
+if(SAMA_ANDROID OR SAMA_IOS)
     FetchContent_MakeAvailable(Catch2 glm bgfx_cmake cgltf JoltPhysics)
 else()
     FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
@@ -187,9 +206,9 @@ set(SOLOUD_SRC_DIR ${soloud_SOURCE_DIR}/src)
 set(SOLOUD_INC_DIR ${soloud_SOURCE_DIR}/include)
 
 # astc-encoder — ARM's ASTC texture compression library (Apache 2.0).
-# Used by engine_asset_tool to compress textures into ASTC format for Android.
-# Only built on desktop (not cross-compiled for Android).
-if(NOT SAMA_ANDROID)
+# Used by engine_asset_tool to compress textures into ASTC format for Android
+# (and, eventually, iOS).  Only built on desktop (not cross-compiled).
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     FetchContent_Declare(
         astcenc
         GIT_REPOSITORY https://github.com/ARM-software/astc-encoder.git
@@ -227,8 +246,8 @@ endif()
 # ---------------------------------------------------------------------------
 
 # Shader compilation uses shaderc which is desktop-only.
-# On Android, pre-compiled shaders are included via the asset pipeline.
-if(NOT SAMA_ANDROID)
+# On Android and iOS, pre-compiled shaders are included via the asset pipeline.
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
 
 set(SHADER_SRC_DIR     ${SAMA_ROOT_DIR}/engine/shaders)
 set(SHADER_INCLUDE_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/src)
@@ -616,7 +635,7 @@ compile_shader_pp(
 
 add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
-endif()  # NOT SAMA_ANDROID (shader compilation)
+endif()  # NOT SAMA_ANDROID AND NOT SAMA_IOS (shader compilation)
 
 # --- engine_io static library ---
 add_library(engine_io STATIC engine/io/Json.cpp)
@@ -816,13 +835,13 @@ set(_ENGINE_RENDERING_SOURCES
     engine/rendering/LightClusterBuilder.cpp
 )
 
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     list(APPEND _ENGINE_RENDERING_SOURCES engine/platform/desktop/GlfwWindow.cpp)
 endif()
 
 add_library(engine_rendering STATIC ${_ENGINE_RENDERING_SOURCES})
 
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     add_dependencies(engine_rendering engine_shaders)
 endif()
 
@@ -831,7 +850,7 @@ target_include_directories(engine_rendering PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/include
 )
 
-if(SAMA_ANDROID)
+if(SAMA_ANDROID OR SAMA_IOS)
     target_link_libraries(engine_rendering PUBLIC bgfx bimg engine_ecs engine_io)
 else()
     target_link_libraries(engine_rendering PUBLIC bgfx bimg glfw engine_ecs engine_io)
@@ -868,16 +887,30 @@ target_compile_definitions(engine_rendering PUBLIC
 )
 
 if(APPLE)
-    target_link_libraries(engine_rendering PUBLIC
-        "-framework Cocoa"
-        "-framework QuartzCore"
-        "-framework Metal"
-        "-framework MetalKit"
-    )
+    if(SAMA_IOS)
+        # iOS: UIKit replaces Cocoa; QuartzCore + Metal are still needed for
+        # the CAMetalLayer the bgfx Metal backend renders into.  MetalKit's
+        # MTKView isn't used on iOS (we own the layer directly), but a few
+        # bgfx internals still reference it — link for safety.
+        target_link_libraries(engine_rendering PUBLIC
+            "-framework UIKit"
+            "-framework QuartzCore"
+            "-framework Metal"
+            "-framework MetalKit"
+            "-framework Foundation"
+        )
+    else()
+        target_link_libraries(engine_rendering PUBLIC
+            "-framework Cocoa"
+            "-framework QuartzCore"
+            "-framework Metal"
+            "-framework MetalKit"
+        )
+    endif()
 endif()
 
 # --- engine_asset_tool static library (desktop only) ---
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT SAMA_IOS)
     add_library(engine_asset_tool STATIC
         tools/asset_tool/AssetProcessor.cpp
         tools/asset_tool/TextureProcessor.cpp
@@ -1087,8 +1120,8 @@ add_library(engine_input STATIC
 target_include_directories(engine_input PUBLIC ${SAMA_ROOT_DIR})
 target_link_libraries(engine_input PUBLIC engine_io)
 
-# Desktop GLFW backend (not available on Android)
-if(NOT SAMA_ANDROID)
+# Desktop GLFW backend (not available on Android or iOS)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     add_library(engine_input_glfw STATIC
         engine/input/desktop/GlfwInputBackend.cpp
     )
@@ -1146,34 +1179,47 @@ endif()  # SAMA_BUILD_TESTS
 # Centralised Engine class that owns window, renderer, default textures, shaders,
 # ImGui, input, shadow renderer, and frame arena.  Desktop only — depends on
 # GLFW for windowing and input.
-add_library(engine_core STATIC engine/core/Engine.cpp)
-target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
-if(NOT SAMA_ANDROID)
-    target_link_libraries(engine_core PUBLIC
-        engine_input_glfw
-        engine_memory
-        engine_debug
-        engine_scene
-    )
-else()
-    target_link_libraries(engine_core PUBLIC
-        engine_input_android
-        engine_memory
-        engine_debug
-        engine_scene
-        native_app_glue
-    )
+#
+# Skipped on iOS (Phase A): the iOS sample app drives bgfx directly via its
+# own UIViewController and does not pull engine_core in.  Phase B's iOS
+# platform layer (engine_platform_ios) will re-introduce an Engine-equivalent
+# wrapper once the lifecycle hooks are in place.
+if(NOT SAMA_IOS)
+    add_library(engine_core STATIC engine/core/Engine.cpp)
+    target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
+    if(NOT SAMA_ANDROID)
+        target_link_libraries(engine_core PUBLIC
+            engine_input_glfw
+            engine_memory
+            engine_debug
+            engine_scene
+        )
+    else()
+        target_link_libraries(engine_core PUBLIC
+            engine_input_android
+            engine_memory
+            engine_debug
+            engine_scene
+            native_app_glue
+        )
+    endif()
 endif()
 
 # --- engine_game static library ---
 # Game layer: IGame interface, GameRunner (frame loop with fixed timestep).
 # Works on both desktop (GLFW) and Android (ANativeWindow).
-add_library(engine_game STATIC
-    engine/game/GameRunner.cpp
-    engine/game/ProjectConfig.cpp
-)
-target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
-target_link_libraries(engine_game PUBLIC engine_core)
+#
+# Skipped on iOS (Phase A) — depends on engine_core which is desktop/Android
+# only.  The iOS sample app does not use IGame/GameRunner yet; Phase B will
+# bring this back along with engine_platform_ios's lifecycle hooks.
+if(NOT SAMA_IOS)
+    add_library(engine_game STATIC
+        engine/game/GameRunner.cpp
+        engine/game/ProjectConfig.cpp
+    )
+    target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
+    target_link_libraries(engine_game PUBLIC engine_core)
+endif()
 
 # --- engine_ui static library ---
 # Retained-mode UI system: UiNode tree, UiCanvas, UiDrawList, widget types.
@@ -1231,7 +1277,7 @@ endif()
 # ===========================================================================
 
 # Desktop umbrella targets — depend on engine_core (GLFW).
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
 
 # Core libs every game needs (rendering, ECS, scene, game loop, memory).
 add_library(sama_minimal INTERFACE)
@@ -1270,7 +1316,7 @@ target_link_libraries(sama_2d INTERFACE
     engine_io
 )
 
-endif()  # NOT SAMA_ANDROID
+endif()  # NOT SAMA_ANDROID AND NOT SAMA_IOS
 
 # ---------------------------------------------------------------------------
 # Android targets — NativeActivity entry point + shared library for APK.
@@ -1345,8 +1391,103 @@ if(SAMA_ANDROID)
 
 endif()  # SAMA_ANDROID
 
+# ---------------------------------------------------------------------------
+# iOS targets — UIKit application bundle + Metal-backed sample app.
+#
+# Phase A scope: register the platform layer library (engine_platform_ios) and
+# build the ios_test sample app.  The platform layer's source files are owned
+# by Agent B; we discover them via file(GLOB) so this CMakeLists keeps working
+# even if a file hasn't landed yet.  When the glob is empty, the library
+# compiles as an empty static lib and the sample app links against it as a
+# placeholder — sufficient to prove the build pipeline works end-to-end.
+# ---------------------------------------------------------------------------
+if(SAMA_IOS)
+    # Platform layer — Agent B's territory.  Glob both .cpp and .mm sources
+    # under engine/platform/ios/.  CONFIGURE_DEPENDS makes CMake re-glob on
+    # every build so newly added files are picked up automatically (slight
+    # configure-step cost; acceptable for a small directory).
+    file(GLOB _IOS_PLATFORM_SOURCES CONFIGURE_DEPENDS
+        ${SAMA_ROOT_DIR}/engine/platform/ios/*.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/*.cpp
+    )
+
+    # CMake refuses to create a library with zero source files.  Drop a
+    # one-line .cpp stub into the build tree if Agent B hasn't added any
+    # implementation yet — keeps the rest of the build green.
+    if(NOT _IOS_PLATFORM_SOURCES)
+        set(_IOS_PLATFORM_STUB ${CMAKE_CURRENT_BINARY_DIR}/ios_platform_stub.cpp)
+        file(WRITE ${_IOS_PLATFORM_STUB}
+            "// Auto-generated stub. Replaced once engine/platform/ios/ has sources.\n"
+            "namespace engine::platform::ios { void _samaIosPlatformStub() {} }\n")
+        set(_IOS_PLATFORM_SOURCES ${_IOS_PLATFORM_STUB})
+    endif()
+
+    add_library(engine_platform_ios STATIC ${_IOS_PLATFORM_SOURCES})
+    target_include_directories(engine_platform_ios PUBLIC ${SAMA_ROOT_DIR})
+    # Don't pull engine_rendering here: that library includes generated shader
+    # headers that don't exist on iOS until Phase C compiles Metal variants
+    # via the asset pipeline.  Agent B's iOS platform layer talks to bgfx
+    # directly.
+    target_link_libraries(engine_platform_ios PUBLIC
+        bgfx
+        bx
+        bimg
+        "-framework UIKit"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework Foundation"
+        "-framework CoreMotion"
+    )
+    # Objective-C ARC for the .mm files Agent B is writing.
+    set_source_files_properties(${_IOS_PLATFORM_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+
+    # ---- ios_test sample app -------------------------------------------------
+    # Self-contained Objective-C++ app: app delegate + view controller +
+    # CAMetalLayer + bgfx Metal init + clear-to-purple render loop.  Links
+    # against bgfx directly — engine_rendering would drag in the generated
+    # shader headers (PBR/SSAO/etc.) that aren't compiled on iOS yet.  The
+    # placeholder engine_platform_ios link here keeps the build pipeline
+    # exercising Agent B's library so we notice link failures early.
+    set(_IOS_TEST_BUNDLE_ID    "com.sama.iostest")
+    set(_IOS_TEST_BUNDLE_NAME  "Sama iOS Test")
+    set(_IOS_TEST_INFOPLIST    ${CMAKE_CURRENT_BINARY_DIR}/ios_test_Info.plist)
+    configure_file(
+        ${SAMA_ROOT_DIR}/ios/Info.plist.in
+        ${_IOS_TEST_INFOPLIST}
+        @ONLY)
+
+    add_executable(ios_test MACOSX_BUNDLE
+        ${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
+    )
+    target_include_directories(ios_test PRIVATE ${SAMA_ROOT_DIR})
+    target_link_libraries(ios_test PRIVATE
+        bgfx
+        bx
+        bimg
+        engine_platform_ios
+        "-framework UIKit"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework Foundation"
+    )
+    set_source_files_properties(${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    set_target_properties(ios_test PROPERTIES
+        BUNDLE                                         TRUE
+        MACOSX_BUNDLE_INFO_PLIST                       ${_IOS_TEST_INFOPLIST}
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER      ${_IOS_TEST_BUNDLE_ID}
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY         "1,2"  # iPhone + iPad
+        XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET     ${SAMA_IOS_DEPLOYMENT}
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED           "NO"
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED          "NO"
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY             ""
+    )
+endif()  # SAMA_IOS
+
 # --- android_test app (desktop, for verifying the test game compiles) ---
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     add_executable(android_test apps/android_test/AndroidTestGame.cpp)
     target_include_directories(android_test PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(android_test PRIVATE
@@ -1374,7 +1515,7 @@ endif()
 #   ./build/bake_default_env
 #   git add assets/env/default.env && git commit
 #
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     add_executable(bake_default_env
         tools/bake_default_env/main.cpp
     )
@@ -1770,7 +1911,7 @@ if(SAMA_BUILD_DEMOS AND APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 # --- sama_asset_tool CLI (desktop only) ---
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT SAMA_IOS)
     add_executable(sama_asset_tool tools/asset_tool/main.cpp)
     target_include_directories(sama_asset_tool PRIVATE ${SAMA_ROOT_DIR})
     if(TARGET engine_astcenc_bridge)
@@ -1786,7 +1927,7 @@ endif()
 # --- APK build convenience target (desktop only) ---
 # Calls the Gradle-free APK build script. Requires ANDROID_NDK, ANDROID_SDK_ROOT,
 # and build-tools (aapt2, zipalign, apksigner) to be installed.
-if(NOT SAMA_ANDROID)
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     add_custom_target(build_apk
         COMMAND ${CMAKE_SOURCE_DIR}/android/build_apk.sh --tier mid
         DEPENDS sama_asset_tool
