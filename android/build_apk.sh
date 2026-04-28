@@ -279,6 +279,23 @@ else
     echo "WARNING: libc++_shared.so not found for ${ABI}"
 fi
 
+# Optionally bundle the Vulkan validation layer .so.  When present, bgfx
+# loads VK_LAYER_KHRONOS_validation if init.debug=true and pipes Vulkan
+# validation messages to logcat under the 'bgfx' tag.  Drops ~25 MB on
+# the APK; only ship in development builds.
+#
+# To enable: download the latest release from
+#   https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases
+# extract android-binaries-*.zip, and place
+#   libVkLayer_khronos_validation.so
+# at android/validation_layers/<abi>/.  These .so files are gitignored
+# (binaries) and not auto-downloaded.
+VK_LAYER_SO="${PROJECT_ROOT}/android/validation_layers/${ABI}/libVkLayer_khronos_validation.so"
+if [ -f "${VK_LAYER_SO}" ]; then
+    cp "${VK_LAYER_SO}" "${STAGING_DIR}/lib/${ABI}/"
+    echo "  Bundled Vulkan validation layer (${ABI})"
+fi
+
 # Generate manifest from template
 sed -e "s/com\\.sama\\.engine/${PACKAGE_ID//./\\.}/g" \
     -e "s/Sama Engine/${APP_NAME}/g" \

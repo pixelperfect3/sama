@@ -832,6 +832,10 @@ target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BONES=128)
 target_compile_definitions(bgfx PUBLIC BGFX_PLATFORM_SUPPORTS_WGSL=0)
 if(SAMA_ANDROID)
     target_compile_definitions(bx PUBLIC BX_ANDROID_LOG_TAG="bgfx")
+    # Enable bgfx debug output (BX_TRACE / vulkan validation messages
+    # routed through debugReportCb) so we can see validation layer output
+    # in logcat under the 'bgfx' tag even in Release builds.
+    target_compile_definitions(bx PUBLIC BX_CONFIG_DEBUG=1)
 endif()
 
 # Same GLM flags as engine_tests to ensure consistent behaviour when rendering

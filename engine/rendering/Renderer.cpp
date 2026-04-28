@@ -52,6 +52,10 @@ bool Renderer::init(const RendererDesc& desc)
     // Mali GPUs report VK_FORMAT_R8G8B8A8_UNORM; using BGRA8 causes swapchain creation
     // to fail and bgfx silently falls back to OpenGL ES.
     init.resolution.formatColor = bgfx::TextureFormat::RGBA8;
+    // Enable Vulkan validation layer (requires libVkLayer_khronos_validation.so
+    // packaged in the APK at lib/<abi>/).  bgfx auto-loads VK_LAYER_KHRONOS_validation
+    // when init.debug is true.
+    init.debug = true;
 #endif
 
 #ifdef __ANDROID__

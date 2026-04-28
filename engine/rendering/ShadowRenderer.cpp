@@ -38,7 +38,14 @@ bool ShadowRenderer::init(const ShadowDesc& desc)
     for (uint32_t i = 0; i < desc_.cascadeCount && i < 4; ++i)
     {
         bgfx::Attachment at;
-        at.init(atlas_, bgfx::Access::Write, 0, 0);  // layer=0, mip=0
+        // Args: (handle, access, _layer, _numLayers, _mip, ...).  The previous
+        // call was passing 0 for _numLayers (4th arg), which made the Vulkan
+        // framebuffer have layers=0 — render-to-nothing on real Android drivers
+        // (Mali, Adreno).  Emulator gfxstream silently treated 0 as 1, hiding
+        // the bug.  Caught by VK_LAYER_KHRONOS_validation:
+        //   "vkCreateFramebuffer(): pCreateInfo->layers is zero"
+        //   (VUID-VkFramebufferCreateInfo-layers-00889)
+        at.init(atlas_, bgfx::Access::Write, /*layer*/ 0, /*numLayers*/ 1, /*mip*/ 0);
         fb_[i] = bgfx::createFrameBuffer(1, &at, false);
 
         if (!bgfx::isValid(fb_[i]))
