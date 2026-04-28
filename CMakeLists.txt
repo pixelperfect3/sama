@@ -94,6 +94,13 @@ endif()
 # VK_KHR_fragment_shading_rate into vkGetPhysicalDeviceProperties2 pNext,
 # which crashes the emulator's gfxstream Vulkan translation layer.
 # The patch gates this on the extension being reported as supported.
+#
+# bgfx_imgui_default_font: replace embedded TTF fonts in bgfx's example
+# imgui glue with ImGui's built-in ProggyClean bitmap font. ImGui 1.92's
+# lazy font baker faults inside stb_truetype's compound-glyph path
+# (stbtt_GetGlyphShape+2680) on first ImGui::Text in several demos on
+# arm64 macOS — codegen loads the allocator pointer from the wrong
+# global. Bypassing stb_truetype avoids the crash class entirely.
 FetchContent_Declare(
     bgfx_cmake
     GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
@@ -101,6 +108,7 @@ FetchContent_Declare(
     PATCH_COMMAND  ${CMAKE_COMMAND} -E env git apply --whitespace=nowarn
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_emulator_compat.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_mali_shadow_fix.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_imgui_default_font.patch
                    || ${CMAKE_COMMAND} -E echo "Patch already applied or not needed"
 )
 

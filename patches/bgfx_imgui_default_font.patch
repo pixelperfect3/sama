@@ -1,0 +1,45 @@
+diff --git a/bgfx/examples/common/imgui/imgui.cpp b/bgfx/examples/common/imgui/imgui.cpp
+index ec9a910fe..fcfd2d8ea 100644
+--- a/bgfx/examples/common/imgui/imgui.cpp
++++ b/bgfx/examples/common/imgui/imgui.cpp
+@@ -430,28 +430,18 @@ struct OcornutImguiContext
+ 		s_tex = bgfx::createUniform("s_tex", bgfx::UniformType::Sampler);
+ 
+ 		{
+-			ImFontConfig config;
+-			config.FontDataOwnedByAtlas = false;
+-			config.MergeMode = false;
+-
+-			const ImWchar* ranges = io.Fonts->GetGlyphRangesDefault();
+-			m_font[ImGui::Font::Regular] = io.Fonts->AddFontFromMemoryTTF( (void*)s_robotoRegularTtf,     sizeof(s_robotoRegularTtf),     _fontSize,      &config, ranges);
+-			m_font[ImGui::Font::Mono   ] = io.Fonts->AddFontFromMemoryTTF( (void*)s_robotoMonoRegularTtf, sizeof(s_robotoMonoRegularTtf), _fontSize-3.0f, &config, ranges);
+-
+-			config.MergeMode = true;
+-			config.DstFont   = m_font[ImGui::Font::Regular];
+-
+-			for (uint32_t ii = 0; ii < BX_COUNTOF(s_fontRangeMerge); ++ii)
+-			{
+-				const FontRangeMerge& frm = s_fontRangeMerge[ii];
+-
+-				io.Fonts->AddFontFromMemoryTTF( (void*)frm.data
+-					, (int)frm.size
+-					, _fontSize-3.0f
+-					, &config
+-					, frm.ranges
+-					);
+-			}
++			// Sama engine patch: use ImGui's built-in ProggyClean bitmap font
++			// instead of the embedded TrueType fonts (Roboto/Kenney/FontAwesome).
++			// ImGui 1.92's lazy font baker faults inside stb_truetype's
++			// compound-glyph path (stbtt_GetGlyphShape +2680) on the first
++			// CalcTextSize() because the codegen loads the s_ctx.m_allocator
++			// pointer from the wrong global on arm64 macOS. Bypassing the
++			// stb_truetype path avoids the crash class entirely; ProggyClean is
++			// a bitmap font with no compound glyphs so it never enters that path.
++			BX_UNUSED(_fontSize);
++			ImFont* defaultFont = io.Fonts->AddFontDefault();
++			m_font[ImGui::Font::Regular] = defaultFont;
++			m_font[ImGui::Font::Mono   ] = defaultFont;
+ 		}
+ 
+ 		ImGuizmo::Create();

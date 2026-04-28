@@ -40,6 +40,7 @@
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/ui/DebugHud.h"
+#include "imgui.h"
 
 using namespace engine::core;
 using namespace engine::ecs;
@@ -440,23 +441,57 @@ int main()
 
         // -- HUD --------------------------------------------------------------
         hud.begin(eng.fbWidth(), eng.fbHeight());
-        int row = 1;
-        hud.printf(1, row++, "Physics Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
+        hud.printf(1, 1, "Physics Demo  |  %.1f fps  |  %.3f ms  |  render %.3f ms",
                    dt > 0 ? 1.f / dt : 0.f, dt * 1000.f, renderMs);
-        hud.printf(1, row++, "Arrows=tilt  |  R=reset  |  RMB=orbit  |  Scroll=zoom");
-        hud.printf(1, row++, "Arena: %zu KB / %zu KB used", eng.frameArena().bytesUsed() / 1024,
+        hud.printf(1, 2, "Arrows=tilt  |  R=reset  |  RMB=orbit  |  Scroll=zoom");
+        hud.printf(1, 3, "Arena: %zu KB / %zu KB used", eng.frameArena().bytesUsed() / 1024,
                    eng.frameArena().capacity() / 1024);
-        row++;
-        hud.printf(1, row++, "Plane Tilt   pitch: %6.1f deg   roll: %6.1f deg", planePitch,
-                   planeRoll);
-        hud.printf(1, row++, "Active cubes: %d", kCubeCount);
-        row++;
-        hud.printf(1, row++, "Cube Legend:");
-        hud.printf(1, row++, "  Heavy   (red)     mass 5.0  bounce 0.1");
-        hud.printf(1, row++, "  Medium  (orange)  mass 1.0  bounce 0.3");
-        hud.printf(1, row++, "  Light   (yellow)  mass 0.2  bounce 0.5");
-        hud.printf(1, row++, "  Bouncy  (cyan)    mass 0.5  bounce 0.9");
         hud.end();
+
+        // -- ImGui panel ------------------------------------------------------
+        ImGui::SetNextWindowPos(ImVec2(10, 60), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(260, 280), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Physics Demo"))
+        {
+            ImGui::Text("FPS: %.1f  |  Render: %.3f ms", dt > 0 ? 1.f / dt : 0.f, renderMs);
+            ImGui::Text("Arena: %zu KB / %zu KB used", eng.frameArena().bytesUsed() / 1024,
+                        eng.frameArena().capacity() / 1024);
+            ImGui::Separator();
+
+            ImGui::Text("Plane Tilt");
+            ImGui::Text("  Pitch: %.1f deg", planePitch);
+            ImGui::Text("  Roll:  %.1f deg", planeRoll);
+            ImGui::Separator();
+
+            ImGui::Text("Active cubes: %d", kCubeCount);
+            ImGui::Separator();
+
+            ImGui::Text("Press R to reset");
+            ImGui::Separator();
+
+            ImGui::Text("Cube Legend:");
+
+            ImGui::ColorButton("##heavy", ImVec4(0.6f, 0.1f, 0.1f, 1.0f),
+                               ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+            ImGui::SameLine();
+            ImGui::Text("Heavy (mass 5.0, low bounce)");
+
+            ImGui::ColorButton("##medium", ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                               ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+            ImGui::SameLine();
+            ImGui::Text("Medium (mass 1.0)");
+
+            ImGui::ColorButton("##light", ImVec4(1.0f, 1.0f, 0.3f, 1.0f),
+                               ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+            ImGui::SameLine();
+            ImGui::Text("Light (mass 0.2)");
+
+            ImGui::ColorButton("##bouncy", ImVec4(0.2f, 0.9f, 1.0f, 1.0f),
+                               ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+            ImGui::SameLine();
+            ImGui::Text("Bouncy (restitution 0.9)");
+        }
+        ImGui::End();
 
         double frameEnd = glfwGetTime();
         renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);

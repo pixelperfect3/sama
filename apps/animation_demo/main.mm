@@ -9,24 +9,17 @@
 //   6. State machine (TODO: pending AnimStateMachine system)
 //   7. Full HUD overlay with controls help
 //
-// Keyboard Controls (animation_demo no longer uses ImGui due to ImGui 1.92
-// font-baking crash; all interactive controls are bound to keys):
-//   Space         -- play/pause selected instance
-//   S             -- stop (pause + rewind to t=0)
-//   1-9           -- select clip on selected instance (if multiple available)
-//   Up/Down       -- adjust speed (+/- 0.1)
-//   Left/Right    -- adjust state machine speed parameter
-//   Tab           -- cycle selected instance (1 -> 2 -> 3 -> 1)
-//   Comma/Period  -- scrub backward / forward (0.1s)
-//   B             -- trigger crossfade to next clip
-//   I             -- toggle IK on/off
-//   J/K           -- decrease / increase IK blend weight
-//   X             -- reset all instances
-//   R             -- reset to default state
-//   H             -- toggle HUD
-//   Right-drag    -- orbit camera
-//   Scroll        -- zoom
-//   WASD          -- move camera target
+// Keyboard Controls:
+//   Space       -- play/pause
+//   1-9         -- select clip (if multiple available)
+//   Up/Down     -- adjust speed (+/- 0.1)
+//   B           -- trigger crossfade to next clip
+//   I           -- toggle IK on/off
+//   R           -- reset to default state
+//   H           -- toggle HUD
+//   Right-drag  -- orbit camera
+//   Scroll      -- zoom
+//   WASD        -- move camera target
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -71,6 +64,7 @@
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
 #include "engine/ui/DebugHud.h"
+#include "imgui.h"
 
 using namespace engine::animation;
 using namespace engine::assets;
@@ -318,8 +312,9 @@ int main()
         // WASD moves the camera target along the XZ plane.
         cam.moveTarget(input, dt);
 
-        // -- Keyboard controls -------------------------------------------------
-        if (modelSpawned)
+        // -- Keyboard controls (only when ImGui does not want keyboard) ----------
+        bool imguiWantsKb = ImGui::GetIO().WantCaptureKeyboard;
+        if (!imguiWantsKb && modelSpawned)
         {
             // Space: play/pause all instances
             if (input.isKeyPressed(Key::Space))
@@ -328,72 +323,6 @@ int main()
                     [](EntityID, AnimatorComponent& ac)
                     { ac.flags ^= AnimatorComponent::kFlagPlaying; });
             }
-
-            // S: stop selected (pause + rewind to t=0)
-            if (input.isKeyPressed(Key::S))
-            {
-                EntityID sel = instances[selectedInstance].animatedEntity;
-                if (sel != INVALID_ENTITY)
-                {
-                    auto* ac = reg.get<AnimatorComponent>(sel);
-                    if (ac)
-                    {
-                        ac->playbackTime = 0.0f;
-                        ac->flags &= ~AnimatorComponent::kFlagPlaying;
-                    }
-                }
-            }
-
-            // X: reset all instances (playback time, speed, flags)
-            if (input.isKeyPressed(Key::X))
-            {
-                reg.view<AnimatorComponent>().each(
-                    [](EntityID, AnimatorComponent& ac)
-                    {
-                        ac.playbackTime = 0.0f;
-                        ac.speed = 1.0f;
-                        ac.flags =
-                            AnimatorComponent::kFlagPlaying | AnimatorComponent::kFlagLooping;
-                        ac.blendFactor = 0.0f;
-                        ac.blendDuration = 0.0f;
-                        ac.blendElapsed = 0.0f;
-                        ac.nextClipId = UINT32_MAX;
-                    });
-            }
-
-            // Tab: cycle selected instance (1 -> 2 -> 3 -> 1)
-            if (input.isKeyPressed(Key::Tab))
-            {
-                selectedInstance = (selectedInstance + 1) % kNumInstances;
-            }
-
-            // Comma/Period: scrub backward / forward (0.1s steps)
-            if (input.isKeyPressed(Key::Comma) || input.isKeyHeld(Key::Comma))
-            {
-                EntityID sel = instances[selectedInstance].animatedEntity;
-                if (sel != INVALID_ENTITY)
-                {
-                    auto* ac = reg.get<AnimatorComponent>(sel);
-                    if (ac)
-                        ac->playbackTime = std::max(0.0f, ac->playbackTime - 0.1f);
-                }
-            }
-            if (input.isKeyPressed(Key::Period) || input.isKeyHeld(Key::Period))
-            {
-                EntityID sel = instances[selectedInstance].animatedEntity;
-                if (sel != INVALID_ENTITY)
-                {
-                    auto* ac = reg.get<AnimatorComponent>(sel);
-                    if (ac)
-                        ac->playbackTime += 0.1f;
-                }
-            }
-
-            // J/K: decrease / increase IK blend weight (0..1, 0.05 step)
-            if (input.isKeyPressed(Key::J) || input.isKeyHeld(Key::J))
-                ikBlendWeight = std::max(0.0f, ikBlendWeight - 0.02f);
-            if (input.isKeyPressed(Key::K) || input.isKeyHeld(Key::K))
-                ikBlendWeight = std::min(1.0f, ikBlendWeight + 0.02f);
 
             // Up/Down: adjust speed on the selected instance
             if (input.isKeyPressed(Key::Up))
@@ -894,9 +823,171 @@ int main()
                 }
             }
 
-            // Per-instance speed overview.
             row++;
-            hud.printf(1, row++, "Instance Speeds:");
+            hud.printf(1, row++, "--- Controls ---");
+            hud.printf(1, row++, "Space=play/pause  Up/Down=speed  B=blend");
+            hud.printf(1, row++, "1-9=clip  I=toggle IK  R=reset  H=hide HUD");
+            hud.printf(1, row++, "Left/Right=state machine speed  RMB=orbit  WASD=move");
+        }
+        hud.end();
+
+        // -- ImGui panel (anchored to right side) --------------------------------
+        ImGui::SetNextWindowPos(ImVec2(fbW - 340.0f, 10.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(320, 460), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Animation Controls"))
+        {
+            // Instance selector
+            ImGui::Text("Instance Selection");
+            for (int i = 0; i < kNumInstances; ++i)
+            {
+                ImGui::SameLine();
+                char label[16];
+                snprintf(label, sizeof(label), "%d", i + 1);
+                if (ImGui::RadioButton(label, selectedInstance == i))
+                    selectedInstance = i;
+            }
+            ImGui::Separator();
+
+            // Playback controls
+            ImGui::Text("Clip: %s", clipName);
+            ImGui::Text("Joints: %u  |  Clips: %u", jointCount, totalClipCount);
+            ImGui::Separator();
+
+            if (ImGui::Button(isPlaying ? "Pause" : "Play", ImVec2(80, 0)))
+            {
+                if (selEntity != INVALID_ENTITY)
+                {
+                    auto* ac = reg.get<AnimatorComponent>(selEntity);
+                    if (ac)
+                        ac->flags ^= AnimatorComponent::kFlagPlaying;
+                }
+            }
+            ImGui::SameLine();
+
+            if (ImGui::Button("Stop", ImVec2(80, 0)))
+            {
+                if (selEntity != INVALID_ENTITY)
+                {
+                    auto* ac = reg.get<AnimatorComponent>(selEntity);
+                    if (ac)
+                    {
+                        ac->playbackTime = 0.0f;
+                        ac->flags &= ~AnimatorComponent::kFlagPlaying;
+                    }
+                }
+            }
+            ImGui::SameLine();
+
+            if (ImGui::Button("Reset All", ImVec2(80, 0)))
+            {
+                reg.view<AnimatorComponent>().each(
+                    [](EntityID, AnimatorComponent& ac)
+                    {
+                        ac.playbackTime = 0.0f;
+                        ac.speed = 1.0f;
+                        ac.flags =
+                            AnimatorComponent::kFlagPlaying | AnimatorComponent::kFlagLooping;
+                        ac.blendFactor = 0.0f;
+                        ac.blendDuration = 0.0f;
+                        ac.blendElapsed = 0.0f;
+                        ac.nextClipId = UINT32_MAX;
+                    });
+            }
+
+            ImGui::Separator();
+
+            // Speed slider (allows negative for reverse playback)
+            float speedVal = animSpeed;
+            if (ImGui::SliderFloat("Speed", &speedVal, -2.0f, 5.0f, "%.2f"))
+            {
+                if (selEntity != INVALID_ENTITY)
+                {
+                    auto* ac = reg.get<AnimatorComponent>(selEntity);
+                    if (ac)
+                        ac->speed = speedVal;
+                }
+            }
+
+            ImGui::Separator();
+
+            // Time and progress
+            ImGui::Text("Time: %.2f / %.2f s", currentTime, clipDuration);
+            float progress = (clipDuration > 0.0f) ? (currentTime / clipDuration) : 0.0f;
+            ImGui::ProgressBar(progress, ImVec2(-1, 0));
+
+            // Scrub slider
+            float scrubTime = currentTime;
+            if (ImGui::SliderFloat("Scrub", &scrubTime, 0.0f, clipDuration, "%.3f"))
+            {
+                if (selEntity != INVALID_ENTITY)
+                {
+                    auto* ac = reg.get<AnimatorComponent>(selEntity);
+                    if (ac)
+                        ac->playbackTime = scrubTime;
+                }
+            }
+
+            ImGui::Separator();
+
+            // Crossfade / blending
+            ImGui::Text("Crossfade Blending");
+            if (isBlending)
+            {
+                ImGui::Text("Blending: %s -> %s [%.0f%%]", clipName, nextClipName,
+                            blendProgress * 100.0f);
+            }
+            else
+            {
+                ImGui::Text("Not blending");
+            }
+            if (totalClipCount > 1)
+            {
+                if (ImGui::Button("Blend to Next Clip", ImVec2(-1, 0)))
+                {
+                    if (selEntity != INVALID_ENTITY)
+                    {
+                        auto* ac = reg.get<AnimatorComponent>(selEntity);
+                        if (ac && !(ac->flags & AnimatorComponent::kFlagBlending))
+                        {
+                            uint32_t nextClip = (ac->clipId + 1) % totalClipCount;
+                            ac->nextClipId = nextClip;
+                            ac->blendFactor = 0.0f;
+                            ac->blendDuration = kDefaultBlendDuration;
+                            ac->blendElapsed = 0.0f;
+                            ac->flags |= AnimatorComponent::kFlagBlending;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ImGui::TextDisabled("Only 1 clip loaded (blend disabled)");
+            }
+
+            ImGui::Separator();
+
+            // IK controls
+            ImGui::Text("Inverse Kinematics");
+            ImGui::Checkbox("Enable IK", &enableIk);
+            if (enableIk)
+            {
+                ImGui::SliderFloat("IK Blend", &ikBlendWeight, 0.0f, 1.0f, "%.2f");
+                ImGui::Text("IK Target:");
+                ImGui::SliderFloat("Tgt X", &ikTargetPos.x, -3.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Tgt Y", &ikTargetPos.y, 0.0f, 3.0f, "%.2f");
+                ImGui::SliderFloat("Tgt Z", &ikTargetPos.z, -3.0f, 3.0f, "%.2f");
+            }
+
+            // Show/hide target marker based on IK toggle.
+            if (enableIk && !reg.has<VisibleTag>(targetMarker))
+                reg.emplace<VisibleTag>(targetMarker);
+            else if (!enableIk && reg.has<VisibleTag>(targetMarker))
+                reg.remove<VisibleTag>(targetMarker);
+
+            ImGui::Separator();
+
+            // Per-instance speed overview
+            ImGui::Text("Instance Speeds:");
             for (int i = 0; i < kNumInstances; ++i)
             {
                 EntityID e = instances[i].animatedEntity;
@@ -905,31 +996,51 @@ int main()
                     auto* ac = reg.get<AnimatorComponent>(e);
                     if (ac)
                     {
-                        hud.printf(3, row++, "#%d: speed=%.2f  time=%.2f  %s", i + 1, ac->speed,
-                                   ac->playbackTime,
-                                   (ac->flags & AnimatorComponent::kFlagPlaying) ? "PLAY" : "STOP");
+                        ImGui::Text(
+                            "  #%d: speed=%.2f  time=%.2f  %s", i + 1, ac->speed, ac->playbackTime,
+                            (ac->flags & AnimatorComponent::kFlagPlaying) ? "PLAY" : "STOP");
                     }
                 }
             }
 
-            row++;
-            hud.printf(1, row++, "--- Controls ---");
-            hud.printf(1, row++, "Space=play/pause  S=stop  Up/Down=speed");
-            hud.printf(1, row++, "Tab=next instance  ,/.=scrub  1-9=select clip");
-            hud.printf(1, row++, "B=blend next   I=IK toggle   J/K=IK weight -/+");
-            hud.printf(1, row++, "Left/Right=SM speed   X=reset all   R=full reset");
-            hud.printf(1, row++, "H=toggle HUD   RMB=orbit   WASD=move target");
-        }
-        hud.end();
+            // State machine controls
+            if (stateMachineSetup)
+            {
+                ImGui::Separator();
+                ImGui::Text("State Machine (Instance #3)");
+                EntityID smEntity = instances[2].animatedEntity;
+                auto* smComp = reg.get<AnimStateMachineComponent>(smEntity);
+                if (smComp && smComp->machine)
+                {
+                    const auto& state = smComp->machine->states[smComp->currentState];
+                    ImGui::Text("Current State: %s", state.name.c_str());
+                }
+                if (ImGui::SliderFloat("SM Speed", &smSpeedParam, 0.0f, 3.0f, "%.2f"))
+                {
+                    // Parameter updated in the per-frame section above.
+                }
+            }
 
-        // Show/hide IK target marker based on toggle.
-        if (modelSpawned)
-        {
-            if (enableIk && !reg.has<VisibleTag>(targetMarker))
-                reg.emplace<VisibleTag>(targetMarker);
-            else if (!enableIk && reg.has<VisibleTag>(targetMarker))
-                reg.remove<VisibleTag>(targetMarker);
+            // Recent events
+            if (!recentEvents.empty())
+            {
+                ImGui::Separator();
+                ImGui::Text("Recent Events:");
+                int shown = 0;
+                for (int ei = static_cast<int>(recentEvents.size()) - 1; ei >= 0 && shown < 5;
+                     --ei, ++shown)
+                {
+                    ImGui::TextColored(ImVec4(0.7f, 0.5f, 1.0f, 1.0f), "  [%.1fs] %s",
+                                       recentEvents[ei].age, recentEvents[ei].name.c_str());
+                }
+            }
+
+            ImGui::Separator();
+            glm::vec3 cp = cam.position();
+            ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cp.x, cp.y, cp.z);
+            ImGui::Text("Target: (%.1f, %.1f, %.1f)", cam.target.x, cam.target.y, cam.target.z);
         }
+        ImGui::End();
 
         double frameEnd = glfwGetTime();
         renderMs = static_cast<float>((frameEnd - frameStart) * 1000.0);
