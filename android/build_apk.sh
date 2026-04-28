@@ -281,20 +281,41 @@ fi
 
 # Optionally bundle the Vulkan validation layer .so.  When present, bgfx
 # loads VK_LAYER_KHRONOS_validation if init.debug=true and pipes Vulkan
-# validation messages to logcat under the 'bgfx' tag.  Drops ~25 MB on
+# validation messages to logcat under the 'bgfx' tag.  Adds ~25 MB to
 # the APK; only ship in development builds.
+#
+# Gated by the SAMA_ANDROID_DEBUG_LAYERS env var (default off) so even
+# if the .so happens to be present locally, prod builds don't bundle it.
+# When the env var is set, build_apk.sh also passes
+# -DSAMA_ANDROID_DEBUG_LAYERS=ON to cmake (via build_android.sh) so the
+# C++ side flips on bgfx::Init::debug.
 #
 # To enable: download the latest release from
 #   https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases
-# extract android-binaries-*.zip, and place
+# extract android-binaries-*.zip, place
 #   libVkLayer_khronos_validation.so
-# at android/validation_layers/<abi>/.  These .so files are gitignored
-# (binaries) and not auto-downloaded.
-VK_LAYER_SO="${PROJECT_ROOT}/android/validation_layers/${ABI}/libVkLayer_khronos_validation.so"
-if [ -f "${VK_LAYER_SO}" ]; then
-    cp "${VK_LAYER_SO}" "${STAGING_DIR}/lib/${ABI}/"
-    echo "  Bundled Vulkan validation layer (${ABI})"
-fi
+# at android/validation_layers/<abi>/, then run:
+#   SAMA_ANDROID_DEBUG_LAYERS=1 bash android/build_apk.sh
+# These .so files are gitignored (binaries) and not auto-downloaded.
+STAGED_VK_LAYER="${STAGING_DIR}/lib/${ABI}/libVkLayer_khronos_validation.so"
+case "${SAMA_ANDROID_DEBUG_LAYERS:-0}" in
+    1|true|TRUE|on|ON|yes|YES)
+        VK_LAYER_SO="${PROJECT_ROOT}/android/validation_layers/${ABI}/libVkLayer_khronos_validation.so"
+        if [ -f "${VK_LAYER_SO}" ]; then
+            cp "${VK_LAYER_SO}" "${STAGED_VK_LAYER}"
+            echo "  Vulkan validation layers: enabled (bundled libVkLayer_khronos_validation.so for ${ABI})"
+        else
+            echo "  Vulkan validation layers: enabled but .so missing at ${VK_LAYER_SO}"
+            echo "    Download from https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases"
+        fi
+        ;;
+    *)
+        # Remove any stale copy left in the staging dir from a previous
+        # debug-layers build so the produced APK matches the env var.
+        rm -f "${STAGED_VK_LAYER}"
+        echo "  Vulkan validation layers: disabled (set SAMA_ANDROID_DEBUG_LAYERS=1 to enable)"
+        ;;
+esac
 
 # Generate manifest from template
 sed -e "s/com\\.sama\\.engine/${PACKAGE_ID//./\\.}/g" \

@@ -43,12 +43,21 @@ echo "  Build type: ${BUILD_TYPE}"
 echo "  NDK:        ${ANDROID_NDK}"
 echo ""
 
+# Mirror SAMA_ANDROID_DEBUG_LAYERS env var into the cmake configure step so
+# Renderer.cpp's #ifdef SAMA_ANDROID_DEBUG_LAYERS path is enabled and bx is
+# compiled with BX_CONFIG_DEBUG=1.  See android/build_apk.sh for details.
+case "${SAMA_ANDROID_DEBUG_LAYERS:-0}" in
+    1|true|TRUE|on|ON|yes|YES) DEBUG_LAYERS_OPT="-DSAMA_ANDROID_DEBUG_LAYERS=ON" ;;
+    *)                         DEBUG_LAYERS_OPT="-DSAMA_ANDROID_DEBUG_LAYERS=OFF" ;;
+esac
+
 cmake -S "${PROJECT_ROOT}" -B "${PROJECT_ROOT}/build/android/${ABI}" \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
     -DANDROID_ABI="${ABI}" \
     -DANDROID_PLATFORM=android-24 \
     -DANDROID_STL=c++_shared \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-    -DSAMA_ANDROID=ON
+    -DSAMA_ANDROID=ON \
+    "${DEBUG_LAYERS_OPT}"
 
 cmake --build "${PROJECT_ROOT}/build/android/${ABI}" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)"

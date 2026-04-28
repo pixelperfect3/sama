@@ -34,6 +34,8 @@ endif()
 option(SAMA_BUILD_DEMOS  "Build demo applications"        ${_SAMA_IS_TOP_LEVEL})
 option(SAMA_BUILD_TESTS  "Build unit + screenshot tests"  ${_SAMA_IS_TOP_LEVEL})
 option(SAMA_BUILD_EDITOR "Build the Sama editor"          ${_SAMA_IS_TOP_LEVEL})
+option(SAMA_ANDROID_DEBUG_LAYERS
+    "Enable Vulkan validation layers on Android (debug only)" OFF)
 
 # Root of the Sama source tree — resolves correctly whether Sama is the
 # top-level project or included as a subdirectory (FetchContent).
@@ -832,10 +834,17 @@ target_compile_definitions(bgfx PUBLIC BGFX_CONFIG_MAX_BONES=128)
 target_compile_definitions(bgfx PUBLIC BGFX_PLATFORM_SUPPORTS_WGSL=0)
 if(SAMA_ANDROID)
     target_compile_definitions(bx PUBLIC BX_ANDROID_LOG_TAG="bgfx")
+endif()
+if(SAMA_ANDROID AND SAMA_ANDROID_DEBUG_LAYERS)
     # Enable bgfx debug output (BX_TRACE / vulkan validation messages
     # routed through debugReportCb) so we can see validation layer output
-    # in logcat under the 'bgfx' tag even in Release builds.
+    # in logcat under the 'bgfx' tag even in Release builds.  Gated behind
+    # SAMA_ANDROID_DEBUG_LAYERS so production builds stay quiet and don't
+    # pay the BX_TRACE cost.
     target_compile_definitions(bx PUBLIC BX_CONFIG_DEBUG=1)
+    # Define the macro on engine_rendering so Renderer.cpp can flip on
+    # bgfx::Init::debug to auto-load VK_LAYER_KHRONOS_validation.
+    target_compile_definitions(engine_rendering PUBLIC SAMA_ANDROID_DEBUG_LAYERS)
 endif()
 
 # Same GLM flags as engine_tests to ensure consistent behaviour when rendering
