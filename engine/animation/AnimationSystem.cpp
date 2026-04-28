@@ -180,6 +180,9 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
             }
         });
 
+    // Stash the raw pointer past the local pmr::vector's lifetime. Safe because
+    // `arena` is a FrameArena: its memory is reclaimed only at end-of-frame
+    // reset(), not on vector destruction. Would dangle with a normal allocator.
     boneBuffer_ = boneBuffer.data();
     boneBufferSize_ = static_cast<uint32_t>(boneBuffer.size());
 }
@@ -356,6 +359,8 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
             }
         });
 
+    // Same lifetime trick as update(): the pointer survives because `arena`
+    // is a FrameArena that doesn't reclaim memory until end-of-frame reset().
     boneBuffer_ = boneBuffer.data();
     boneBufferSize_ = static_cast<uint32_t>(boneBuffer.size());
 }

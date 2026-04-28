@@ -4,6 +4,7 @@
 
 #include <any>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -16,6 +17,7 @@
 #include "engine/assets/CpuAssetData.h"
 #include "engine/assets/IAssetLoader.h"
 #include "engine/assets/IFileSystem.h"
+#include "engine/core/TransparentHash.h"
 #include "engine/threading/ThreadPool.h"
 
 namespace engine::assets
@@ -175,7 +177,11 @@ private:
     std::vector<Record> records_;
     std::vector<uint32_t> freeList_;
 
-    ankerl::unordered_dense::map<std::string, uint32_t> pathToSlot_;
+    // Transparent hash + std::equal_to<> enable heterogeneous lookup so that
+    // .find(string_view) does not allocate a temporary std::string.
+    ankerl::unordered_dense::map<std::string, uint32_t, core::TransparentStringHash,
+                                 std::equal_to<>>
+        pathToSlot_;
 
     // Slots released last frame — freed at the start of processUploads().
     std::vector<uint32_t> pendingFree_;
@@ -199,7 +205,8 @@ template <typename T>
 AssetHandle<T> AssetManager::load(std::string_view path)
 {
     // Deduplicate: return existing handle if path is already tracked.
-    auto it = pathToSlot_.find(std::string(path));
+    // Heterogeneous .find(string_view) — no temporary std::string allocated.
+    auto it = pathToSlot_.find(path);
     if (it != pathToSlot_.end())
     {
         uint32_t idx = it->second;
