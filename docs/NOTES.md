@@ -297,6 +297,7 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
 
 ### Status
 - [x] Physics implemented (IPhysicsEngine, JoltPhysicsEngine, PhysicsSystem, raycasting, collision events — committed in engine/physics/)
+- [x] Compound + mesh collider shapes landed (`ColliderShape::Compound`, real `ColliderShape::Mesh`). Shapes are pre-built via `IPhysicsEngine::createCompoundShape()` / `createMeshShape()` and referenced by `uint32_t shapeID` on `ColliderComponent`. Lifetime: shape outlives `destroy*Shape` until the last body referencing it is removed (Jolt's `JPH::ShapeRefC` refcount). **Behavior change:** `ColliderShape::Mesh` is no longer a silent fallback to `Box` — callers using `Mesh` without setting `shapeID` will now get a body-create failure instead of an unintended box. This was a bug fix; the previous fallback was undocumented and silently wrong.
 
 ---
 

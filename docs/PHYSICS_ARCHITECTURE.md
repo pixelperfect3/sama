@@ -600,6 +600,60 @@ target_link_libraries(engine_tests PRIVATE ... engine_physics ...)
 
 4. **Mesh collider source**: For `ColliderShape::Mesh`, the triangle data comes from the render mesh via `MeshComponent`. This couples physics to the render mesh format. Consider a separate `PhysicsMeshComponent` if physics needs simplified collision geometry.
 
+## 14. Compound and Mesh Collider Shapes
+
+`ColliderShape::Box | Sphere | Capsule` are the simple case: one ECS component, one Jolt body, one primitive shape. Two extra shape kinds exist for the case where one body needs many collision pieces or full triangle-mesh collision:
+
+- `ColliderShape::Compound` — backed by `JPH::StaticCompoundShape`. A rigid composition of N convex children (Box / Sphere / Capsule), each with its own local pose. One body, one ECS entity, one entry in Jolt's broadphase.
+- `ColliderShape::Mesh` — backed by `JPH::MeshShape`. Static-only triangle soup with a Jolt-built AABB tree.
+
+Both shapes are pre-built once via `IPhysicsEngine::createCompoundShape()` / `createMeshShape()`, return a `uint32_t shapeID`, and are then referenced by setting `ColliderComponent::shapeID` (with `shape = ColliderShape::Mesh | Compound`). The same shape ID can back many bodies (instancing).
+
+### Lifetime model
+
+A shape ID is owned by the engine until **both** of:
+
+1. `destroyMeshShape(id)` / `destroyCompoundShape(id)` has been called, **and**
+2. all bodies referencing it have been removed.
+
+Whichever event fires last triggers the actual deallocation. The mechanism is Jolt's intrinsic `JPH::ShapeRefC` refcount: bodies retain their reference through `addBody()`, so `destroy*Shape` simply drops the engine's hold from the registry while bodies keep the underlying `JPH::Shape` alive. The two unload calls in either order are safe.
+
+### When to use which
+
+- **Compound** — many small convex pieces sharing one rigid body (e.g. a tessellated floor, a barricade made of crates, a character armor model). Reduces ECS-entity count and Jolt broadphase entries from N to 1.
+- **Mesh** — full triangle collision against arbitrary static geometry (terrain, sculpted level meshes). Static only — Jolt does not support dynamic mesh bodies.
+
+### Worked example: the figure-8 floor
+
+A tessellated annular ring — `64 angular × 2 lobes = 128` boxes — was previously 128 ECS entities and 128 Jolt bodies. With compound shapes:
+
+```cpp
+std::vector<IPhysicsEngine::CompoundChild> children;
+for (each angular segment * 2 lobes)
+{
+    children.push_back({
+        .shape         = ColliderShape::Box,
+        .localPosition = wedgePos,
+        .localRotation = wedgeRot,
+        .halfExtents   = wedgeHalfExtents,
+    });
+}
+uint32_t shapeID = physics.createCompoundShape(children.data(), children.size());
+
+EntityID floor = registry.createEntity();
+registry.emplace<TransformComponent>(floor, /*at origin*/);
+RigidBodyComponent rb; rb.type = BodyType::Static; rb.mass = 0;
+registry.emplace<RigidBodyComponent>(floor, rb);
+ColliderComponent c; c.shape = ColliderShape::Compound; c.shapeID = shapeID;
+registry.emplace<ColliderComponent>(floor, c);
+```
+
+128 entities + 128 bodies → 1 entity + 1 body. The 128 child shapes still exist in Jolt's narrowphase, but the broadphase only sees one AABB.
+
+### Behavior change: `ColliderShape::Mesh` no longer falls back to Box
+
+Previously, `ColliderShape::Mesh` was unimplemented and silently created a box from `halfExtents`. With this change, `Mesh` is real: if `shapeID == ~0u` (i.e. you didn't set a shape ID), `addBody()` returns `~0u` and refuses to create the body. This is a bug fix; the prior behavior was undocumented.
+
 ---
 
 ### Critical Files for Implementation

@@ -1895,7 +1895,7 @@ int main()
 | Component | Fields | Purpose |
 |-----------|--------|---------|
 | `RigidBodyComponent` | `bodyID`, `mass`, `linearDamping`, `angularDamping`, `friction`, `restitution`, `type` (BodyType), `layer` | Physics body config. `bodyID` set by PhysicsSystem. |
-| `ColliderComponent` | `offset` (Vec3), `halfExtents` (Vec3), `radius` (float), `shape` (ColliderShape) | Collision shape definition. |
+| `ColliderComponent` | `offset` (Vec3), `halfExtents` (Vec3), `radius` (float), `shape` (ColliderShape: Box/Sphere/Capsule/Mesh/Compound), `isSensor` (uint8), `shapeID` (uint32) | Collision shape definition. For `Mesh` / `Compound`, set `shapeID` to a value returned by `IPhysicsEngine::createMeshShape()` / `createCompoundShape()`; ignored for primitives. |
 | `PhysicsBodyCreatedTag` | (empty) | Marks that PhysicsSystem has created the Jolt body. |
 
 ### Animation Components (`engine::animation`)
@@ -2099,6 +2099,7 @@ Sidecar files must be in the same directory as the `.glb` and share the same bas
 | Pink/magenta rectangles | Missing texture or shader binding | Ensure all PBR texture slots are bound. Use `resources.whiteTexture()` as default for unset texture IDs. |
 | Entity not rendering | Missing `VisibleTag`, `WorldTransformComponent`, or `MeshComponent` | Add all required components (see Section 2, "Create an entity"). |
 | Physics body not moving | Dirty flag not set after teleporting via `setBodyPosition` | PhysicsSystem writes back transforms with dirty flag; if you manually set position, also set `tc->flags \|= 1`. |
+| `[physics] addBody: ColliderShape::Mesh requires a valid shapeID` (or skinned/static mesh body silently became a box previously) | `ColliderShape::Mesh` or `Compound` set without first calling `createMeshShape()` / `createCompoundShape()` and storing the result into `ColliderComponent::shapeID`. Was a silent box fallback before; now refuses to create the body. | Pre-build the shape via `IPhysicsEngine::createMeshShape()` / `createCompoundShape()` and set the returned `shapeID` on `ColliderComponent::shapeID`. |
 | Asset stays in Loading state | `processUploads()` not called, or wrong file path | Call `assets.processUploads()` every frame. Check `assets.error(handle)` for path errors. |
 | "No loader registered" error | Forgot to register the loader for the file extension | Call `assets.registerLoader(std::make_unique<GltfLoader>())` and/or `TextureLoader` before loading. |
 | Animation not playing | `kFlagPlaying` not set on `AnimatorComponent` | Set `ac.flags \|= AnimatorComponent::kFlagPlaying`. Note: glTF imports start paused (only `kFlagLooping` is set). |
