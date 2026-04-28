@@ -1,5 +1,6 @@
 #pragma once
 
+#include <TargetConditionals.h>
 #include <bgfx/bgfx.h>
 
 #include <cstdint>
@@ -12,9 +13,19 @@
 #include "engine/rendering/Renderer.h"
 #include "engine/rendering/ShadowRenderer.h"
 
-#ifndef __ANDROID__
-struct GLFWwindow;
+// Platform forward-declarations.  We branch three ways: desktop (GLFW),
+// Android (android_app + AInputEvent), iOS (the engine::platform::ios types).
+// TargetConditionals.h exists on Apple platforms only, so we guard the iOS
+// helper macro.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#define ENGINE_IS_IOS 1
 #else
+#define ENGINE_IS_IOS 0
+#endif
+
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
+struct GLFWwindow;
+#elif defined(__ANDROID__)
 struct android_app;
 struct AInputEvent;
 #endif
@@ -32,6 +43,16 @@ class AndroidWindow;
 class AndroidGyro;
 class AndroidFileSystem;
 }  // namespace engine::platform
+#endif
+
+#if ENGINE_IS_IOS
+namespace engine::platform::ios
+{
+class IosWindow;
+class IosTouchInput;
+class IosGyro;
+class IosFileSystem;
+}  // namespace engine::platform::ios
 #endif
 
 namespace engine::core
@@ -76,14 +97,27 @@ public:
     Engine(Engine&&) = delete;
     Engine& operator=(Engine&&) = delete;
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
     // Initialize all subsystems (desktop).  Must be called before anything else.
     // Returns false on failure (window or renderer creation failed).
     bool init(const EngineDesc& desc);
-#else
+#elif defined(__ANDROID__)
     // Initialize all subsystems (Android).  Must be called after the native
     // window is ready.  Returns false on failure.
     bool initAndroid(struct android_app* app, const EngineDesc& desc);
+#else
+    // Initialize all subsystems (iOS).  Must be called after the IosWindow
+    // has been attached to its UIWindow (window->isReady() == true).  The
+    // platform layer owners (window/touch/gyro/fs) outlive the Engine.
+    //
+    // Mirrors initAndroid in shape: takes the platform pieces by pointer and
+    // wires them into the Engine's input / shadow / renderer subsystems.
+    // The IosFileSystem pointer is currently advisory — kept on the Engine so
+    // future subsystems (asset streaming, scene serialiser) can pull it in
+    // without re-querying NSBundle.
+    bool initIos(platform::ios::IosWindow* window, platform::ios::IosTouchInput* touch,
+                 platform::ios::IosGyro* gyro, platform::ios::IosFileSystem* fs,
+                 const EngineDesc& desc);
 #endif
 
     // Shutdown all subsystems in correct order.
@@ -102,7 +136,7 @@ public:
 
     // ----- Subsystem accessors -----
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
     [[nodiscard]] platform::IWindow& window()
     {
         return *window_;
@@ -177,7 +211,7 @@ public:
         return fbH_;
     }
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
     // ----- GLFW handle (needed for scroll callbacks, cursor capture, etc.) -----
 
     [[nodiscard]] GLFWwindow* glfwHandle() const
@@ -201,7 +235,8 @@ public:
         return imguiScrollF_;
     }
 #else
-    // Content scale factor from Android display density.
+    // Content scale factor from the platform display density (Android dpi /
+    // iOS UIScreen.nativeScale).
     [[nodiscard]] float contentScaleX() const
     {
         return contentScaleX_;
@@ -215,17 +250,26 @@ public:
 private:
     bool initialized_ = false;
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
     // Window (desktop)
     std::unique_ptr<platform::IWindow> window_;
     GLFWwindow* glfwHandle_ = nullptr;
-#else
+#elif defined(__ANDROID__)
     // Android app handle and platform objects
     struct android_app* androidApp_ = nullptr;
     std::unique_ptr<platform::AndroidWindow> androidWindow_;
     std::unique_ptr<platform::AndroidGyro> androidGyro_;
     std::unique_ptr<platform::AndroidFileSystem> androidFileSystem_;
     bool focused_ = false;
+#else
+    // iOS platform objects — owned by IosApp / the application delegate, not
+    // by the Engine.  The Engine holds back-pointers so beginFrame/endFrame
+    // can drain touch / gyro state into the InputState and rebind bgfx if
+    // the CAMetalLayer ever changes (e.g. after backgrounding).
+    platform::ios::IosWindow* iosWindow_ = nullptr;
+    platform::ios::IosTouchInput* iosTouch_ = nullptr;
+    platform::ios::IosGyro* iosGyro_ = nullptr;
+    platform::ios::IosFileSystem* iosFileSystem_ = nullptr;
 #endif
 
     // Renderer
@@ -251,8 +295,8 @@ private:
     float contentScaleX_ = 1.f;
     float contentScaleY_ = 1.f;
 
-#ifndef __ANDROID__
-    // ImGui scroll accumulator
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
+    // ImGui scroll accumulator (desktop only — ImGui isn't built on mobile).
     float imguiScrollF_ = 0.f;
 #endif
 

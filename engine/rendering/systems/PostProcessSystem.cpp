@@ -1,5 +1,6 @@
 #include "engine/rendering/systems/PostProcessSystem.h"
 
+#include <TargetConditionals.h>
 #include <bgfx/bgfx.h>
 
 #ifdef __ANDROID__
@@ -17,31 +18,36 @@ bgfx::ProgramHandle loadFxaaProgram();
 #else
 #include <bgfx/embedded_shader.h>
 
-// Generated shader bytecode headers — produced by shaderc via CMake custom commands.
+// Generated shader bytecode headers — produced by shaderc via CMake custom
+// commands.  iOS only ships Metal; the BGFX_EMBEDDED_SHADER macro skips the
+// other backends because we set BGFX_PLATFORM_SUPPORTS_{ESSL,GLSL,SPIRV}=0
+// on engine_rendering.
+#include "generated/shaders/fs_bloom_downsample_mtl.bin.h"
+#include "generated/shaders/fs_bloom_threshold_mtl.bin.h"
+#include "generated/shaders/fs_bloom_upsample_mtl.bin.h"
+#include "generated/shaders/fs_fxaa_mtl.bin.h"
+#include "generated/shaders/fs_tonemap_mtl.bin.h"
+#include "generated/shaders/vs_fullscreen_mtl.bin.h"
+#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
 #include "generated/shaders/fs_bloom_downsample_essl.bin.h"
 #include "generated/shaders/fs_bloom_downsample_glsl.bin.h"
-#include "generated/shaders/fs_bloom_downsample_mtl.bin.h"
 #include "generated/shaders/fs_bloom_downsample_spv.bin.h"
 #include "generated/shaders/fs_bloom_threshold_essl.bin.h"
 #include "generated/shaders/fs_bloom_threshold_glsl.bin.h"
-#include "generated/shaders/fs_bloom_threshold_mtl.bin.h"
 #include "generated/shaders/fs_bloom_threshold_spv.bin.h"
 #include "generated/shaders/fs_bloom_upsample_essl.bin.h"
 #include "generated/shaders/fs_bloom_upsample_glsl.bin.h"
-#include "generated/shaders/fs_bloom_upsample_mtl.bin.h"
 #include "generated/shaders/fs_bloom_upsample_spv.bin.h"
 #include "generated/shaders/fs_fxaa_essl.bin.h"
 #include "generated/shaders/fs_fxaa_glsl.bin.h"
-#include "generated/shaders/fs_fxaa_mtl.bin.h"
 #include "generated/shaders/fs_fxaa_spv.bin.h"
 #include "generated/shaders/fs_tonemap_essl.bin.h"
 #include "generated/shaders/fs_tonemap_glsl.bin.h"
-#include "generated/shaders/fs_tonemap_mtl.bin.h"
 #include "generated/shaders/fs_tonemap_spv.bin.h"
 #include "generated/shaders/vs_fullscreen_essl.bin.h"
 #include "generated/shaders/vs_fullscreen_glsl.bin.h"
-#include "generated/shaders/vs_fullscreen_mtl.bin.h"
 #include "generated/shaders/vs_fullscreen_spv.bin.h"
+#endif
 #endif
 
 namespace engine::rendering

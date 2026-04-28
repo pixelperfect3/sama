@@ -10,14 +10,14 @@
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ViewIds.h"
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 
 #include "engine/input/desktop/GlfwInputBackend.h"
 #include "engine/platform/desktop/GlfwWindow.h"
-#else
+#elif defined(__ANDROID__)
 #include <android/configuration.h>
 #include <android/log.h>
 #include <android/looper.h>
@@ -33,6 +33,14 @@
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "SamaEngine", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "SamaEngine", __VA_ARGS__)
+#else  // iOS
+#include <bgfx/platform.h>
+
+#include "engine/input/ios/IosInputBackend.h"
+#include "engine/platform/ios/IosFileSystem.h"
+#include "engine/platform/ios/IosGyro.h"
+#include "engine/platform/ios/IosTouchInput.h"
+#include "engine/platform/ios/IosWindow.h"
 #endif
 
 namespace engine::core
@@ -64,7 +72,7 @@ Engine::~Engine()
 // Desktop (GLFW) implementation
 // ===========================================================================
 
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !ENGINE_IS_IOS
 
 bool Engine::init(const EngineDesc& desc)
 {
@@ -273,7 +281,7 @@ bool Engine::imguiWantsMouse() const
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-#else  // __ANDROID__
+#elif defined(__ANDROID__)  // __ANDROID__
 
 // ===========================================================================
 // Android implementation
@@ -590,6 +598,225 @@ bool Engine::imguiWantsMouse() const
     return false;
 }
 
-#endif  // __ANDROID__
+#else  // ENGINE_IS_IOS
+
+// ===========================================================================
+// iOS implementation
+//
+// Mirrors the Android branch: the platform layer (IosWindow, IosTouchInput,
+// IosGyro, IosFileSystem) is owned by IosApp / the application delegate and
+// passed in to initIos() via raw pointers.  The Engine does not take
+// ownership; it just stores back-pointers and drains them every frame.
+//
+// Unlike Android, there is no event poll loop here — UIKit pumps the run
+// loop and the IosApp delegate calls Engine::beginFrame / endFrame from its
+// CADisplayLink callback once per refresh.  beginFrame is therefore
+// non-blocking: it just queries the IosWindow for the current drawable size,
+// updates the InputState from the touch / gyro helpers, and returns.
+// ===========================================================================
+
+bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchInput* touch,
+                     platform::ios::IosGyro* gyro, platform::ios::IosFileSystem* fs,
+                     const EngineDesc& desc)
+{
+    iosWindow_ = window;
+    iosTouch_ = touch;
+    iosGyro_ = gyro;
+    iosFileSystem_ = fs;
+
+    if (!iosWindow_ || !iosWindow_->isReady())
+    {
+        // No CAMetalLayer to render into — refuse to init bgfx.  IosApp must
+        // call setNativeWindow() before initIos().
+        return false;
+    }
+
+    // -- Renderer (bgfx via CAMetalLayer) ---------------------------------
+    {
+        bgfx::PlatformData pd;
+        pd.ndt = nullptr;
+        pd.nwh = iosWindow_->nativeLayer();
+        pd.context = nullptr;
+        pd.backBuffer = nullptr;
+        pd.backBufferDS = nullptr;
+        bgfx::setPlatformData(pd);
+
+        rendering::RendererDesc rd;
+        rd.nativeWindowHandle = iosWindow_->nativeLayer();
+        rd.nativeDisplayHandle = nullptr;
+        rd.width = iosWindow_->width();
+        rd.height = iosWindow_->height();
+        rd.headless = false;
+        if (!renderer_.init(rd))
+        {
+            return false;
+        }
+    }
+
+    fbW_ = static_cast<uint16_t>(iosWindow_->width());
+    fbH_ = static_cast<uint16_t>(iosWindow_->height());
+    contentScaleX_ = iosWindow_->contentScale();
+    contentScaleY_ = iosWindow_->contentScale();
+
+    // -- Shader programs --------------------------------------------------
+    pbrProg_ = rendering::loadPbrProgram();
+    shadowProg_ = rendering::loadShadowProgram();
+    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
+    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
+
+    // -- Default textures -------------------------------------------------
+    resources_.createDefaultTextures();
+
+    // -- Shadow renderer --------------------------------------------------
+    {
+        rendering::ShadowDesc sd;
+        sd.resolution = desc.shadowResolution;
+        sd.cascadeCount = desc.shadowCascades;
+        shadow_.init(sd);
+    }
+
+    // -- Input ------------------------------------------------------------
+    // IosInputBackend is the IInputBackend that InputSystem polls.  The
+    // touch helper (IosTouchInput) is a separate, parallel path that mutates
+    // InputState directly via UITouch overlays — bind it here so events
+    // start landing in our InputState even before InputSystem polls.
+    if (iosWindow_->nativeView())
+    {
+        inputBackend_ = std::make_unique<input::IosInputBackend>(iosWindow_->nativeView());
+        inputSys_ = std::make_unique<input::InputSystem>(*inputBackend_);
+    }
+    if (iosTouch_)
+    {
+        iosTouch_->bindState(&inputState_);
+    }
+
+    // -- Frame arena ------------------------------------------------------
+    frameArena_ = std::make_unique<memory::FrameArena>(desc.frameArenaSize);
+
+    // -- Timing -----------------------------------------------------------
+    using Clock = std::chrono::steady_clock;
+    auto now = Clock::now();
+    prevTime_ = std::chrono::duration<double>(now.time_since_epoch()).count();
+
+    // Flush initial resource uploads.
+    renderer_.endFrame();
+
+    initialized_ = true;
+    return true;
+}
+
+void Engine::shutdown()
+{
+    if (!initialized_)
+        return;
+
+    shadow_.shutdown();
+
+    if (bgfx::isValid(pbrProg_))
+        bgfx::destroy(pbrProg_);
+    if (bgfx::isValid(shadowProg_))
+        bgfx::destroy(shadowProg_);
+    if (bgfx::isValid(skinnedPbrProg_))
+        bgfx::destroy(skinnedPbrProg_);
+    if (bgfx::isValid(skinnedShadowProg_))
+        bgfx::destroy(skinnedShadowProg_);
+
+    resources_.destroyAll();
+
+    renderer_.endFrame();
+    renderer_.shutdown();
+
+    inputSys_.reset();
+    inputBackend_.reset();
+    frameArena_.reset();
+
+    if (iosTouch_)
+    {
+        iosTouch_->bindState(nullptr);
+    }
+    iosWindow_ = nullptr;
+    iosTouch_ = nullptr;
+    iosGyro_ = nullptr;
+    iosFileSystem_ = nullptr;
+
+    initialized_ = false;
+}
+
+bool Engine::beginFrame(float& outDt)
+{
+    // -- Surface readiness ------------------------------------------------
+    // The IosApp delegate pauses the CADisplayLink while in the background;
+    // by the time we get here the layer is generally valid.  Defensive check
+    // just in case onFrame fires during a layout transition.
+    if (!iosWindow_ || !iosWindow_->isReady())
+    {
+        outDt = 0.f;
+        return true;
+    }
+
+    // -- Resize -----------------------------------------------------------
+    uint32_t w = iosWindow_->width();
+    uint32_t h = iosWindow_->height();
+    if ((w != static_cast<uint32_t>(fbW_) || h != static_cast<uint32_t>(fbH_)) && w > 0 && h > 0)
+    {
+        renderer_.resize(w, h);
+        fbW_ = static_cast<uint16_t>(w);
+        fbH_ = static_cast<uint16_t>(h);
+    }
+
+    // -- Timing -----------------------------------------------------------
+    using Clock = std::chrono::steady_clock;
+    auto now = Clock::now();
+    double nowSec = std::chrono::duration<double>(now.time_since_epoch()).count();
+    outDt = static_cast<float>(std::min(nowSec - prevTime_, 0.05));
+    prevTime_ = nowSec;
+
+    // -- Input ------------------------------------------------------------
+    if (inputSys_)
+    {
+        inputSys_->update(inputState_);
+    }
+
+    // -- Gyroscope --------------------------------------------------------
+    if (iosGyro_)
+    {
+        iosGyro_->update(inputState_);
+    }
+
+    // -- Renderer begin (direct-to-backbuffer) ----------------------------
+    renderer_.beginFrameDirect();
+
+    // -- View 0 clear / rect / touch --------------------------------------
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor_, 1.0f, 0);
+    bgfx::setViewRect(0, 0, 0, fbW_, fbH_);
+    bgfx::touch(0);
+
+    return true;
+}
+
+void Engine::endFrame()
+{
+    // Mirror the Android per-frame contract: clear edge flags / promote
+    // touches now that the game has consumed them.  IosTouchInput owns the
+    // promotion logic; call it before the bgfx submit so InputState is
+    // consistent for any "did we just submit a frame?" checks the game does.
+    if (iosTouch_)
+    {
+        iosTouch_->endFrame(inputState_);
+    }
+
+    if (frameArena_)
+        frameArena_->reset();
+
+    renderer_.endFrame();
+}
+
+bool Engine::imguiWantsMouse() const
+{
+    // ImGui is not available on iOS.
+    return false;
+}
+
+#endif  // platform branch
 
 }  // namespace engine::core

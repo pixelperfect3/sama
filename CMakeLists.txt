@@ -637,6 +637,136 @@ add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
 
 endif()  # NOT SAMA_ANDROID AND NOT SAMA_IOS (shader compilation)
 
+# ---------------------------------------------------------------------------
+# iOS shader compilation
+#
+# On iOS we run the same Metal shader pipeline that macOS uses, but shaderc
+# is a host tool that cannot be cross-compiled.  Resolution: locate a
+# host-built shaderc binary (the user runs `cmake --build build --target
+# shaderc` once on macOS first) and drive it via custom commands.
+#
+# Only the _mtl variants are built — Metal is the sole Apple GPU backend, and
+# we override BGFX_PLATFORM_SUPPORTS_ESSL=0 on engine_rendering so the
+# BGFX_EMBEDDED_SHADER macro stops referencing _essl symbols on iOS.
+#
+# This produces the same set of generated/shaders/*_mtl.bin.h files macOS
+# emits, into the same output directory, so engine_rendering's #includes
+# work unchanged.
+# ---------------------------------------------------------------------------
+if(SAMA_IOS)
+
+# Locate the host-built shaderc binary.  The build_ios.sh helper builds it
+# into build/_deps/bgfx_cmake-build/cmake/bgfx/shaderc before invoking the
+# iOS configure; users running cmake by hand can pre-build via
+#   cmake --build build --target shaderc -j$(sysctl -n hw.ncpu)
+# and pass -DSAMA_HOST_SHADERC=<path> on the iOS configure command line.
+set(_HOST_SHADERC_HINTS
+    ${SAMA_ROOT_DIR}/build/_deps/bgfx_cmake-build/cmake/bgfx
+    ${SAMA_ROOT_DIR}/build/cmake/bgfx
+    ${SAMA_ROOT_DIR}/build/bin
+    ${SAMA_ROOT_DIR}/build
+)
+find_program(SAMA_HOST_SHADERC
+    NAMES shaderc
+    HINTS ${_HOST_SHADERC_HINTS}
+    NO_DEFAULT_PATH
+    DOC "Host-built bgfx shaderc binary used for iOS Metal shader compilation"
+)
+
+if(NOT SAMA_HOST_SHADERC)
+    message(FATAL_ERROR
+        "SAMA_IOS=ON requires a host-built shaderc binary.  Build one first:\n"
+        "    cmake -S . -B build && cmake --build build --target shaderc -j$(sysctl -n hw.ncpu)\n"
+        "and rerun the iOS configure (or pass -DSAMA_HOST_SHADERC=<absolute-path>).")
+endif()
+message(STATUS "Sama iOS: using host shaderc at ${SAMA_HOST_SHADERC}")
+
+set(SHADER_SRC_DIR     ${SAMA_ROOT_DIR}/engine/shaders)
+# bgfx headers (bgfx_shader.sh etc.) live in the FetchContent-populated source
+# tree.  Reuse the same path the desktop build uses (CMakeCache from a prior
+# host configure put bgfx_cmake_SOURCE_DIR into our build/ but on a clean
+# iOS-only configure we have to recompute it).
+if(NOT bgfx_cmake_SOURCE_DIR)
+    # FetchContent is usually populated; fall back to the canonical _deps path
+    # if not (e.g. the user pointed CMake at a fresh build/ios-sim).
+    set(bgfx_cmake_SOURCE_DIR ${SAMA_ROOT_DIR}/build/_deps/bgfx_cmake-src)
+endif()
+set(SHADER_INCLUDE_DIR ${bgfx_cmake_SOURCE_DIR}/bgfx/src)
+set(SHADER_OUT_DIR     ${CMAKE_CURRENT_BINARY_DIR}/include/generated/shaders)
+set(VARYING_DEF        ${SHADER_SRC_DIR}/varying.def.sc)
+set(VARYING_PP_DEF     ${SHADER_SRC_DIR}/varying_pp.def.sc)
+
+# Helper: invoke the host shaderc to produce one Metal _mtl.bin.h header.
+# Mirrors compile_shader() above but does not depend on the bgfx::shaderc
+# CMake target (which doesn't exist in cross-compile mode).
+function(_sama_ios_compile_metal_shader FILE TYPE BIN2C_NAME VARYING OUT_LIST)
+    set(OUT_FILE ${SHADER_OUT_DIR}/${BIN2C_NAME}.bin.h)
+    if("${TYPE}" STREQUAL "VERTEX")
+        set(_TYPE_FLAG "vertex")
+    elseif("${TYPE}" STREQUAL "FRAGMENT")
+        set(_TYPE_FLAG "fragment")
+    else()
+        message(FATAL_ERROR "_sama_ios_compile_metal_shader: unknown TYPE ${TYPE}")
+    endif()
+
+    add_custom_command(
+        OUTPUT  ${OUT_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUT_DIR}
+        COMMAND ${SAMA_HOST_SHADERC}
+            -f ${FILE}
+            -o ${OUT_FILE}
+            --bin2c ${BIN2C_NAME}
+            --platform osx
+            --profile metal
+            --type ${_TYPE_FLAG}
+            --varyingdef ${VARYING}
+            -i ${SHADER_INCLUDE_DIR}
+            --define BGFX_CONFIG_MAX_BONES=128
+        MAIN_DEPENDENCY ${FILE}
+        DEPENDS ${VARYING}
+        COMMENT "Compiling iOS Metal shader ${BIN2C_NAME}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+    )
+    set(${OUT_LIST} ${${OUT_LIST}} ${OUT_FILE} PARENT_SCOPE)
+endfunction()
+
+set(COMPILED_SHADERS "")
+
+# Mirrors the macOS Metal blocks above — same source files, same bin2c names,
+# same output paths.  Only the toolchain differs (host shaderc vs CMake target).
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_unlit.sc          VERTEX   vs_unlit_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_unlit.sc          FRAGMENT fs_unlit_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_gizmo.sc          VERTEX   vs_gizmo_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_gizmo.sc          FRAGMENT fs_gizmo_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_pbr.sc            VERTEX   vs_pbr_mtl            ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_pbr.sc            FRAGMENT fs_pbr_mtl            ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_pbr_skinned.sc    VERTEX   vs_pbr_skinned_mtl    ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_instanced.sc      VERTEX   vs_instanced_mtl      ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_sprite.sc         VERTEX   vs_sprite_mtl         ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_sprite.sc         FRAGMENT fs_sprite_mtl         ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_msdf.sc           FRAGMENT fs_msdf_mtl           ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_slug.sc           VERTEX   vs_slug_mtl           ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_slug.sc           FRAGMENT fs_slug_mtl           ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_skybox.sc         VERTEX   vs_skybox_mtl         ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_skybox.sc         FRAGMENT fs_skybox_mtl         ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_rounded_rect.sc   VERTEX   vs_rounded_rect_mtl   ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_rounded_rect.sc   FRAGMENT fs_rounded_rect_mtl   ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_shadow.sc         VERTEX   vs_shadow_mtl         ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_shadow.sc         FRAGMENT fs_shadow_mtl         ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_shadow_skinned.sc VERTEX   vs_shadow_skinned_mtl ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_fullscreen.sc     VERTEX   vs_fullscreen_mtl     ${VARYING_PP_DEF} COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_bloom_threshold.sc  FRAGMENT fs_bloom_threshold_mtl  ${VARYING_PP_DEF} COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_bloom_downsample.sc FRAGMENT fs_bloom_downsample_mtl ${VARYING_PP_DEF} COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_bloom_upsample.sc   FRAGMENT fs_bloom_upsample_mtl   ${VARYING_PP_DEF} COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_tonemap.sc          FRAGMENT fs_tonemap_mtl          ${VARYING_PP_DEF} COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_fxaa.sc             FRAGMENT fs_fxaa_mtl             ${VARYING_PP_DEF} COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_ssao.sc             FRAGMENT fs_ssao_mtl             ${VARYING_PP_DEF} COMPILED_SHADERS)
+
+add_custom_target(engine_shaders ALL DEPENDS ${COMPILED_SHADERS})
+
+endif()  # SAMA_IOS
+
 # --- engine_io static library ---
 add_library(engine_io STATIC engine/io/Json.cpp)
 target_include_directories(engine_io PUBLIC ${SAMA_ROOT_DIR} ${rapidjson_SOURCE_DIR}/include)
@@ -841,8 +971,20 @@ endif()
 
 add_library(engine_rendering STATIC ${_ENGINE_RENDERING_SOURCES})
 
-if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
+if(NOT SAMA_ANDROID)
+    # Both desktop and iOS embed compiled shader bytecode via generated headers.
+    # Android takes a different path: shaders are pre-compiled into .bin files
+    # and shipped in the APK's assets/, so the engine_shaders target does not
+    # exist there.  See android/compile_shaders.sh.
     add_dependencies(engine_rendering engine_shaders)
+endif()
+
+if(SAMA_IOS)
+    # Strip ESSL fallback support from BGFX_EMBEDDED_SHADER on iOS — we only
+    # ship Metal shader bytecode, and the macro otherwise emits references to
+    # vs_*_essl symbols that we never produce.  This is the smallest delta
+    # that keeps ShaderLoader.cpp's embedded-shader path working.
+    target_compile_definitions(engine_rendering PUBLIC BGFX_PLATFORM_SUPPORTS_ESSL=0)
 endif()
 
 target_include_directories(engine_rendering PUBLIC
@@ -1177,49 +1319,47 @@ endif()  # SAMA_BUILD_TESTS
 
 # --- engine_core static library ---
 # Centralised Engine class that owns window, renderer, default textures, shaders,
-# ImGui, input, shadow renderer, and frame arena.  Desktop only — depends on
-# GLFW for windowing and input.
+# ImGui, input, shadow renderer, and frame arena.
 #
-# Skipped on iOS (Phase A): the iOS sample app drives bgfx directly via its
-# own UIViewController and does not pull engine_core in.  Phase B's iOS
-# platform layer (engine_platform_ios) will re-introduce an Engine-equivalent
-# wrapper once the lifecycle hooks are in place.
-if(NOT SAMA_IOS)
-    add_library(engine_core STATIC engine/core/Engine.cpp)
-    target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
-    if(NOT SAMA_ANDROID)
-        target_link_libraries(engine_core PUBLIC
-            engine_input_glfw
-            engine_memory
-            engine_debug
-            engine_scene
-        )
-    else()
-        target_link_libraries(engine_core PUBLIC
-            engine_input_android
-            engine_memory
-            engine_debug
-            engine_scene
-            native_app_glue
-        )
-    endif()
+# Desktop:  GLFW window + ImGui.
+# Android:  ANativeWindow + AndroidInputBackend.
+# iOS:      IosWindow + IosTouchInput + IosGyro (no ImGui — touch-only).
+add_library(engine_core STATIC engine/core/Engine.cpp)
+target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
+if(SAMA_IOS)
+    target_link_libraries(engine_core PUBLIC
+        engine_input
+        engine_input_ios
+        engine_memory
+        engine_scene
+        engine_platform_ios
+    )
+elseif(SAMA_ANDROID)
+    target_link_libraries(engine_core PUBLIC
+        engine_input_android
+        engine_memory
+        engine_debug
+        engine_scene
+        native_app_glue
+    )
+else()
+    target_link_libraries(engine_core PUBLIC
+        engine_input_glfw
+        engine_memory
+        engine_debug
+        engine_scene
+    )
 endif()
 
 # --- engine_game static library ---
 # Game layer: IGame interface, GameRunner (frame loop with fixed timestep).
-# Works on both desktop (GLFW) and Android (ANativeWindow).
-#
-# Skipped on iOS (Phase A) — depends on engine_core which is desktop/Android
-# only.  The iOS sample app does not use IGame/GameRunner yet; Phase B will
-# bring this back along with engine_platform_ios's lifecycle hooks.
-if(NOT SAMA_IOS)
-    add_library(engine_game STATIC
-        engine/game/GameRunner.cpp
-        engine/game/ProjectConfig.cpp
-    )
-    target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
-    target_link_libraries(engine_game PUBLIC engine_core)
-endif()
+# Works on desktop (GLFW), Android (ANativeWindow), and iOS (CADisplayLink).
+add_library(engine_game STATIC
+    engine/game/GameRunner.cpp
+    engine/game/ProjectConfig.cpp
+)
+target_include_directories(engine_game PUBLIC ${SAMA_ROOT_DIR})
+target_link_libraries(engine_game PUBLIC engine_core)
 
 # --- engine_ui static library ---
 # Retained-mode UI system: UiNode tree, UiCanvas, UiDrawList, widget types.
@@ -1402,43 +1542,41 @@ endif()  # SAMA_ANDROID
 # placeholder — sufficient to prove the build pipeline works end-to-end.
 # ---------------------------------------------------------------------------
 if(SAMA_IOS)
-    # Platform layer — Agent B's territory.  Glob both .cpp and .mm sources
-    # under engine/platform/ios/.  CONFIGURE_DEPENDS makes CMake re-glob on
-    # every build so newly added files are picked up automatically (slight
-    # configure-step cost; acceptable for a small directory).
-    file(GLOB _IOS_PLATFORM_SOURCES CONFIGURE_DEPENDS
-        ${SAMA_ROOT_DIR}/engine/platform/ios/*.mm
-        ${SAMA_ROOT_DIR}/engine/platform/ios/*.cpp
+    # Platform layer — owned by Agent B (Phase B).  Source files live under
+    # engine/platform/ios/.  We enumerate them explicitly (rather than glob)
+    # so CMake's dependency tracking is reliable and so this list documents
+    # the platform layer's surface area in one place.
+    set(_IOS_PLATFORM_SOURCES
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosApp.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosFileSystem.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosGlobals.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosGyro.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosTouchInput.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosWindow.mm
     )
-
-    # CMake refuses to create a library with zero source files.  Drop a
-    # one-line .cpp stub into the build tree if Agent B hasn't added any
-    # implementation yet — keeps the rest of the build green.
-    if(NOT _IOS_PLATFORM_SOURCES)
-        set(_IOS_PLATFORM_STUB ${CMAKE_CURRENT_BINARY_DIR}/ios_platform_stub.cpp)
-        file(WRITE ${_IOS_PLATFORM_STUB}
-            "// Auto-generated stub. Replaced once engine/platform/ios/ has sources.\n"
-            "namespace engine::platform::ios { void _samaIosPlatformStub() {} }\n")
-        set(_IOS_PLATFORM_SOURCES ${_IOS_PLATFORM_STUB})
-    endif()
 
     add_library(engine_platform_ios STATIC ${_IOS_PLATFORM_SOURCES})
     target_include_directories(engine_platform_ios PUBLIC ${SAMA_ROOT_DIR})
-    # Don't pull engine_rendering here: that library includes generated shader
-    # headers that don't exist on iOS until Phase C compiles Metal variants
-    # via the asset pipeline.  Agent B's iOS platform layer talks to bgfx
-    # directly.
+    # The platform layer talks to bgfx directly (window + Metal layer plumbing)
+    # AND publishes types that the engine consumes (IosFileSystem implements
+    # engine_assets's IFileSystem; IosTouchInput / IosGyro mutate engine_input
+    # state).  Pull those PUBLIC so games linking engine_platform_ios get the
+    # right include paths transitively.
     target_link_libraries(engine_platform_ios PUBLIC
         bgfx
         bx
         bimg
+        engine_input
+        engine_assets
         "-framework UIKit"
         "-framework QuartzCore"
         "-framework Metal"
         "-framework Foundation"
         "-framework CoreMotion"
     )
-    # Objective-C ARC for the .mm files Agent B is writing.
+    # Objective-C ARC for every .mm — the platform layer's headers document
+    # __unsafe_unretained semantics relative to ARC ownership of UIView /
+    # UIWindow.  Compiling without ARC would silently break that contract.
     set_source_files_properties(${_IOS_PLATFORM_SOURCES} PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
 
@@ -1459,20 +1597,33 @@ if(SAMA_IOS)
 
     add_executable(ios_test MACOSX_BUNDLE
         ${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
+        ${SAMA_ROOT_DIR}/apps/ios_test/main.mm
     )
     target_include_directories(ios_test PRIVATE ${SAMA_ROOT_DIR})
+    # Link the full engine stack so the smoke test can opt into engine_core /
+    # GameRunner once Agent Y's port lands.  bgfx / bx / bimg / Metal etc.
+    # come transitively via engine_platform_ios + engine_rendering, but we
+    # list the foundation frameworks explicitly so a build that strips one
+    # of those libs still links cleanly.
     target_link_libraries(ios_test PRIVATE
-        bgfx
-        bx
-        bimg
+        engine_core
+        engine_game
+        engine_rendering
+        engine_ui
+        engine_assets
+        engine_input
+        engine_input_ios
         engine_platform_ios
         "-framework UIKit"
         "-framework QuartzCore"
         "-framework Metal"
         "-framework MetalKit"
         "-framework Foundation"
+        "-framework CoreMotion"
     )
-    set_source_files_properties(${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
+    set_source_files_properties(
+        ${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
+        ${SAMA_ROOT_DIR}/apps/ios_test/main.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     set_target_properties(ios_test PROPERTIES
         BUNDLE                                         TRUE

@@ -77,21 +77,68 @@ if [ "${CLEAN}" = true ]; then
     rm -rf "${BUILD_DIR}"
 fi
 
+# ── Host shaderc ────────────────────────────────────────────────────────────
+# bgfx's shaderc tool is needed to compile Metal shader bytecode into the
+# generated/shaders/*_mtl.bin.h headers that engine_rendering #includes.  It
+# cannot be cross-compiled (it's a host build-time tool), so we either reuse
+# a shaderc built by a prior desktop configure, or do a minimal host build
+# ourselves.  Either path produces a path we hand to the iOS configure via
+# SAMA_HOST_SHADERC.
+#
+# Preferred locations (in order):
+#   1. ${PROJECT_ROOT}/build/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+#      — a normal desktop configure already produces this.
+#   2. ${PROJECT_ROOT}/build/host-shaderc/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+#      — fallback host build the script triggers when (1) is missing.
+
+HOST_SHADERC=""
+for _candidate in \
+    "${PROJECT_ROOT}/build/_deps/bgfx_cmake-build/cmake/bgfx/shaderc" \
+    "${PROJECT_ROOT}/build/host-shaderc/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+do
+    if [ -x "${_candidate}" ]; then
+        HOST_SHADERC="${_candidate}"
+        break
+    fi
+done
+
+if [ -z "${HOST_SHADERC}" ]; then
+    echo "[1/3] Building host shaderc (one-time, ~3 min)..."
+    HOST_BUILD_DIR="${PROJECT_ROOT}/build/host-shaderc"
+    # ASTC encoder's CMake refuses ISA_NATIVE under universal builds; we
+    # disable astcenc here since shaderc doesn't need it (texture compression
+    # is sama_asset_tool's job, not shaderc's).
+    cmake -S "${PROJECT_ROOT}" -B "${HOST_BUILD_DIR}" \
+        -DSAMA_BUILD_TESTS=OFF \
+        -DSAMA_BUILD_DEMOS=OFF \
+        -DSAMA_BUILD_EDITOR=OFF \
+        -DCMAKE_OSX_ARCHITECTURES="$(uname -m)"
+    cmake --build "${HOST_BUILD_DIR}" --target shaderc -j"$(sysctl -n hw.ncpu)"
+    HOST_SHADERC="${HOST_BUILD_DIR}/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+fi
+
+if [ ! -x "${HOST_SHADERC}" ]; then
+    echo "ERROR: host shaderc build did not produce ${HOST_SHADERC}" >&2
+    exit 1
+fi
+echo "  Host shaderc: ${HOST_SHADERC}"
+
 # ── Configure ───────────────────────────────────────────────────────────────
 
-echo "[1/2] Configuring (cmake -G Xcode)..."
+echo "[2/3] Configuring (cmake -G Xcode)..."
 cmake -S "${PROJECT_ROOT}" -B "${BUILD_DIR}" \
     -G Xcode \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_FILE}" \
     -DSAMA_IOS=ON \
     -DSAMA_IOS_PLATFORM=SIMULATOR \
+    -DSAMA_HOST_SHADERC="${HOST_SHADERC}" \
     -DSAMA_BUILD_TESTS=OFF \
     -DSAMA_BUILD_DEMOS=OFF \
     -DSAMA_BUILD_EDITOR=OFF
 
 # ── Build ───────────────────────────────────────────────────────────────────
 
-echo "[2/2] Building scheme '${TARGET}' for iphonesimulator..."
+echo "[3/3] Building scheme '${TARGET}' for iphonesimulator..."
 xcodebuild \
     -project "${BUILD_DIR}/Engine.xcodeproj" \
     -scheme "${TARGET}" \

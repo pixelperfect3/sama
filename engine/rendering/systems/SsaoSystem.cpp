@@ -1,5 +1,6 @@
 #include "engine/rendering/systems/SsaoSystem.h"
 
+#include <TargetConditionals.h>
 #include <bgfx/bgfx.h>
 
 #include <cmath>
@@ -13,14 +14,20 @@ bgfx::ProgramHandle loadSsaoProgram();
 #include <bgfx/embedded_shader.h>
 
 // Generated shader bytecode headers — produced by shaderc via CMake.
+// iOS only ships the Metal variants (BGFX_PLATFORM_SUPPORTS_{ESSL,GLSL,SPIRV}=0
+// on iOS so the BGFX_EMBEDDED_SHADER macro skips them); other Apple targets
+// + Linux + Windows still embed all four backends so a single binary can
+// target any GPU bgfx picks.
+#include "generated/shaders/fs_ssao_mtl.bin.h"
+#include "generated/shaders/vs_fullscreen_mtl.bin.h"
+#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
 #include "generated/shaders/fs_ssao_essl.bin.h"
 #include "generated/shaders/fs_ssao_glsl.bin.h"
-#include "generated/shaders/fs_ssao_mtl.bin.h"
 #include "generated/shaders/fs_ssao_spv.bin.h"
 #include "generated/shaders/vs_fullscreen_essl.bin.h"
 #include "generated/shaders/vs_fullscreen_glsl.bin.h"
-#include "generated/shaders/vs_fullscreen_mtl.bin.h"
 #include "generated/shaders/vs_fullscreen_spv.bin.h"
+#endif
 #endif
 
 namespace engine::rendering

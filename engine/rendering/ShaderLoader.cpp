@@ -155,87 +155,96 @@ bgfx::ProgramHandle loadSsaoProgram()
 
 }  // namespace engine::rendering
 
-#else  // Desktop — embedded shaders from generated headers
+#else  // Desktop / iOS — embedded shaders from generated headers
 
+#include <TargetConditionals.h>
 #include <bgfx/embedded_shader.h>
 
-// Generated shader bytecode headers (produced by shaderc via CMake custom commands).
+// Metal variants — required on every Apple target and statically referenced
+// from the BGFX_EMBEDDED_SHADER tables below.
+#include "generated/shaders/fs_gizmo_mtl.bin.h"
+#include "generated/shaders/fs_msdf_mtl.bin.h"
+#include "generated/shaders/fs_pbr_mtl.bin.h"
+#include "generated/shaders/fs_rounded_rect_mtl.bin.h"
+#include "generated/shaders/fs_shadow_mtl.bin.h"
+#include "generated/shaders/fs_skybox_mtl.bin.h"
+#include "generated/shaders/fs_slug_mtl.bin.h"
+#include "generated/shaders/fs_sprite_mtl.bin.h"
+#include "generated/shaders/fs_unlit_mtl.bin.h"
+#include "generated/shaders/vs_gizmo_mtl.bin.h"
+#include "generated/shaders/vs_pbr_mtl.bin.h"
+#include "generated/shaders/vs_pbr_skinned_mtl.bin.h"
+#include "generated/shaders/vs_rounded_rect_mtl.bin.h"
+#include "generated/shaders/vs_shadow_mtl.bin.h"
+#include "generated/shaders/vs_shadow_skinned_mtl.bin.h"
+#include "generated/shaders/vs_skybox_mtl.bin.h"
+#include "generated/shaders/vs_slug_mtl.bin.h"
+#include "generated/shaders/vs_sprite_mtl.bin.h"
+#include "generated/shaders/vs_unlit_mtl.bin.h"
+
+// ESSL / GLSL / SPIRV variants — desktop only.  iOS sets
+// BGFX_PLATFORM_SUPPORTS_{ESSL,GLSL,SPIRV}=0 on engine_rendering so the
+// BGFX_EMBEDDED_SHADER macro stops referencing these symbols, and we
+// correspondingly skip building the headers themselves.
+#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
 #include "generated/shaders/fs_gizmo_essl.bin.h"
 #include "generated/shaders/fs_gizmo_glsl.bin.h"
-#include "generated/shaders/fs_gizmo_mtl.bin.h"
 #include "generated/shaders/fs_gizmo_spv.bin.h"
 #include "generated/shaders/fs_msdf_essl.bin.h"
 #include "generated/shaders/fs_msdf_glsl.bin.h"
-#include "generated/shaders/fs_msdf_mtl.bin.h"
 #include "generated/shaders/fs_msdf_spv.bin.h"
 #include "generated/shaders/fs_pbr_essl.bin.h"
 #include "generated/shaders/fs_pbr_glsl.bin.h"
-#include "generated/shaders/fs_pbr_mtl.bin.h"
 #include "generated/shaders/fs_pbr_spv.bin.h"
 #include "generated/shaders/fs_rounded_rect_essl.bin.h"
 #include "generated/shaders/fs_rounded_rect_glsl.bin.h"
-#include "generated/shaders/fs_rounded_rect_mtl.bin.h"
 #include "generated/shaders/fs_rounded_rect_spv.bin.h"
 #include "generated/shaders/fs_shadow_essl.bin.h"
 #include "generated/shaders/fs_shadow_glsl.bin.h"
-#include "generated/shaders/fs_shadow_mtl.bin.h"
 #include "generated/shaders/fs_shadow_spv.bin.h"
 #include "generated/shaders/fs_skybox_essl.bin.h"
 #include "generated/shaders/fs_skybox_glsl.bin.h"
-#include "generated/shaders/fs_skybox_mtl.bin.h"
 #include "generated/shaders/fs_skybox_spv.bin.h"
 #include "generated/shaders/fs_slug_essl.bin.h"
 #include "generated/shaders/fs_slug_glsl.bin.h"
-#include "generated/shaders/fs_slug_mtl.bin.h"
 #include "generated/shaders/fs_slug_spv.bin.h"
 #include "generated/shaders/fs_sprite_essl.bin.h"
 #include "generated/shaders/fs_sprite_glsl.bin.h"
-#include "generated/shaders/fs_sprite_mtl.bin.h"
 #include "generated/shaders/fs_sprite_spv.bin.h"
 #include "generated/shaders/fs_unlit_essl.bin.h"
 #include "generated/shaders/fs_unlit_glsl.bin.h"
-#include "generated/shaders/fs_unlit_mtl.bin.h"
 #include "generated/shaders/fs_unlit_spv.bin.h"
 #include "generated/shaders/vs_gizmo_essl.bin.h"
 #include "generated/shaders/vs_gizmo_glsl.bin.h"
-#include "generated/shaders/vs_gizmo_mtl.bin.h"
 #include "generated/shaders/vs_gizmo_spv.bin.h"
 #include "generated/shaders/vs_pbr_essl.bin.h"
 #include "generated/shaders/vs_pbr_glsl.bin.h"
-#include "generated/shaders/vs_pbr_mtl.bin.h"
 #include "generated/shaders/vs_pbr_skinned_essl.bin.h"
 #include "generated/shaders/vs_pbr_skinned_glsl.bin.h"
-#include "generated/shaders/vs_pbr_skinned_mtl.bin.h"
 #include "generated/shaders/vs_pbr_skinned_spv.bin.h"
 #include "generated/shaders/vs_pbr_spv.bin.h"
 #include "generated/shaders/vs_rounded_rect_essl.bin.h"
 #include "generated/shaders/vs_rounded_rect_glsl.bin.h"
-#include "generated/shaders/vs_rounded_rect_mtl.bin.h"
 #include "generated/shaders/vs_rounded_rect_spv.bin.h"
 #include "generated/shaders/vs_shadow_essl.bin.h"
 #include "generated/shaders/vs_shadow_glsl.bin.h"
-#include "generated/shaders/vs_shadow_mtl.bin.h"
 #include "generated/shaders/vs_shadow_skinned_essl.bin.h"
 #include "generated/shaders/vs_shadow_skinned_glsl.bin.h"
-#include "generated/shaders/vs_shadow_skinned_mtl.bin.h"
 #include "generated/shaders/vs_shadow_skinned_spv.bin.h"
 #include "generated/shaders/vs_shadow_spv.bin.h"
 #include "generated/shaders/vs_skybox_essl.bin.h"
 #include "generated/shaders/vs_skybox_glsl.bin.h"
-#include "generated/shaders/vs_skybox_mtl.bin.h"
 #include "generated/shaders/vs_skybox_spv.bin.h"
 #include "generated/shaders/vs_slug_essl.bin.h"
 #include "generated/shaders/vs_slug_glsl.bin.h"
-#include "generated/shaders/vs_slug_mtl.bin.h"
 #include "generated/shaders/vs_slug_spv.bin.h"
 #include "generated/shaders/vs_sprite_essl.bin.h"
 #include "generated/shaders/vs_sprite_glsl.bin.h"
-#include "generated/shaders/vs_sprite_mtl.bin.h"
 #include "generated/shaders/vs_sprite_spv.bin.h"
 #include "generated/shaders/vs_unlit_essl.bin.h"
 #include "generated/shaders/vs_unlit_glsl.bin.h"
-#include "generated/shaders/vs_unlit_mtl.bin.h"
 #include "generated/shaders/vs_unlit_spv.bin.h"
+#endif
 
 namespace engine::rendering
 {
