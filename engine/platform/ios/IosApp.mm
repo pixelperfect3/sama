@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <memory>
 
+#include "engine/core/Engine.h"
+#include "engine/game/GameRunner.h"
 #include "engine/game/IGame.h"
 #include "engine/platform/ios/IosFileSystem.h"
 #include "engine/platform/ios/IosGlobals.h"
@@ -16,16 +18,14 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// Engine integration — TODO follow-up.
+// Engine integration.
 //
-// This file deliberately does NOT call into engine::core::Engine yet.  When
-// `Engine::initIos(IosWindow*, IosTouchInput*, IosGyro*, IosFileSystem*,
-// EngineDesc)` lands (mirroring `initAndroid`), the frame callback in
-// _SamaAppDelegate should construct the Engine + GameRunner the same way
-// AndroidApp / GameRunner::runAndroid does today.  Until then, this file
-// stands up the platform layer (window, input, gyro, file system) and a
-// CADisplayLink-driven tick so the wiring can be exercised in isolation by
-// the apps/ios_test stub.
+// `_SamaAppDelegate` owns the platform pieces (window, input, gyro, file
+// system), a `GameRunner` driving the iOS lifecycle (runIos at launch,
+// tickIos per CADisplayLink, shutdownIos at terminate), and the IGame
+// instance returned by `samaCreateGame()`.  Tear-down order on
+// applicationWillTerminate: tickIos signal -> shutdownIos -> delete game ->
+// release platform pieces.  Mirrors the Android lifecycle in AndroidApp.
 // ---------------------------------------------------------------------------
 
 #if defined(__APPLE__) && TARGET_OS_IPHONE
@@ -48,7 +48,8 @@
     std::unique_ptr<engine::platform::ios::IosGyro> _gyro;
     std::unique_ptr<engine::platform::ios::IosFileSystem> _fileSystem;
 
-    engine::game::IGame* _game;  // owned by this delegate, deleted on terminate
+    engine::game::IGame* _game;         // owned by this delegate, deleted on terminate
+    engine::game::GameRunner* _runner;  // owned by this delegate; references _game
 }
 
 @property(nonatomic, strong) UIWindow* uiWindow;
@@ -94,6 +95,28 @@
         std::fprintf(stderr, "Sama: samaCreateGame() returned null\n");
     }
 
+    // -- Show the window so the Metal-backed view goes on screen ----------
+    // GameRunner::runIos() init's bgfx against the CAMetalLayer below, but
+    // the layer must be in the view hierarchy first.
+    [self.uiWindow makeKeyAndVisible];
+
+    // -- Engine + GameRunner ---------------------------------------------
+    // EngineDesc is largely advisory on iOS — initIos reads dimensions
+    // from the IosWindow itself (UIScreen.mainScreen.bounds × scale).
+    if (_game != nullptr)
+    {
+        _runner = new engine::game::GameRunner(*_game);
+        engine::core::EngineDesc desc;
+        const int rc =
+            _runner->runIos(_window.get(), _touch.get(), _gyro.get(), _fileSystem.get(), desc);
+        if (rc != 0)
+        {
+            std::fprintf(stderr, "Sama: GameRunner::runIos failed (rc=%d)\n", rc);
+            delete _runner;
+            _runner = nullptr;
+        }
+    }
+
     // -- CADisplayLink (drives the per-frame tick) ------------------------
     // 60Hz default; high-tier devices that opted in via Info.plist's
     // CADisableMinimumFrameDurationOnPhone can negotiate a higher rate.
@@ -125,6 +148,16 @@
     [self.displayLink invalidate];
     self.displayLink = nil;
 
+    // GameRunner first: shutdownIos calls game.onShutdown then engine.shutdown
+    // (releases bgfx, framebuffers, shadow atlas, etc.).  Must run before the
+    // platform pieces it references go away.
+    if (_runner)
+    {
+        _runner->shutdownIos();
+        delete _runner;
+        _runner = nullptr;
+    }
+
     // Tear down in reverse construction order so the input overlay leaves
     // before the window, the gyro stops before its manager is freed, etc.
     if (_touch)
@@ -147,22 +180,22 @@
 
 - (void)onFrame:(CADisplayLink*)link
 {
-    // -- Per-frame engine tick goes here ---------------------------------
-    //
-    // Once Engine::initIos lands, this becomes the equivalent of the
-    // GameRunner::runLoop body: poll the window for resizes, drain gyro
-    // samples into the InputState, call game.onFixedUpdate / onUpdate /
-    // onRender, then submit the bgfx frame.
-    //
-    // For now we just keep the platform alive and let the apps/ios_test
-    // stub verify the wiring by inspecting the IosWindow / IosTouchInput
-    // state through IosGlobals.
-
     // Eagerly re-publish the view pointer in case it changed (e.g. after
     // a scene reconnect).  Cheap and idempotent.
     if (_window)
     {
         engine::platform::ios::setGameView(_window->nativeView());
+    }
+
+    // Drive one logical frame.  tickIos returns false once the engine has
+    // signalled exit (bgfx surface lost, etc.); we drop the display link
+    // rather than spinning so the OS can suspend us cleanly.
+    if (_runner)
+    {
+        if (!_runner->tickIos())
+        {
+            self.displayLink.paused = YES;
+        }
     }
 }
 
