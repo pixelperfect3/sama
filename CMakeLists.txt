@@ -944,6 +944,7 @@ add_executable(engine_tests
     tests/physics/TestRaycasting.cpp
     tests/physics/TestCollisionEvents.cpp
     tests/physics/TestShapeRegistry.cpp
+    tests/physics/TestShapeBehavior.cpp
     tests/audio/TestAudioComponents.cpp
     tests/audio/TestAudioSystem.cpp
     tests/audio/TestNullAudioEngine.cpp

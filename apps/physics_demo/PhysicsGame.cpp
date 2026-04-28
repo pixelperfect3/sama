@@ -222,6 +222,163 @@ void PhysicsGame::onInit(Engine& engine, Registry& registry)
         registry.emplace<ColliderComponent>(cubeEntities_[i], col);
     }
 
+    // -- Compound-shape "table" ----------------------------------------------
+    // One static body whose collider is a StaticCompoundShape of 5 boxes
+    // (4 legs + 1 tabletop). The visual side spawns 5 separate mesh-only
+    // entities at matching local poses so users can see the structure;
+    // physics is a single body referencing the shared compound shape.
+    {
+        Material woodMat;
+        woodMat.albedo = {0.5f, 0.3f, 0.15f, 1.0f};
+        woodMat.roughness = 0.7f;
+        uint32_t woodMatId = engine.resources().addMaterial(woodMat);
+
+        const glm::vec3 tableOrigin{-3.5f, 0.1f, -3.5f};
+        const float legHalf = 0.15f;
+        const float legHeight = 1.0f;
+        const float topHalfXZ = 0.9f;
+        const float topHalfY = 0.1f;
+        const float tabletopY = legHeight * 2.0f + topHalfY;
+
+        // Children in compound-local space (compound origin = tableOrigin).
+        const glm::vec3 legOffsets[4] = {{-0.7f, legHeight, -0.7f},
+                                         {0.7f, legHeight, -0.7f},
+                                         {-0.7f, legHeight, 0.7f},
+                                         {0.7f, legHeight, 0.7f}};
+
+        std::vector<engine::physics::IPhysicsEngine::CompoundChild> children;
+        for (const auto& off : legOffsets)
+        {
+            engine::physics::IPhysicsEngine::CompoundChild c;
+            c.shape = ColliderShape::Box;
+            c.localPosition = {off.x, off.y, off.z};
+            c.localRotation = {1.0f, 0.0f, 0.0f, 0.0f};
+            c.halfExtents = {legHalf, legHeight, legHalf};
+            children.push_back(c);
+        }
+        engine::physics::IPhysicsEngine::CompoundChild top;
+        top.shape = ColliderShape::Box;
+        top.localPosition = {0.0f, tabletopY, 0.0f};
+        top.localRotation = {1.0f, 0.0f, 0.0f, 0.0f};
+        top.halfExtents = {topHalfXZ, topHalfY, topHalfXZ};
+        children.push_back(top);
+
+        const uint32_t tableShapeID =
+            physics_.createCompoundShape(children.data(), children.size());
+
+        // Physics-only entity (no MeshComponent) at the compound origin.
+        EntityID tableBody = registry.createEntity();
+        TransformComponent ttc;
+        ttc.position = tableOrigin;
+        ttc.rotation = {1.0f, 0.0f, 0.0f, 0.0f};
+        ttc.scale = {1.0f, 1.0f, 1.0f};
+        ttc.flags = 1;
+        registry.emplace<TransformComponent>(tableBody, ttc);
+        registry.emplace<WorldTransformComponent>(tableBody);
+        RigidBodyComponent trb;
+        trb.type = BodyType::Static;
+        trb.mass = 0.0f;
+        trb.friction = 0.7f;
+        registry.emplace<RigidBodyComponent>(tableBody, trb);
+        ColliderComponent tcol;
+        tcol.shape = ColliderShape::Compound;
+        tcol.shapeID = tableShapeID;
+        registry.emplace<ColliderComponent>(tableBody, tcol);
+
+        // Visual-only entities at matching local poses (no rigid body).
+        auto spawnVisual = [&](glm::vec3 localOff, glm::vec3 halfExt)
+        {
+            EntityID v = registry.createEntity();
+            TransformComponent vtc;
+            vtc.position = tableOrigin + localOff;
+            vtc.rotation = {1.0f, 0.0f, 0.0f, 0.0f};
+            vtc.scale = halfExt * 2.0f;  // cube mesh is unit (±0.5) → scale = full extent
+            vtc.flags = 1;
+            registry.emplace<TransformComponent>(v, vtc);
+            registry.emplace<WorldTransformComponent>(v);
+            registry.emplace<MeshComponent>(v, cubeMeshId);
+            registry.emplace<MaterialComponent>(v, woodMatId);
+            registry.emplace<VisibleTag>(v);
+            registry.emplace<ShadowVisibleTag>(v, ShadowVisibleTag{0xFF});
+        };
+        for (const auto& off : legOffsets)
+            spawnVisual(off, {legHalf, legHeight, legHalf});
+        spawnVisual({0.0f, tabletopY, 0.0f}, {topHalfXZ, topHalfY, topHalfXZ});
+    }
+
+    // -- Mesh-shape "platform" -----------------------------------------------
+    // A flat rectangular slab built from a hand-crafted triangulated quad
+    // (4 verts, 2 tris). The same positions + indices are passed both to
+    // createMeshShape (collision) and to buildMesh (rendering), so the body
+    // and the visual stay perfectly aligned by construction.
+    {
+        const glm::vec3 platformOrigin{3.5f, 1.6f, 3.5f};
+        const float halfX = 1.2f;
+        const float halfZ = 1.2f;
+
+        // Local-space positions: a horizontal quad at y=0, CCW from above.
+        const float positions[12] = {
+            -halfX, 0.0f, -halfZ,  // 0
+            halfX,  0.0f, -halfZ,  // 1
+            halfX,  0.0f, halfZ,   // 2
+            -halfX, 0.0f, halfZ,   // 3
+        };
+        const uint32_t indices[6] = {0, 2, 1, 0, 3, 2};
+
+        const uint32_t platformShapeID = physics_.createMeshShape(positions, 4, indices, 6);
+
+        // Build a MeshData mirroring the same triangles for rendering.
+        // Normal = +Y; oct-encoded snorm16 = (0, 32767). Tangent = +X;
+        // oct-encoded as (255, 128, 128, 255). UVs span [0,1].
+        engine::rendering::MeshData md;
+        md.positions.assign(std::begin(positions), std::end(positions));
+        md.indices = {0, 2, 1, 0, 3, 2};
+        md.normals = {0, 32767, 0, 32767, 0, 32767, 0, 32767};
+        md.tangents = {255, 128, 128, 255, 255, 128, 128, 255,
+                       255, 128, 128, 255, 255, 128, 128, 255};
+        const glm::vec2 uvs[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+        md.uvs.reserve(8);
+        for (const auto& uv : uvs)
+        {
+            const uint32_t packed = glm::packHalf2x16(uv);
+            md.uvs.push_back(static_cast<uint16_t>(packed & 0xFFFF));
+            md.uvs.push_back(static_cast<uint16_t>(packed >> 16));
+        }
+        md.boundsMin = {-halfX, 0.0f, -halfZ};
+        md.boundsMax = {halfX, 0.0f, halfZ};
+        const uint32_t platformMeshId =
+            engine.resources().addMesh(engine::rendering::buildMesh(md));
+
+        Material slateMat;
+        slateMat.albedo = {0.4f, 0.45f, 0.55f, 1.0f};
+        slateMat.roughness = 0.4f;
+        slateMat.metallic = 0.1f;
+        const uint32_t slateMatId = engine.resources().addMaterial(slateMat);
+
+        EntityID platform = registry.createEntity();
+        TransformComponent ptc;
+        ptc.position = platformOrigin;
+        ptc.rotation = {1.0f, 0.0f, 0.0f, 0.0f};
+        ptc.scale = {1.0f, 1.0f, 1.0f};
+        ptc.flags = 1;
+        registry.emplace<TransformComponent>(platform, ptc);
+        registry.emplace<WorldTransformComponent>(platform);
+        registry.emplace<MeshComponent>(platform, platformMeshId);
+        registry.emplace<MaterialComponent>(platform, slateMatId);
+        registry.emplace<VisibleTag>(platform);
+        registry.emplace<ShadowVisibleTag>(platform, ShadowVisibleTag{0xFF});
+
+        RigidBodyComponent prb;
+        prb.type = BodyType::Static;
+        prb.mass = 0.0f;
+        prb.friction = 0.6f;
+        registry.emplace<RigidBodyComponent>(platform, prb);
+        ColliderComponent pcol;
+        pcol.shape = ColliderShape::Mesh;
+        pcol.shapeID = platformShapeID;
+        registry.emplace<ColliderComponent>(platform, pcol);
+    }
+
     // -- Light indicator ------------------------------------------------------
     const glm::vec3 kLightDir = glm::normalize(glm::vec3(1.0f, 2.0f, 1.0f));
     Material lightMat{};
