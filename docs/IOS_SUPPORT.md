@@ -92,26 +92,33 @@ bgfx supports Metal on iOS. The renderer requires zero shader changes — bgfx's
 
 ## Implementation Phases
 
-### Phase A — Xcode Project / CMake Integration
-- [ ] CMake toolchain for iOS cross-compilation (`CMAKE_SYSTEM_NAME=iOS`)
-- [ ] Xcode project generation via `cmake -G Xcode`
-- [ ] Minimum deployment target: iOS 15.0 (covers 95%+ of active devices)
-- [ ] Universal binary (arm64 only — armv7 dropped since iOS 11)
-- [ ] Info.plist template with bundle ID, version, orientation, etc.
-- [ ] bgfx Metal backend verification on iOS simulator
+### Phase A — Xcode Project / CMake Integration ✅
+- [x] CMake toolchain for iOS cross-compilation (`cmake/ios.toolchain.cmake`, `SAMA_IOS=ON`)
+- [x] Xcode project generation via `cmake -G Xcode -DSAMA_IOS=ON` (wrapped in `ios/build_ios.sh`)
+- [x] Minimum deployment target: iOS 15.0 (covers 95%+ of active devices)
+- [x] Universal binary (arm64 device + arm64/x86_64 simulator)
+- [x] Info.plist template with bundle ID, version, orientation, etc. (`ios/Info.plist.in`)
+- [x] bgfx Metal backend verification on iOS Simulator — purple clear → full PBR scene with helmet + shadows on iPhone 15 sim at ~67 fps
 
-### Phase B — iOS Platform Layer
-- [ ] `IosFileSystem` — reads from app bundle (`NSBundle.mainBundle`)
-- [ ] `IosWindow` — `UIWindow` + `CAMetalLayer` (bgfx handles via `PlatformData`)
-- [ ] `IosInput` — `UITouch` events mapped to `InputState`
-- [ ] `IosGyro` — `CMMotionManager` for gyroscope/accelerometer
-- [ ] App lifecycle: `UIApplicationDelegate` or `UIKit` scene lifecycle
-- [ ] Audio: SoLoud with CoreAudio backend (already supported)
+### Phase B — iOS Platform Layer ✅
+- [x] `IosFileSystem` — reads from app bundle (`NSBundle.mainBundle.resourcePath`); absolute-path fallback
+- [x] `IosWindow` — `UIWindow` + `CAMetalLayer`-backed `_SamaMetalView`; tracks `drawableSize = bounds × contentScaleFactor`
+- [x] `IosTouchInput` — `UITouch` overlay; multitouch slot-id reuse; first-touch-as-mouse mapping
+- [x] `IosGyro` — `CMMotionManager` `startDeviceMotionUpdatesUsingReferenceFrame:`; pull model (one sample per frame); zero on simulator (no IMU available)
+- [x] App lifecycle — `UIApplicationDelegate` (`_SamaAppDelegate`) with `CADisplayLink`; `Engine::initIos` + `GameRunner::{runIos,tickIos,shutdownIos}` wired through; pause on resignActive, resume on becomeActive
+- [x] `engine_rendering` builds for iOS — Metal-only shader headers retained, ESSL/GLSL/SPIRV gated out with `#if !TARGET_OS_IPHONE`; `BGFX_PLATFORM_SUPPORTS_ESSL=0` set on `engine_rendering`
+- [x] Sample app `apps/ios_test` mirrors `apps/android_test`: helmet scene, touch trail, multi-touch HUD, gyro hue cycling
+- [ ] Audio: SoLoud with CoreAudio backend — *not yet wired into `Engine::initIos`; deferred*
+
+#### Known cosmetic gap (Phase B follow-up)
+- The simulator screenshot shows the rendered scene tiling vertically (the HUD and helmet appear twice stacked). bgfx's framebuffer is correctly sized at retina (1179×2556 on iPhone 15), but either the bgfx view rectangle or `dbgTextPrintf`'s implicit grid is operating at point-size, producing the duplicate. Likely fix is one of: pass `BGFX_RESET_HIDPI` to `bgfx::reset`, or change `IosWindow::updateSize` to report point dimensions and let bgfx compute the retina backbuffer. Tracking as a follow-up — does not block Phase C/D.
 
 ### Phase C — Asset Pipeline for iOS
+- [x] Shader compilation to Metal shading language via bgfx `shaderc` — Metal-only `*_mtl.bin.h` generated for iOS via host-built `shaderc`; `BGFX_CONFIG_MAX_BONES=128` propagated to shader compile
+- [ ] App-bundle asset packaging — `apps/ios_test` ships `DamagedHelmet.glb` via `MACOSX_PACKAGE_LOCATION Resources` as a one-off; a project-level manifest-driven pipeline is still pending
 - [ ] `sama-asset-tool --target ios` support
-- [ ] Shader compilation to Metal shading language via bgfx `shaderc`
 - [ ] ASTC compression (same as Android — shared code)
+- [ ] Tier detection — `[UIDevice currentDevice].model` + `NSProcessInfo.processInfo.physicalMemory` lookup table mapping to low/mid/high
 - [ ] Asset catalog generation for app icons
 
 ### Phase D — IPA Packaging
