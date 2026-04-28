@@ -1625,6 +1625,16 @@ if(SAMA_IOS)
         ${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
         ${SAMA_ROOT_DIR}/apps/ios_test/main.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+
+    # Bundle runtime assets into the .app under Resources/ so IosFileSystem's
+    # [NSBundle mainBundle].resourcePath lookup finds them.
+    set(_IOS_TEST_BUNDLED_ASSETS
+        ${SAMA_ROOT_DIR}/assets/DamagedHelmet.glb
+    )
+    target_sources(ios_test PRIVATE ${_IOS_TEST_BUNDLED_ASSETS})
+    set_source_files_properties(${_IOS_TEST_BUNDLED_ASSETS}
+        PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+
     set_target_properties(ios_test PROPERTIES
         BUNDLE                                         TRUE
         MACOSX_BUNDLE_INFO_PLIST                       ${_IOS_TEST_INFOPLIST}
