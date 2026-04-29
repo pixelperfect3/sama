@@ -108,10 +108,10 @@ bgfx supports Metal on iOS. The renderer requires zero shader changes — bgfx's
 - [x] App lifecycle — `UIApplicationDelegate` (`_SamaAppDelegate`) with `CADisplayLink`; `Engine::initIos` + `GameRunner::{runIos,tickIos,shutdownIos}` wired through; pause on resignActive, resume on becomeActive
 - [x] `engine_rendering` builds for iOS — Metal-only shader headers retained, ESSL/GLSL/SPIRV gated out with `#if !TARGET_OS_IPHONE`; `BGFX_PLATFORM_SUPPORTS_ESSL=0` set on `engine_rendering`
 - [x] Sample app `apps/ios_test` mirrors `apps/android_test`: helmet scene, touch trail, multi-touch HUD, gyro hue cycling
-- [ ] Audio: SoLoud with CoreAudio backend — *not yet wired into `Engine::initIos`; deferred*
+- [x] Audio: SoLoud + miniaudio CoreAudio backend wired through `Engine::initIos`; falls back to `NullAudioEngine` if SoLoud init fails. `soloud_miniaudio.cpp` compiled as Obj-C++ on iOS (miniaudio's CoreAudio path uses `AVAudioSession` + `@autoreleasepool`).
 
-#### Known cosmetic gap (Phase B follow-up)
-- The simulator screenshot shows the rendered scene tiling vertically (the HUD and helmet appear twice stacked). bgfx's framebuffer is correctly sized at retina (1179×2556 on iPhone 15), but either the bgfx view rectangle or `dbgTextPrintf`'s implicit grid is operating at point-size, producing the duplicate. Likely fix is one of: pass `BGFX_RESET_HIDPI` to `bgfx::reset`, or change `IosWindow::updateSize` to report point dimensions and let bgfx compute the retina backbuffer. Tracking as a follow-up — does not block Phase C/D.
+#### Hi-DPI verified, no fix needed
+- Earlier worry that the simulator screenshot showed the scene tiling vertically turned out to be a misread of the framing: the gray band in the middle is the (small) ground plane's top surface, and the purple band below it is the sky visible *past* the back edge of the ground. Pixel-strip diff of the framebuffer (`/tmp/ios_hidpi_fixed.png`) confirms exactly one HUD, one helmet, one ground. bgfx's swap-chain is at the full retina resolution (`1179×2556` on iPhone 15) per the `IosWindow::updateSize` log + the bgfx Metal backend's `SwapChainMtl::resize` call to `setDrawableSize` — no `BGFX_RESET_HIDPI` is needed (Metal lacks that capability flag entirely). If a future demo wants more visible ground, scale the ground entity up rather than touching the renderer.
 
 ### Phase C — Asset Pipeline for iOS
 - [x] Shader compilation to Metal shading language via bgfx `shaderc` — Metal-only `*_mtl.bin.h` generated for iOS via host-built `shaderc`; `BGFX_CONFIG_MAX_BONES=128` propagated to shader compile
@@ -119,7 +119,7 @@ bgfx supports Metal on iOS. The renderer requires zero shader changes — bgfx's
 - [ ] JSON-driven asset manifest (parse `project.json` or sibling and forward to `sama_ios_bundle_assets`)
 - [ ] `sama-asset-tool --target ios` support
 - [ ] ASTC compression (same as Android — shared code)
-- [ ] Tier detection — `[UIDevice currentDevice].model` + `NSProcessInfo.processInfo.physicalMemory` lookup table mapping to low/mid/high
+- [x] Tier detection — `engine/platform/ios/IosTierDetect.{h,mm}` exposes `detectIosTier()` (sysctl `hw.machine` + `NSProcessInfo.physicalMemory`) returning `IosTier::{Low,Mid,High,Unknown}`; ~50 machine identifiers mapped, RAM-fallback for unknowns, simulator → High. `tests/platform/TestIosTierDetect.cpp` covers identifier table + RAM-heuristic boundaries (9 cases / 66 asserts). Integration into `Engine::initIos`/`ProjectConfig::activeTier` still pending — call site documented in the header.
 - [ ] Asset catalog generation for app icons
 
 ### Phase D — IPA Packaging
