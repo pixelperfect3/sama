@@ -53,6 +53,11 @@ class IosTouchInput;
 class IosGyro;
 class IosFileSystem;
 }  // namespace engine::platform::ios
+
+namespace engine::audio
+{
+class IAudioEngine;
+}  // namespace engine::audio
 #endif
 
 namespace engine::core
@@ -170,6 +175,22 @@ public:
     {
         return *frameArena_;
     }
+
+#if ENGINE_IS_IOS
+    // Audio engine — owned by Engine on iOS so games get a working
+    // IAudioEngine without having to construct one themselves.  Backed by
+    // SoLoud's miniaudio backend (which uses CoreAudio on Apple platforms);
+    // falls back to NullAudioEngine if SoLoud init fails (e.g. simulator
+    // without an audio route).  Always non-null after initIos() succeeds.
+    [[nodiscard]] audio::IAudioEngine& audio()
+    {
+        return *audio_;
+    }
+    [[nodiscard]] const audio::IAudioEngine& audio() const
+    {
+        return *audio_;
+    }
+#endif
 
     // ----- Shader programs (loaded once at init) -----
 
@@ -290,6 +311,14 @@ private:
 
     // Frame arena
     std::unique_ptr<memory::FrameArena> frameArena_;
+
+#if ENGINE_IS_IOS
+    // Audio engine (iOS only — desktop / Android apps construct their own
+    // SoLoudAudioEngine).  Always non-null after initIos() succeeds, even
+    // if SoLoud failed to open an output device (we fall back to
+    // NullAudioEngine in that case so games can call audio() unconditionally).
+    std::unique_ptr<audio::IAudioEngine> audio_;
+#endif
 
     // DPI content scale
     float contentScaleX_ = 1.f;

@@ -36,6 +36,8 @@
 #else  // iOS
 #include <bgfx/platform.h>
 
+#include "engine/audio/NullAudioEngine.h"
+#include "engine/audio/SoLoudAudioEngine.h"
 #include "engine/input/ios/IosInputBackend.h"
 #include "engine/platform/ios/IosFileSystem.h"
 #include "engine/platform/ios/IosGyro.h"
@@ -693,6 +695,29 @@ bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchIn
     // -- Frame arena ------------------------------------------------------
     frameArena_ = std::make_unique<memory::FrameArena>(desc.frameArenaSize);
 
+    // -- Audio (SoLoud via miniaudio -> CoreAudio) ------------------------
+    // SoLoud's miniaudio backend automatically picks the CoreAudio path on
+    // Apple platforms; no iOS-specific configuration is required here.  On
+    // the simulator audio routing may be unavailable, in which case
+    // SoLoudAudioEngine::init() returns false and we fall back to the
+    // NullAudioEngine so games can still call audio.play() without crashing
+    // (silence is acceptable on the simulator).
+    {
+        auto soloud = std::make_unique<audio::SoLoudAudioEngine>();
+        if (soloud->init())
+        {
+            audio_ = std::move(soloud);
+        }
+        else
+        {
+            // SoLoud failed to open an output device -- surface as silence.
+            soloud.reset();
+            auto null_audio = std::make_unique<audio::NullAudioEngine>();
+            null_audio->init();
+            audio_ = std::move(null_audio);
+        }
+    }
+
     // -- Timing -----------------------------------------------------------
     using Clock = std::chrono::steady_clock;
     auto now = Clock::now();
@@ -725,6 +750,14 @@ void Engine::shutdown()
 
     renderer_.endFrame();
     renderer_.shutdown();
+
+    // Audio: shut down before tearing down platform pointers.  Both backends
+    // (SoLoud + Null) are safe to shutdown() even if init failed.
+    if (audio_)
+    {
+        audio_->shutdown();
+        audio_.reset();
+    }
 
     inputSys_.reset();
     inputBackend_.reset();

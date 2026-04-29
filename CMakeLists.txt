@@ -918,6 +918,24 @@ if(APPLE)
     )
 endif()
 
+if(SAMA_IOS)
+    # miniaudio's CoreAudio backend uses Objective-C (AVAudioSession,
+    # @autoreleasepool) on iOS — compile soloud_miniaudio.cpp (which
+    # includes the miniaudio implementation via MINIAUDIO_IMPLEMENTATION)
+    # as Objective-C++ so that code path builds.  ARC is enabled to match
+    # the rest of the iOS surface area (engine_platform_ios uses -fobjc-arc).
+    set_source_files_properties(
+        ${SAMA_ROOT_DIR}/third_party/soloud_patches/soloud_miniaudio.cpp
+        PROPERTIES COMPILE_FLAGS "-x objective-c++ -fobjc-arc")
+    # AVFoundation provides AVAudioSession; CoreFoundation is required for
+    # Apple's framework-linking invariants when MA_NO_RUNTIME_LINKING is set
+    # by default for static-link builds.
+    target_link_libraries(engine_audio PUBLIC
+        "-framework AVFoundation"
+        "-framework CoreFoundation"
+    )
+endif()
+
 # --- engine_physics static library ---
 add_library(engine_physics STATIC
     engine/physics/JoltPhysicsEngine.cpp
@@ -1342,6 +1360,7 @@ add_library(engine_core STATIC engine/core/Engine.cpp)
 target_include_directories(engine_core PUBLIC ${SAMA_ROOT_DIR})
 if(SAMA_IOS)
     target_link_libraries(engine_core PUBLIC
+        engine_audio
         engine_input
         engine_input_ios
         engine_memory
@@ -1626,6 +1645,7 @@ if(SAMA_IOS)
         engine_rendering
         engine_ui
         engine_assets
+        engine_audio
         engine_input
         engine_input_ios
         engine_platform_ios
@@ -1635,6 +1655,9 @@ if(SAMA_IOS)
         "-framework MetalKit"
         "-framework Foundation"
         "-framework CoreMotion"
+        "-framework AVFoundation"
+        "-framework AudioToolbox"
+        "-framework CoreAudio"
     )
     set_source_files_properties(
         ${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
