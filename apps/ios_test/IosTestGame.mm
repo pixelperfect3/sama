@@ -53,6 +53,9 @@
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
 #include "engine/ui/DebugHud.h"
+#include "engine/ui/MsdfFont.h"
+#include "engine/ui/UiDrawList.h"
+#include "engine/ui/UiRenderer.h"
 
 using namespace engine::core;
 using namespace engine::ecs;
@@ -132,6 +135,25 @@ public:
         assetManager_ = std::make_unique<engine::assets::AssetManager>(*threadPool_, *fileSystem_);
         assetManager_->registerLoader(std::make_unique<engine::assets::TextureLoader>());
         assetManager_->registerLoader(std::make_unique<engine::assets::GltfLoader>());
+
+        // MSDF text — load ChunkFive from the app bundle (bundled by
+        // SamaIosAssets.cmake). Renders on its own UI view above the HUD.
+        // fileSystem_ is constructed above; this must run after it.
+        uiRenderer_.init();
+        if (fileSystem_)
+        {
+            const auto json = fileSystem_->read("fonts/ChunkFive-msdf.json");
+            const auto png = fileSystem_->read("fonts/ChunkFive-msdf.png");
+            std::fprintf(stderr, "[ios_test] MSDF font bytes: json=%zu png=%zu\n", json.size(),
+                         png.size());
+            if (!json.empty() && !png.empty())
+            {
+                const bool ok =
+                    msdfFont_.loadFromMemory(json.data(), json.size(), png.data(), png.size());
+                std::fprintf(stderr, "[ios_test] msdfFont_.loadFromMemory: %s, glyphs=%zu\n",
+                             ok ? "ok" : "FAILED", msdfFont_.glyphCount());
+            }
+        }
 
         // Procedural sky/ground IBL — gives the helmet realistic env reflections.
         ibl_.generateDefault();
@@ -481,6 +503,23 @@ public:
         hud_.printf(2, row++, helmetColor, "DamagedHelmet.glb: %s", helmetStatus);
 
         hud_.end();
+
+        // --- MSDF text overlay -----------------------------------------------
+        // Vector text on top of the bitmap HUD — mirrors AndroidTestGame's
+        // "ChunkFive MSDF: The quick brown fox!" line.  Renders only if the
+        // font loaded successfully in onInit (otherwise glyphCount == 0).
+        if (msdfFont_.glyphCount() > 0)
+        {
+            drawList_.clear();
+            const glm::vec4 yellow{1.0f, 0.95f, 0.4f, 1.0f};
+            const float fontSize = 32.0f;
+            const float xPos = 40.0f;
+            const float yPos = static_cast<float>(fbH) - 80.0f;
+            drawList_.drawText({xPos, yPos}, "ChunkFive MSDF: The quick brown fox!", yellow,
+                               &msdfFont_, fontSize);
+            uiRenderer_.render(drawList_, kViewGameUi, static_cast<uint16_t>(fbW),
+                               static_cast<uint16_t>(fbH));
+        }
     }
 
     void onShutdown(Engine& engine, Registry& registry) override
@@ -509,6 +548,13 @@ private:
     // Platform-agnostic debug text overlay (works on iOS via UiRenderer +
     // BitmapFont). Replaces Android's hand-rolled UiDrawList.
     engine::ui::DebugHud hud_;
+
+    // Vector text overlay — MsdfFont rendered through UiRenderer on view
+    // kViewGameUi.  Loaded from the app bundle in onInit and drawn each
+    // frame after the HUD; falls through silently if the font is missing.
+    engine::ui::UiRenderer uiRenderer_;
+    engine::ui::MsdfFont msdfFont_;
+    engine::ui::UiDrawList drawList_;
 
     // PBR scene — DamagedHelmet on a ground plane, lit by an orbiting light.
     engine::scene::TransformSystem transformSys_;
