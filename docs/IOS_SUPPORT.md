@@ -115,7 +115,8 @@ bgfx supports Metal on iOS. The renderer requires zero shader changes — bgfx's
 
 ### Phase C — Asset Pipeline for iOS
 - [x] Shader compilation to Metal shading language via bgfx `shaderc` — Metal-only `*_mtl.bin.h` generated for iOS via host-built `shaderc`; `BGFX_CONFIG_MAX_BONES=128` propagated to shader compile
-- [ ] App-bundle asset packaging — `apps/ios_test` ships `DamagedHelmet.glb` via `MACOSX_PACKAGE_LOCATION Resources` as a one-off; a project-level manifest-driven pipeline is still pending
+- [x] App-bundle asset packaging (intermediate form) — `cmake/SamaIosAssets.cmake` exposes `sama_ios_bundle_assets(TARGET ASSETS_ROOT ASSETS ...)` which takes a list of asset paths relative to `assets/`, validates each at configure time, calls `target_sources()` so Xcode tracks edits, and sets `MACOSX_PACKAGE_LOCATION` per file to preserve subdirectories (e.g. `fonts/JetBrainsMono-msdf.png` lands at `Resources/fonts/JetBrainsMono-msdf.png`). `apps/ios_test` consumes the helper directly with an inline asset list — a JSON manifest (sibling to `project.json` / `ProjectConfig`) and per-tier filtering can be layered on top by computing the list before the call without changing the helper.
+- [ ] JSON-driven asset manifest (parse `project.json` or sibling and forward to `sama_ios_bundle_assets`)
 - [ ] `sama-asset-tool --target ios` support
 - [ ] ASTC compression (same as Android — shared code)
 - [ ] Tier detection — `[UIDevice currentDevice].model` + `NSProcessInfo.processInfo.physicalMemory` lookup table mapping to low/mid/high
