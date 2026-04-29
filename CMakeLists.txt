@@ -1152,6 +1152,20 @@ add_executable(engine_tests
     engine/platform/android/VirtualJoystick.cpp
 )
 
+# iOS tier detection — implementation is Objective-C++ (.mm) but compiles
+# fine on macOS (sysctlbyname + NSProcessInfo are both available).  Adding
+# the source to the host test binary lets us exercise the lookup table on
+# the dev Mac without needing a device or simulator.
+if(APPLE AND NOT SAMA_IOS)
+    target_sources(engine_tests PRIVATE
+        tests/platform/TestIosTierDetect.cpp
+        engine/platform/ios/IosTierDetect.mm
+    )
+    set_source_files_properties(engine/platform/ios/IosTierDetect.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(engine_tests PRIVATE "-framework Foundation")
+endif()
+
 target_link_libraries(engine_tests PRIVATE engine_assets engine_physics engine_audio engine_game engine_ui engine_asset_tool Catch2::Catch2WithMain)
 
 target_include_directories(engine_tests PRIVATE ${stb_SOURCE_DIR})
@@ -1551,6 +1565,7 @@ if(SAMA_IOS)
         ${SAMA_ROOT_DIR}/engine/platform/ios/IosFileSystem.mm
         ${SAMA_ROOT_DIR}/engine/platform/ios/IosGlobals.mm
         ${SAMA_ROOT_DIR}/engine/platform/ios/IosGyro.mm
+        ${SAMA_ROOT_DIR}/engine/platform/ios/IosTierDetect.mm
         ${SAMA_ROOT_DIR}/engine/platform/ios/IosTouchInput.mm
         ${SAMA_ROOT_DIR}/engine/platform/ios/IosWindow.mm
     )
