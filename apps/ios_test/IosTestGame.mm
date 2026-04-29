@@ -169,7 +169,7 @@ public:
         groundMeshId_ = engine.resources().addMesh(std::move(cubeMesh));
 
         Material groundMat;
-        groundMat.albedo = {0.85f, 0.82f, 0.78f, 1.0f};  // light beige for shadow contrast
+        groundMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};  // pure white — maximum shadow contrast
         groundMat.roughness = 0.9f;
         groundMat.metallic = 0.0f;
         groundMatId_ = engine.resources().addMaterial(groundMat);
@@ -354,15 +354,11 @@ public:
         const glm::mat4 viewMat = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
-        // Orbiting directional light. Elevation 0.55 keeps the light fairly
-        // high so it doesn't dip below the horizon. NOTE: must NOT be
-        // (0, 1, 0) — lookAt(lightPos, origin, up=(0,1,0)) is degenerate
-        // when the look direction is parallel to up, producing NaN matrices.
-        const float lightAngle = elapsed_ * 0.45f;
-        const float kLightElevation = 0.55f;
-        const float cosE = std::sqrt(1.0f - kLightElevation * kLightElevation);
-        const glm::vec3 kLightDir = glm::normalize(
-            glm::vec3(cosE * std::sin(lightAngle), kLightElevation, cosE * std::cos(lightAngle)));
+        // Fixed directional light from upper-front-right.  Locked (not
+        // orbiting) so the cast shadow on the ground is in a predictable
+        // place — easier to spot during development.  Avoids the
+        // (0, 1, 0) degeneracy of lookAt(origin, origin, up=(0,1,0)).
+        const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.6f, 1.2f, 0.8f));
         constexpr float kLightIntens = 18.0f;
 
         // Move the light indicator cube to follow the directional light.
@@ -387,6 +383,23 @@ public:
         // Shadow pass — depth-only into cascade 0.
         engine.shadow().beginCascade(0, lightView, lightProj);
         drawCallSys_.submitShadowDrawCalls(registry, engine.resources(), engine.shadowProgram(), 0);
+
+        // One-shot shadow diagnostic at frame 100.
+        if (frameCount_ == 100)
+        {
+            int casters = 0;
+            registry.view<ShadowVisibleTag, MeshComponent>().each(
+                [&](EntityID, const ShadowVisibleTag&, const MeshComponent&) { ++casters; });
+            const auto atlas = engine.shadow().atlasTexture();
+            const glm::mat4 sm = engine.shadow().shadowMatrix(0);
+            std::fprintf(stderr,
+                         "[ios_test shadow] casters=%d atlasValid=%d "
+                         "shadowMat[0]=(%.2f,%.2f,%.2f,%.2f) lightDir=(%.2f,%.2f,%.2f) "
+                         "shadowProgValid=%d\n",
+                         casters, bgfx::isValid(atlas), sm[0][0], sm[0][1], sm[0][2], sm[0][3],
+                         kLightDir.x, kLightDir.y, kLightDir.z,
+                         bgfx::isValid(engine.shadowProgram()));
+        }
 
         // Opaque PBR pass.
         const auto W = engine.fbWidth();
@@ -508,18 +521,32 @@ public:
         // Vector text on top of the bitmap HUD — mirrors AndroidTestGame's
         // "ChunkFive MSDF: The quick brown fox!" line.  Renders only if the
         // font loaded successfully in onInit (otherwise glyphCount == 0).
+        drawList_.clear();
         if (msdfFont_.glyphCount() > 0)
         {
-            drawList_.clear();
             const glm::vec4 yellow{1.0f, 0.95f, 0.4f, 1.0f};
             const float fontSize = 32.0f;
             const float xPos = 40.0f;
             const float yPos = static_cast<float>(fbH) - 80.0f;
             drawList_.drawText({xPos, yPos}, "ChunkFive MSDF: The quick brown fox!", yellow,
                                &msdfFont_, fontSize);
-            uiRenderer_.render(drawList_, kViewGameUi, static_cast<uint16_t>(fbW),
-                               static_cast<uint16_t>(fbH));
         }
+        // Debug: draw the shadow atlas top-right corner so we can see if the
+        // depth pass actually wrote anything into it.  If the atlas is empty
+        // (uniform black or white), the shadow path is broken upstream.
+        const auto debugAtlas = engine.shadow().atlasTexture();
+        if (bgfx::isValid(debugAtlas))
+        {
+            const float panel = 360.0f;
+            const float xRight = static_cast<float>(fbW) - panel - 30.0f;
+            const float yTop = 30.0f;
+            drawList_.drawRect({xRight - 4.0f, yTop - 4.0f}, {panel + 8.0f, panel + 8.0f},
+                               {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            drawList_.drawTexturedRect({xRight, yTop}, {panel, panel}, debugAtlas, {0, 0, 1, 1},
+                                       {1, 1, 1, 1});
+        }
+        uiRenderer_.render(drawList_, kViewGameUi, static_cast<uint16_t>(fbW),
+                           static_cast<uint16_t>(fbH));
     }
 
     void onShutdown(Engine& engine, Registry& registry) override
