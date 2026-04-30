@@ -34,6 +34,7 @@
 #include "engine/assets/TextureLoader.h"
 #include "engine/ecs/Registry.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ShaderUniforms.h"
@@ -176,10 +177,11 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
                                  static_cast<float>(fx.width()) / static_cast<float>(fx.height()),
                                  0.05f, 50.f);
 
-    bgfx::setViewFrameBuffer(kViewOpaque, fx.captureFb());
-    bgfx::setViewRect(kViewOpaque, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
-    bgfx::setViewTransform(kViewOpaque, &view[0][0], &proj[0][0]);
+    RenderPass(kViewOpaque)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(0x1A1A2EFF)
+        .transform(view, proj);
 
     constexpr float kLightIntens = 8.0f;
     const float lightData[8] = {

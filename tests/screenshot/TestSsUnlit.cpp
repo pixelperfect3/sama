@@ -4,6 +4,7 @@
 #include "GoldenCompare.h"
 #include "ScreenshotFixture.h"
 #include "engine/rendering/MeshBuilder.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ShaderUniforms.h"
@@ -26,11 +27,11 @@ TEST_CASE("screenshot: unlit flat-color cube", "[screenshot]")
     auto proj = glm::perspective(glm::radians(60.0f), static_cast<float>(fx.width()) / fx.height(),
                                  0.1f, 100.0f);
 
-    bgfx::setViewFrameBuffer(engine::rendering::kViewOpaque, fx.captureFb());
-    bgfx::setViewRect(engine::rendering::kViewOpaque, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(engine::rendering::kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
-                       0x303030ff, 1.0f, 0);
-    bgfx::setViewTransform(engine::rendering::kViewOpaque, &view[0][0], &proj[0][0]);
+    engine::rendering::RenderPass(engine::rendering::kViewOpaque)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(0x303030ff)
+        .transform(view, proj);
 
     // Draw cube
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};

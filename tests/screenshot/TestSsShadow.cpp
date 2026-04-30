@@ -12,6 +12,7 @@
 #include "ScreenshotFixture.h"
 #include "engine/math/Types.h"
 #include "engine/rendering/MeshBuilder.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ShaderUniforms.h"
@@ -73,11 +74,11 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
     // Opaque pass (view 9)
     // -----------------------------------------------------------------------
 
-    bgfx::setViewFrameBuffer(engine::rendering::kViewOpaque, fx.captureFb());
-    bgfx::setViewRect(engine::rendering::kViewOpaque, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(engine::rendering::kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
-                       0x404040ff, 1.0f, 0);
-    bgfx::setViewTransform(engine::rendering::kViewOpaque, &view[0][0], &proj[0][0]);
+    engine::rendering::RenderPass(engine::rendering::kViewOpaque)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(0x404040ff)
+        .transform(view, proj);
 
     // Shadow matrix and shadow atlas are set per-draw (bgfx state is consumed by submit).
     auto shadowMat = shadow.shadowMatrix(0);

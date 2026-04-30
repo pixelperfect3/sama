@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <vector>
+
+#include "engine/rendering/HandleTypes.h"
 struct GLFWwindow;
 
 namespace engine::screenshot
@@ -61,9 +63,11 @@ public:
     }
 
     // Render-target framebuffer — bind to any view as the output target.
-    bgfx::FrameBufferHandle captureFb() const
+    // Returned via the engine wrapper so tests can pass it straight to
+    // engine::rendering::RenderPass::framebuffer() without seeing bgfx types.
+    engine::rendering::FrameBufferHandle captureFb() const
     {
-        return captureFb_;
+        return {captureFb_.idx};
     }
 
     // After all draw calls are submitted for this frame, call captureFrame().

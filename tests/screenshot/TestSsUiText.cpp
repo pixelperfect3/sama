@@ -16,6 +16,7 @@
 
 #include "GoldenCompare.h"
 #include "ScreenshotFixture.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/ui/BitmapFont.h"
 #include "engine/ui/IFont.h"
@@ -68,9 +69,10 @@ void renderSample(engine::ui::IFont* font, const char* goldenName,
                 12.f);
 
     const auto viewId = engine::rendering::kViewGameUi;
-    bgfx::setViewFrameBuffer(viewId, fx.captureFb());
-    bgfx::setViewRect(viewId, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x101018ff, 1.0f, 0);
+    engine::rendering::RenderPass(viewId)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(0x101018ff);
 
     renderer.render(dl, viewId, fx.width(), fx.height());
 

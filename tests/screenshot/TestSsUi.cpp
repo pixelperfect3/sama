@@ -10,6 +10,7 @@
 #include "ScreenshotFixture.h"
 #include "engine/ecs/Registry.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ShaderUniforms.h"
@@ -26,10 +27,10 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
     bgfx::ProgramHandle spriteProgram = engine::rendering::loadSpriteProgram();
 
     // Set up the UI view target
-    bgfx::setViewFrameBuffer(engine::rendering::kViewUi, fx.captureFb());
-    bgfx::setViewRect(engine::rendering::kViewUi, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(engine::rendering::kViewUi, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x202020ff,
-                       1.0f, 0);
+    engine::rendering::RenderPass(engine::rendering::kViewUi)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(0x202020ff);
 
     engine::ecs::Registry reg;
     engine::rendering::RenderResources res;
@@ -70,9 +71,9 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
     // background, so restore the clear and framebuffer after the system runs.
     uiSys.update(reg, res, spriteProgram, uniforms.s_albedo, static_cast<uint16_t>(fx.width()),
                  static_cast<uint16_t>(fx.height()));
-    bgfx::setViewFrameBuffer(engine::rendering::kViewUi, fx.captureFb());
-    bgfx::setViewClear(engine::rendering::kViewUi, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
-                       0x202020ff, 1.0f, 0);
+    engine::rendering::RenderPass(engine::rendering::kViewUi)
+        .framebuffer(fx.captureFb())
+        .clearColorAndDepth(0x202020ff);
 
     auto pixels = fx.captureFrame();
 

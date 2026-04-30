@@ -13,6 +13,7 @@
 
 #include "GoldenCompare.h"
 #include "ScreenshotFixture.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/ui/BitmapFont.h"
 #include "engine/ui/MsdfFont.h"
@@ -47,10 +48,10 @@ std::string findRepoFile(const char* relPath)
 // Helper: clear + viewport setup for the offscreen UI view.
 void prepareUiView(engine::screenshot::ScreenshotFixture& fx, uint32_t clearColor = 0x101018ff)
 {
-    const auto viewId = engine::rendering::kViewGameUi;
-    bgfx::setViewFrameBuffer(viewId, fx.captureFb());
-    bgfx::setViewRect(viewId, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor, 1.0f, 0);
+    engine::rendering::RenderPass(engine::rendering::kViewGameUi)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(clearColor);
 }
 
 }  // namespace

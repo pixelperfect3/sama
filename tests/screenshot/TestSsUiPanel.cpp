@@ -6,6 +6,7 @@
 
 #include "GoldenCompare.h"
 #include "ScreenshotFixture.h"
+#include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/ui/UiCanvas.h"
 #include "engine/ui/UiRenderer.h"
@@ -38,9 +39,10 @@ TEST_CASE("screenshot: UI panel rendering", "[screenshot]")
 
     // Set up the view.
     const auto viewId = engine::rendering::kViewGameUi;
-    bgfx::setViewFrameBuffer(viewId, fx.captureFb());
-    bgfx::setViewRect(viewId, 0, 0, fx.width(), fx.height());
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x202020ff, 1.0f, 0);
+    engine::rendering::RenderPass(viewId)
+        .framebuffer(fx.captureFb())
+        .rect(0, 0, fx.width(), fx.height())
+        .clearColorAndDepth(0x202020ff);
 
     renderer.render(canvas.drawList(), viewId, fx.width(), fx.height());
 
