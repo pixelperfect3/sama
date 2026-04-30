@@ -1283,6 +1283,23 @@ if(APPLE)
     )
 endif()
 
+# ---------------------------------------------------------------------------
+# bgfx-leakage guard — fail (as CTest tests, not part of the regular build)
+# if any of the listed engine headers transitively pull in <bgfx/bgfx.h>.
+# These headers form the boundary that game and downstream module code is
+# allowed to consume; pulling bgfx into them defeats the abstraction.
+# ---------------------------------------------------------------------------
+enable_testing()
+include(${CMAKE_SOURCE_DIR}/cmake/SamaForbidBgfx.cmake)
+sama_forbid_bgfx_in_target(forbid_bgfx_RenderPass_h
+    engine_rendering engine/rendering/RenderPass.h)
+sama_forbid_bgfx_in_target(forbid_bgfx_ViewIds_h
+    engine_rendering engine/rendering/ViewIds.h)
+sama_forbid_bgfx_in_target(forbid_bgfx_HandleTypes_h
+    engine_rendering engine/rendering/HandleTypes.h)
+sama_forbid_bgfx_in_target(forbid_bgfx_FrameStats_h
+    engine_rendering engine/rendering/FrameStats.h)
+
 endif()  # SAMA_BUILD_TESTS (engine_tests + engine_screenshot_tests)
 
 # --- engine_input static library ---

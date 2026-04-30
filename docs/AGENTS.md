@@ -2023,9 +2023,40 @@ Game code should never call `bgfx::` functions directly. Use engine abstractions
 | Instead of | Use |
 |---|---|
 | `bgfx::setViewClear(0, ...)` | `engine.setClearColor(rgba)` |
+| `bgfx::setViewName(view, "label")` | `RenderPass(view).name("label")` |
+| `bgfx::setViewClear(view, BGFX_CLEAR_COLOR, rgba, ...)` | `RenderPass(view).clearColor(rgba)` |
+| `bgfx::setViewClear(view, BGFX_CLEAR_NONE)` | `RenderPass(view).clearNone()` |
 | `bgfx::setViewRect` + `bgfx::touch` + `uiRenderer.render()` | Just `uiRenderer.render(drawList, viewId, w, h)` — view setup is internal |
 | `bgfx::dbgTextPrintf()` | `engine::ui::DebugHud` (works on Android too) |
 | `bgfx::createTexture2D` (white fallback) | `engine.resources().whiteTex` |
+| `bgfx::setDebug(BGFX_DEBUG_PROFILER)` + manual `bgfx::Stats` math | `engine::rendering::enableGpuProfiler()` + `sampleFrameStats()` |
+| `bgfx::ViewId` typedef | `engine::rendering::ViewId` (same `uint16_t`, no bgfx include) |
+| `bgfx::FrameBufferHandle` argument to `RenderPass::framebuffer()` | `engine::rendering::FrameBufferHandle{handle.idx}` (or default-construct for backbuffer) |
+
+**Perf overlay — before/after:**
+
+```cpp
+// Before — pulls in <bgfx/bgfx.h>, manual unit conversion, manual artifact filter:
+const bgfx::Stats* s = bgfx::getStats();
+const double cpuFreq = static_cast<double>(s->cpuTimerFreq);
+const double frameCpuMs = 1000.0 * (s->cpuTimeEnd - s->cpuTimeBegin) / cpuFreq;
+for (uint16_t i = 0; i < s->numViews; ++i) {
+    const bgfx::ViewStats& v = s->viewStats[i];
+    if (v.name[0] == '\0') continue;
+    const double passCpuMs = 1000.0 * (v.cpuTimeEnd - v.cpuTimeBegin) / cpuFreq;
+    // ...print...
+}
+
+// After — no bgfx include, no manual conversions, gpuValid flag is set for you:
+#include "engine/rendering/FrameStats.h"
+engine::rendering::enableGpuProfiler();              // call once, idempotent
+
+const auto fs = engine::rendering::sampleFrameStats();
+print("CPU %5.2f ms   GPU %5.2f ms   Draws %4u", fs.cpuMs, fs.gpuMs, fs.numDraw);
+for (const auto& p : fs.passes)
+    print("%-18s %8.2f %s", p.name.data(), p.cpuMs,
+          p.gpuValid ? format("%.2f", p.gpuMs) : "--");
+```
 
 ### Collider half-extents vs entity scale
 

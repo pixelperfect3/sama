@@ -175,6 +175,14 @@ Tracks all decisions and progress made during development.
 
 **Normal matrix for non-uniform scale** — for Phase 3, assume uniform scale and use `mat3(u_model)` for the normal transform. For non-uniform scale, `transpose(inverse(mat3(u_model)))` is required — tracked as technical debt, computed on CPU and uploaded as `u_normalMatrix` when needed.
 
+**bgfx boundary — opaque-alias FrameBufferHandle, not a class split** — `engine::rendering::ViewId` is a `uint16_t` typedef, and `engine::rendering::FrameBufferHandle` is a one-word struct laid out byte-identically to `bgfx::FrameBufferHandle` (guarded by `static_assert(sizeof/alignof)` in `RenderPass.cpp`). `RenderPass.h`, `ViewIds.h`, `HandleTypes.h` and `FrameStats.h` form the public boundary and contain no `<bgfx/bgfx.h>` include — a CMake-driven CTest (`forbid_bgfx_*`) preprocesses each header against the rendering target's include directories and fails if bgfx leaks back in.
+
+  *Reasoning:* the natural alternative was a "wrapper class" split (a `RenderPassImpl` pimpl in the engine, a separate `RenderPass` API in a public header). That gives strong ABI guarantees but costs a heap allocation per pass *and* a cross-TU virtual or function-pointer hop on every `setView*` call — for an API that is expected to be invoked dozens of times per frame. The opaque-alias choice keeps the call graph identical to the pre-abstraction code: every fluent setter is still inlined to a single `bgfx::setView*`, and the boundary conversion (`bgfx::FrameBufferHandle{h.idx}`) compiles to nothing.
+
+  *Tradeoff accepted:* the boundary is *layout-coupled* to bgfx's handle struct. If bgfx ever changes `FrameBufferHandle` (e.g. to a wider integer or to embed a generation counter), the static_assert fires loudly at build time and we have to update the alias. That is an acceptable price for the zero-cost call path; the alternative (pimpl) would have been the wrong default for a hot-path API. Same logic for `ViewId` — a static_assert in `ViewIds.h` guards the underlying `uint16_t` type.
+
+  *Knock-on benefit:* `engine::rendering::FrameStats` (the bgfx-free perf-counter API) and `Renderer::setupDefaultViewNames` (engine self-labels its built-in views) close the only two remaining direct-bgfx paths that game code had — labels and stats — without changing any inner-loop semantics.
+
 ### Implementation Progress
 - [x] Phase 1 — bgfx init, GLFW window, Renderer lifecycle (committed)
 - [x] Phase 1b — RenderSettings quality structs, GpuFeatures, presets, 42 tests (committed)
