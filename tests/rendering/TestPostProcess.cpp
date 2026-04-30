@@ -56,8 +56,7 @@ TEST_CASE("PostProcessResources: validate does not crash in headless mode", "[po
 // PostProcessResources — accessor guards
 // ---------------------------------------------------------------------------
 
-TEST_CASE("PostProcessResources: out-of-range bloom level returns invalid handle",
-          "[postprocess]")
+TEST_CASE("PostProcessResources: out-of-range bloom level returns invalid handle", "[postprocess]")
 {
     HeadlessBgfx bgfxCtx;
 
@@ -94,8 +93,7 @@ TEST_CASE("PostProcessSystem: init does not crash in headless mode", "[postproce
 // PostProcessSystem::submit() — view count with bloom enabled vs disabled
 // ---------------------------------------------------------------------------
 
-TEST_CASE("PostProcessSystem: bloom enabled uses more views than bloom disabled",
-          "[postprocess]")
+TEST_CASE("PostProcessSystem: bloom enabled uses more views than bloom disabled", "[postprocess]")
 {
     HeadlessBgfx bgfxCtx;
 
@@ -112,7 +110,7 @@ TEST_CASE("PostProcessSystem: bloom enabled uses more views than bloom disabled"
     settingsOn.fxaaEnabled = true;
 
     bgfxCtx.renderer.beginFrame();
-    const bgfx::ViewId viewIdAfterOn =
+    const engine::rendering::ViewId viewIdAfterOn =
         pps.submit(settingsOn, uniforms, engine::rendering::kViewPostProcessBase);
     bgfxCtx.renderer.endFrame();
 
@@ -125,7 +123,7 @@ TEST_CASE("PostProcessSystem: bloom enabled uses more views than bloom disabled"
     settingsOff.fxaaEnabled = true;
 
     bgfxCtx.renderer.beginFrame();
-    const bgfx::ViewId viewIdAfterOff =
+    const engine::rendering::ViewId viewIdAfterOff =
         pps.submit(settingsOff, uniforms, engine::rendering::kViewPostProcessBase);
     bgfxCtx.renderer.endFrame();
 
@@ -159,7 +157,7 @@ TEST_CASE("PostProcessSystem: fxaaEnabled=false skips the FXAA pass", "[postproc
     settingsFxaaOn.fxaaEnabled = true;
 
     bgfxCtx.renderer.beginFrame();
-    const bgfx::ViewId afterFxaaOn =
+    const engine::rendering::ViewId afterFxaaOn =
         pps.submit(settingsFxaaOn, uniforms, engine::rendering::kViewPostProcessBase);
     bgfxCtx.renderer.endFrame();
 
@@ -168,7 +166,7 @@ TEST_CASE("PostProcessSystem: fxaaEnabled=false skips the FXAA pass", "[postproc
     settingsFxaaOff.fxaaEnabled = false;
 
     bgfxCtx.renderer.beginFrame();
-    const bgfx::ViewId afterFxaaOff =
+    const engine::rendering::ViewId afterFxaaOff =
         pps.submit(settingsFxaaOff, uniforms, engine::rendering::kViewPostProcessBase);
     bgfxCtx.renderer.endFrame();
 
