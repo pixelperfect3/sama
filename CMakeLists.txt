@@ -960,6 +960,7 @@ target_compile_definitions(engine_physics PUBLIC
 set(_ENGINE_RENDERING_SOURCES
     engine/rendering/Renderer.cpp
     engine/rendering/RenderPass.cpp
+    engine/rendering/FrameStats.cpp
     engine/rendering/GpuFeatures.cpp
     engine/rendering/RenderSettings.cpp
     engine/rendering/MeshBuilder.cpp
@@ -1123,6 +1124,7 @@ add_executable(engine_tests
     tests/rendering/TestLighting.cpp
     tests/rendering/TestPostProcess.cpp
     tests/rendering/TestSsao.cpp
+    tests/rendering/TestFrameStats.cpp
     tests/assets/TestAssetHandle.cpp
     tests/assets/TestAssetManager.cpp
     tests/assets/TestStdFileSystem.cpp
