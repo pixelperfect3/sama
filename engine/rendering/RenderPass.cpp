@@ -1,9 +1,19 @@
 #include "engine/rendering/RenderPass.h"
 
+#include <bgfx/bgfx.h>
+
 #include <glm/gtc/type_ptr.hpp>
+
+#include "engine/rendering/HandleTypes.h"
 
 namespace engine::rendering
 {
+
+// Layout sanity checks — engine::rendering::FrameBufferHandle MUST be
+// bit-identical to bgfx::FrameBufferHandle so the boundary conversion
+// (FrameBufferHandle{h.idx} <-> bgfx::FrameBufferHandle{h.idx}) is a no-op.
+static_assert(sizeof(engine::rendering::FrameBufferHandle) == sizeof(bgfx::FrameBufferHandle));
+static_assert(alignof(engine::rendering::FrameBufferHandle) == alignof(bgfx::FrameBufferHandle));
 
 RenderPass& RenderPass::framebuffer(bgfx::FrameBufferHandle fb)
 {

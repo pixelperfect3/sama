@@ -1,6 +1,8 @@
 #pragma once
 
-#include <bgfx/bgfx.h>
+#include <cstdint>
+
+#include "engine/rendering/HandleTypes.h"
 
 namespace engine::rendering
 {
@@ -24,30 +26,35 @@ namespace engine::rendering
 // Never hardcode numeric view IDs anywhere outside this header.
 // ---------------------------------------------------------------------------
 
+// Guard against bgfx ever changing its underlying ViewId type.  If this
+// fires, update HandleTypes.h's ViewId alias to match (and double-check
+// that nothing in the engine assumed a specific width).
+static_assert(sizeof(ViewId) == sizeof(uint16_t), "ViewId must remain 16-bit");
+
 // Shadow pass range — one view per cascade / spot light.
-inline constexpr bgfx::ViewId kViewShadowBase = 0;
-inline constexpr bgfx::ViewId kMaxShadowViews = 8;
+inline constexpr ViewId kViewShadowBase = 0;
+inline constexpr ViewId kMaxShadowViews = 8;
 
 // Fixed scene passes.
-inline constexpr bgfx::ViewId kViewDepth = 8;
-inline constexpr bgfx::ViewId kViewOpaque = 9;
-inline constexpr bgfx::ViewId kViewTransparent = 10;
+inline constexpr ViewId kViewDepth = 8;
+inline constexpr ViewId kViewOpaque = 9;
+inline constexpr ViewId kViewTransparent = 10;
 
 // UI / HUD.
-inline constexpr bgfx::ViewId kViewUiBase = 14;
-inline constexpr bgfx::ViewId kViewUi = 14;     // 3D sprites / world-space UI
-inline constexpr bgfx::ViewId kViewImGui = 15;  // editor overlay
+inline constexpr ViewId kViewUiBase = 14;
+inline constexpr ViewId kViewUi = 14;     // 3D sprites / world-space UI
+inline constexpr ViewId kViewImGui = 15;  // editor overlay
 
 // Post-process sub-pass range (bloom, SSAO, tonemap, FXAA, ...).
 // PostProcessSystem allocates IDs sequentially from this base each frame.
-inline constexpr bgfx::ViewId kViewPostProcessBase = 16;
-inline constexpr bgfx::ViewId kMaxPostProcessViews = 32;  // views 16-47
+inline constexpr ViewId kViewPostProcessBase = 16;
+inline constexpr ViewId kMaxPostProcessViews = 32;  // views 16-47
 
 // Game UI — rendered after all post-processing so bloom/FXAA/tonemapping
 // do not affect text and icons.  Uses orthographic projection.
-inline constexpr bgfx::ViewId kViewGameUi = 48;
+inline constexpr ViewId kViewGameUi = 48;
 
 // Debug HUD — on top of everything, for debug/status text overlays.
-inline constexpr bgfx::ViewId kViewDebugHud = 49;
+inline constexpr ViewId kViewDebugHud = 49;
 
 }  // namespace engine::rendering
