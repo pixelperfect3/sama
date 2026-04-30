@@ -119,7 +119,7 @@ bgfx supports Metal on iOS. The renderer requires zero shader changes — bgfx's
 - [ ] JSON-driven asset manifest (parse `project.json` or sibling and forward to `sama_ios_bundle_assets`)
 - [ ] `sama-asset-tool --target ios` support
 - [ ] ASTC compression (same as Android — shared code)
-- [x] Tier detection — `engine/platform/ios/IosTierDetect.{h,mm}` exposes `detectIosTier()` (sysctl `hw.machine` + `NSProcessInfo.physicalMemory`) returning `IosTier::{Low,Mid,High,Unknown}`; ~50 machine identifiers mapped, RAM-fallback for unknowns, simulator → High. `tests/platform/TestIosTierDetect.cpp` covers identifier table + RAM-heuristic boundaries (9 cases / 66 asserts). Integration into `Engine::initIos`/`ProjectConfig::activeTier` still pending — call site documented in the header.
+- [x] Tier detection — `engine/platform/ios/IosTierDetect.{h,mm}` exposes `detectIosTier()` (sysctl `hw.machine` + `NSProcessInfo.physicalMemory`) returning `IosTier::{Low,Mid,High,Unknown}`; ~50 machine identifiers mapped, RAM-fallback for unknowns, simulator → High. `tests/platform/TestIosTierDetect.cpp` covers identifier table + RAM-heuristic boundaries (9 cases / 66 asserts). [x] Integrated into `Engine::initIos` (logs detected tier to stderr) and `IosApp.mm` (writes `tierToProjectConfigName(detectedTier)` into `ProjectConfig::activeTier` so `toEngineDesc()` picks the correct shadow res / cascade count); `IosTier::Unknown` maps to `"mid"` (safe default — see `docs/NOTES.md`).
 - [ ] Asset catalog generation for app icons
 
 ### Phase D — IPA Packaging

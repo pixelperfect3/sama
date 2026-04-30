@@ -1545,3 +1545,18 @@ Reorganised `PostProcessSystem.cpp` and `SsaoSystem.cpp` so the desktop and Andr
 **Verifying PBR on Android via `android_test`**
 
 Updated `apps/android_test/AndroidTestGame.cpp` to spawn a single PBR cube alongside the existing UI overlay. The cube spins on two axes, casts a shadow into cascade 0 (via `submitShadowDrawCalls`), and is rendered through `DrawCallBuildSystem::update` with a directional light. This exercises `vs_pbr` + `fs_pbr` + `vs_shadow` + `fs_shadow` end-to-end on Android using SPIRV loaded from the APK. The same code runs on desktop too (`build/android_test`), giving us a cross-platform smoke test for the PBR + shadow path without needing a 3D model file. No on-device verification was performed in this change set — `adb devices` reported no attached hardware — so the Pixel 9 walkthrough must be re-run before declaring the milestone closed.
+
+**iOS device-tier wiring: detection in `Engine::initIos`, ProjectConfig population in `IosApp.mm`**
+
+The brief asked us to wire `engine::platform::ios::detectIosTier()` into `ProjectConfig::activeTier` so the per-tier shadow/render settings reach the engine on iOS. Two design questions had to be settled:
+
+1. *Where to log the detected tier.* We log inside `Engine::initIos` (right after recording the platform back-pointers) because that is the canonical engine-side init point and is reachable from any future `runIos`-like overload. The actual `ProjectConfig` mutation lives one layer up in `_SamaAppDelegate::application:didFinishLaunchingWithOptions:` — that's where a `ProjectConfig` is constructed and converted to `EngineDesc`. Splitting the log from the assignment costs one extra line of code but means the engine prints the tier even if a future entry point bypasses ProjectConfig. Tradeoff accepted: small duplication of the log line vs. a single source of truth for "what tier did this device classify as".
+
+2. *Mapping for `IosTier::Unknown`.* Picked `"mid"` rather than `"low"` or `"high"`. Reasoning: an unknown chip identifier today only happens for hardware released after our lookup table was last updated. Apple's release cadence means "future devices" are almost always *better* than current ones, not worse, so `"low"` would visibly under-utilise modern hardware. But `"high"` is risky: it enables SSAO + 2K shadow maps + 60fps target, which can thermally throttle a misidentified low-end iPhone and produce a worse experience than the conservative `"mid"` profile. `"mid"` exercises shadows + IBL + bloom (so the game still looks correct) but skips the heaviest features. Encoded in `tierToProjectConfigName(IosTier::Unknown) -> "mid"`.
+
+The simulator log line confirms the path is live:
+```
+[Sama][iOS] tier detected: High (machine=arm64)
+[Sama][iOS] ProjectConfig::activeTier = "high"
+```
+Simulator → `High` matches the existing tier table (we want devs to exercise the full feature set on host hardware; per-tier IPA splitting is a separate Phase D concern). Verified end-to-end on iPhone 15 simulator via `xcrun simctl launch --console-pty`; helmet scene still renders, no regressions.

@@ -36,11 +36,14 @@
 #else  // iOS
 #include <bgfx/platform.h>
 
+#include <cstdio>
+
 #include "engine/audio/NullAudioEngine.h"
 #include "engine/audio/SoLoudAudioEngine.h"
 #include "engine/input/ios/IosInputBackend.h"
 #include "engine/platform/ios/IosFileSystem.h"
 #include "engine/platform/ios/IosGyro.h"
+#include "engine/platform/ios/IosTierDetect.h"
 #include "engine/platform/ios/IosTouchInput.h"
 #include "engine/platform/ios/IosWindow.h"
 #endif
@@ -625,6 +628,18 @@ bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchIn
     iosTouch_ = touch;
     iosGyro_ = gyro;
     iosFileSystem_ = fs;
+
+    // -- Device tier detection --------------------------------------------
+    // Classify the host device (sysctl hw.machine + NSProcessInfo
+    // physicalMemory) and log the result so the tier choice is visible in
+    // the simulator console / device logs.  The actual tier-driven render
+    // settings flow through ProjectConfig::activeTier in GameRunner — this
+    // call is the canonical detection point per IosTierDetect.h.
+    {
+        const auto tier = platform::ios::detectIosTier();
+        std::fprintf(stderr, "[Sama][iOS] tier detected: %s (machine=%s)\n",
+                     platform::ios::iosTierLogName(tier), platform::ios::iosMachineIdentifier());
+    }
 
     if (!iosWindow_ || !iosWindow_->isReady())
     {

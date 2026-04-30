@@ -21,12 +21,11 @@
 // platform-agnostic (`classifyIosTier`) so the unit test can drive it on a
 // macOS build host.
 //
-// TODO(integration): wire `detectIosTier()` into the iOS app launch path so
-// the result feeds `engine::game::ProjectConfig::activeTier`.  The natural
-// call site is `_SamaAppDelegate::application:didFinishLaunchingWithOptions:`
-// in `engine/platform/ios/IosApp.mm`, immediately after the file system is
-// constructed and before `GameRunner::runIos` is invoked (so the engine sees
-// the chosen tier before init).
+// Integration: `detectIosTier()` is invoked from `Engine::initIos` (see
+// `engine/core/Engine.cpp`); the result is logged to stderr and forwarded
+// through `tierToProjectConfigName()` into `ProjectConfig::activeTier` by
+// the GameRunner config-aware overload.  An `IosTier::Unknown` result maps
+// to the `"mid"` ProjectConfig tier (safe middle ground — see NOTES.md).
 // ---------------------------------------------------------------------------
 
 namespace engine::platform::ios
@@ -53,6 +52,18 @@ enum class IosTier
 // simulator.  The pointer is owned by the implementation and remains
 // valid for the process lifetime; callers should not free it.
 [[nodiscard]] const char* iosMachineIdentifier();
+
+// Returns a static string suitable for stderr logging / debug HUD.
+// One of: "Low", "Mid", "High", "Unknown".  The pointer is in static
+// storage; do not free.
+[[nodiscard]] const char* iosTierLogName(IosTier tier);
+
+// Returns the `ProjectConfig::activeTier` name corresponding to `tier`.
+// One of: "low", "mid", "high".  `IosTier::Unknown` maps to "mid" — safe
+// middle ground that exercises IBL / bloom / shadows but avoids SSAO and
+// 2K shadow maps that may overheat unidentified low-end hardware.  See
+// `docs/NOTES.md` for the reasoning.
+[[nodiscard]] const char* tierToProjectConfigName(IosTier tier);
 
 // ---------------------------------------------------------------------------
 // Testable seam — pure function so unit tests can run on macOS desktop

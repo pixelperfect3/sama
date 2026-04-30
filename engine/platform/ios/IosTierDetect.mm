@@ -272,4 +272,45 @@ IosTier detectIosTier()
     return classifyIosTier(ident, physicalMemoryBytes);
 }
 
+// ---------------------------------------------------------------------------
+// String helpers — keep the mappings in one place so log lines and
+// ProjectConfig keys cannot drift out of sync.
+// ---------------------------------------------------------------------------
+
+const char* iosTierLogName(IosTier tier)
+{
+    switch (tier)
+    {
+        case IosTier::Low:
+            return "Low";
+        case IosTier::Mid:
+            return "Mid";
+        case IosTier::High:
+            return "High";
+        case IosTier::Unknown:
+        default:
+            return "Unknown";
+    }
+}
+
+const char* tierToProjectConfigName(IosTier tier)
+{
+    // Unknown -> "mid": safe default for unidentified hardware.  Picking
+    // "high" risks overheating a low-end device we haven't classified;
+    // picking "low" leaves modern hardware visibly under-utilised.  "mid"
+    // exercises shadows + IBL + bloom but skips the heaviest features
+    // (SSAO, 2K shadows, 60fps target).  Documented in docs/NOTES.md.
+    switch (tier)
+    {
+        case IosTier::Low:
+            return "low";
+        case IosTier::High:
+            return "high";
+        case IosTier::Mid:
+        case IosTier::Unknown:
+        default:
+            return "mid";
+    }
+}
+
 }  // namespace engine::platform::ios

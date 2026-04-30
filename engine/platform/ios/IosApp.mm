@@ -6,9 +6,11 @@
 #include "engine/core/Engine.h"
 #include "engine/game/GameRunner.h"
 #include "engine/game/IGame.h"
+#include "engine/game/ProjectConfig.h"
 #include "engine/platform/ios/IosFileSystem.h"
 #include "engine/platform/ios/IosGlobals.h"
 #include "engine/platform/ios/IosGyro.h"
+#include "engine/platform/ios/IosTierDetect.h"
 #include "engine/platform/ios/IosTouchInput.h"
 #include "engine/platform/ios/IosWindow.h"
 
@@ -103,10 +105,23 @@
     // -- Engine + GameRunner ---------------------------------------------
     // EngineDesc is largely advisory on iOS — initIos reads dimensions
     // from the IosWindow itself (UIScreen.mainScreen.bounds × scale).
+    //
+    // We build a ProjectConfig (rather than a bare EngineDesc) so the
+    // device-detected tier (IosTierDetect.h) flows into shadow resolution
+    // / cascade count via TierConfig.  Future work will read the same
+    // ProjectConfig from the bundle's project.json; for now there is no
+    // such file in the iOS bundle, so we use defaults + the detected tier.
     if (_game != nullptr)
     {
         _runner = new engine::game::GameRunner(*_game);
-        engine::core::EngineDesc desc;
+
+        engine::game::ProjectConfig config;
+        const auto detectedTier = engine::platform::ios::detectIosTier();
+        config.activeTier = engine::platform::ios::tierToProjectConfigName(detectedTier);
+        std::fprintf(stderr, "[Sama][iOS] ProjectConfig::activeTier = \"%s\"\n",
+                     config.activeTier.c_str());
+
+        const engine::core::EngineDesc desc = config.toEngineDesc();
         const int rc =
             _runner->runIos(_window.get(), _touch.get(), _gyro.get(), _fileSystem.get(), desc);
         if (rc != 0)
