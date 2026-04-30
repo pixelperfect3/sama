@@ -39,6 +39,7 @@
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/FrameStats.h"
 #include "engine/rendering/IblResources.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
@@ -399,21 +400,16 @@ public:
 #ifdef __ANDROID__
         if (frameCount_ == 60)  // log once after first second
         {
-            // bgfx view stats — list each view + GPU time (proxy for "had draws")
-            const bgfx::Stats* stats = bgfx::getStats();
-            if (stats && stats->viewStats)
+            // Per-view perf stats via the engine FrameStats wrapper.
+            const auto fs = engine::rendering::sampleFrameStats();
+            for (const auto& p : fs.passes)
             {
-                for (uint16_t i = 0; i < stats->numViews && i < 12; ++i)
-                {
-                    const bgfx::ViewStats& vs = stats->viewStats[i];
-                    __android_log_print(4, "SamaEngine", "view %u name=%s gpu=%lld cpu=%lld",
-                                        vs.view, vs.name,
-                                        (long long)(vs.gpuTimeEnd - vs.gpuTimeBegin),
-                                        (long long)(vs.cpuTimeEnd - vs.cpuTimeBegin));
-                }
-                __android_log_print(4, "SamaEngine", "stats: numDraw=%u numViews=%u numCompute=%u",
-                                    stats->numDraw, stats->numViews, stats->numCompute);
+                __android_log_print(4, "SamaEngine", "view name=%.*s gpu=%.2fms cpu=%.2fms",
+                                    static_cast<int>(p.name.size()), p.name.data(),
+                                    p.gpuValid ? p.gpuMs : -1.f, p.cpuMs);
             }
+            __android_log_print(4, "SamaEngine", "stats: numDraw=%u numPrims=%u", fs.numDraw,
+                                fs.numPrims);
             __android_log_print(4, "SamaEngine", "shadow atlas valid=%d idx=%u",
                                 bgfx::isValid(shadowAtlas) ? 1 : 0, shadowAtlas.idx);
             __android_log_print(4, "SamaEngine", "shadow matrix row0: %.3f %.3f %.3f %.3f",
