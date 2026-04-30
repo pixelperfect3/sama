@@ -8,7 +8,6 @@
 #include "UiTestApp.h"
 
 #include <GLFW/glfw3.h>
-#include <bgfx/bgfx.h>
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 
 #include <algorithm>
@@ -37,32 +36,6 @@ using namespace engine::core;
 using namespace engine::input;
 using namespace engine::rendering;
 using namespace engine::ui;
-
-// =============================================================================
-// Vertex for UI quad rendering
-// =============================================================================
-
-struct UiVertex
-{
-    float x, y;
-    uint32_t abgr;
-};
-
-static bgfx::VertexLayout s_uiVertexLayout;
-static bool s_layoutInitialized = false;
-
-static void initVertexLayout()
-{
-    if (s_layoutInitialized)
-    {
-        return;
-    }
-    s_uiVertexLayout.begin()
-        .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
-        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
-        .end();
-    s_layoutInitialized = true;
-}
 
 // Convert RGBA float [0,1] to packed ABGR uint32.
 static uint32_t toAbgr(const engine::math::Vec4& c)
@@ -107,8 +80,6 @@ static int s_slotItems[kItemSlotCount] = {
 
 void UiTestApp::onInit(Engine& engine, engine::ecs::Registry& /*registry*/)
 {
-    initVertexLayout();
-
     screenW_ = engine.fbWidth();
     screenH_ = engine.fbHeight();
 
@@ -1403,12 +1374,11 @@ void UiTestApp::renderDrawList(uint16_t fbW, uint16_t fbH)
 {
     // Set up the UI view: clear + viewport. UiRenderer handles the
     // orthographic projection and submits all rect commands using the
-    // sprite shader program.
-    bgfx::ViewId viewId = kViewUi;
-    bgfx::setViewName(viewId, "UI");
-    bgfx::setViewRect(viewId, 0, 0, fbW, fbH);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1A1A2EFF, 1.0f, 0);
-    bgfx::touch(viewId);
+    // sprite shader program.  The view name is set by Renderer::init()
+    // for engine-owned views; we still set it here in case kViewUi gets
+    // repurposed in this app.
+    const ViewId viewId = kViewUi;
+    RenderPass(viewId).rect(0, 0, fbW, fbH).clearColorAndDepth(0x1A1A2EFF).touch();
 
     // Status header — always rendered via bgfx debug text so it's visible
     // regardless of which font backend is currently active. The dbgText
