@@ -1585,3 +1585,17 @@ Three design choices worth recording:
 3. *Parse with `string(JSON ...)`, not a third-party tool.* CMake 3.20 (our minimum) ships built-in JSON parsing. Using it avoids adding a Python dependency to the iOS build path or introducing a vendored JSON parser to the cmake/ tree. Downside: `string(JSON ...)` errors are clunky to surface — we wrap each access in a `string(JSON ... ERROR_VARIABLE)` and emit a `FATAL_ERROR` with a path and the offending key, which matches the primitive helper's existing diagnostics. The macro that walks each tier list keeps the parent-scope mutation pattern in one place; using a function would've required juggling `PARENT_SCOPE` for the accumulated list.
 
 Verified on iPhone 15 simulator: `apps/ios_test/project.json` lists 4 fonts (common) + `DamagedHelmet.glb` (in all three tiers), and the resulting `.app` bundle contains exactly 5 asset files (not 7 — the helmet's deduplication works). The sample app's runtime log shows `MSDF font bytes: json=21661 png=49169`, confirming the bundle path resolves through `IosFileSystem`.
+
+**iOS asset tool: `sama-asset-tool --target ios` smoke test split between Catch2 and shell**
+
+When I went to add a unit test for `--target ios`, two things were already true: (a) `--target ios` was already wired through `ShaderProcessor` (Metal output) and `TextureProcessor` (target-agnostic — ASTC block size comes from `--tier`), and (b) `engine_tests` links `tools/asset_tool/AstcEncoderStub.cpp`, not the real ASTC encoder. The stub is intentional: bgfx ships a vendored astc-codec for runtime decoding, and linking the encoder's astc-codec into engine_tests would collide on symbol names. The real encoder lives behind `engine_astcenc_bridge` and is only attached to `sama_asset_tool` (the CLI executable).
+
+That linkage choice means the in-process Catch2 test can verify *manifest output* (always tagged correctly from `CliArgs`/`TierConfig`) but cannot verify the *KTX header bytes* — when the stub is in effect, `TextureProcessor` falls back to copying the source PNG to `<output>.ktx` as-is, and any byte-level KTX assertion would either fail (PNG bytes at offset 28) or accidentally pass on a coincidence.
+
+Two-layer smoke test:
+
+1. `[asset_tool][ios]` Catch2 test (in-tree, fast): drives `AssetProcessor` directly, checks the manifest's `platform: ios` + `format: astc_*` per tier. The KTX header check is gated on `isAstcEncoderAvailable()` so it's a no-op under the stub but immediately catches regressions if a future change wires the real encoder into engine_tests.
+
+2. `ios/smoke_asset_tool.sh` (out-of-tree, runs the built binary): builds (or reuses) `sama_asset_tool`, runs it at all three tiers against a real PNG, and verifies the KTX `glInternalFormat` bytes match the expected ASTC block size. This is the test that proves the *real encoder* is producing the *right format* — and it ran clean on the first try, which means `--target ios` has been silently working since the CLI was first written. The brief was right that "most code should be shared" — there was nothing to add, only to verify.
+
+Filed under "tests, not code" because the underlying iOS asset path requires no production changes.

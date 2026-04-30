@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #define STB_IMAGE_WRITE_STATIC
@@ -385,6 +387,115 @@ TEST_CASE("AssetProcessor generates manifest.json", "[asset_tool]")
         CHECK(asset["source"].isString());
         CHECK(asset["output"].isString());
         CHECK(asset["format"].isString());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7b. iOS smoke test — `--target ios --tier mid` produces an ASTC .ktx
+//     and a manifest tagged `platform: ios`.
+//
+// The iOS asset path reuses Android's ASTC pipeline (same encoder, same
+// per-tier block sizes) — see docs/IOS_SUPPORT.md.  This case is the
+// minimal end-to-end smoke test for that claim: drop a PNG in, demand
+// `--target ios --tier {low,mid,high}`, expect the matching ASTC block
+// size in the manifest and the matching `glInternalFormat` in the KTX
+// header.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+// Read the 32-bit little-endian glInternalFormat from the KTX 11 header.
+// Layout: magic(12) + endianness(4) + glType(4) + glTypeSize(4) +
+// glFormat(4) + glInternalFormat(4) -- so it lives at byte offset 28.
+uint32_t readKtxInternalFormat(const fs::path& ktxPath)
+{
+    std::ifstream f(ktxPath, std::ios::binary);
+    if (!f)
+        return 0;
+    char buf[32]{};
+    f.read(buf, sizeof(buf));
+    if (f.gcount() < 32)
+        return 0;
+    uint32_t v = 0;
+    std::memcpy(&v, buf + 28, sizeof(v));
+    return v;
+}
+
+}  // namespace
+
+// NOTE on encoder linkage: engine_tests links AstcEncoderStub.cpp (the
+// no-op encoder bridge); the real ASTC encoder is wired into
+// sama_asset_tool via engine_astcenc_bridge so the test executable stays
+// small and avoids astc-codec symbol collisions with bgfx's bundled
+// astc-codec.  When the stub is in effect, TextureProcessor falls back
+// to copying the source PNG to <output>.ktx as-is.  The test therefore
+// always asserts the manifest content (which is reliable regardless of
+// the encoder backend) and only checks the KTX header bytes when
+// `isAstcEncoderAvailable()` returns true.
+
+TEST_CASE("iOS smoke test: --target ios produces ios-tagged manifest with per-tier ASTC label",
+          "[asset_tool][ios]")
+{
+    auto runTier = [](const char* tier, const char* expectedFormat, uint32_t expectedGlFmt)
+    {
+        TempDir inputDir;
+        TempDir outputDir;
+        // 64x64 keeps any future real-encoder run fast (<1s) while still
+        // exercising at least one full ASTC block at every supported size.
+        inputDir.createTestPng("smoke.png", 64, 64);
+
+        std::string inPath = inputDir.path().string();
+        std::string outPath = outputDir.path().string();
+        const char* argv[] = {
+            "sama-asset-tool", "--input", inPath.c_str(), "--output", outPath.c_str(),
+            "--target",        "ios",     "--tier",       tier};
+        int argc = 9;
+        auto args = parseArgs(argc, const_cast<char**>(argv));
+        REQUIRE(args.valid);
+
+        AssetProcessor proc(args);
+        REQUIRE(proc.run() == 0);
+
+        // Output file always exists (real KTX if the encoder is wired in,
+        // raw PNG copy if the stub is in effect).  Either way the smoke
+        // test proves the iOS path produced a per-asset output.
+        fs::path outFile = outputDir.path() / "smoke.ktx";
+        CHECK(fs::exists(outFile));
+        CHECK(fs::file_size(outFile) > 0);
+
+        // Manifest is always reliable: tagged from CliArgs/TierConfig.
+        fs::path manifestPath = outputDir.path() / "manifest.json";
+        REQUIRE(fs::exists(manifestPath));
+        engine::io::JsonDocument doc;
+        REQUIRE(doc.parseFile(manifestPath.string().c_str()));
+        auto root = doc.root();
+        CHECK(std::string(root["platform"].getString()) == "ios");
+        CHECK(std::string(root["tier"].getString()) == tier);
+        REQUIRE(root["assets"].arraySize() == 1);
+        CHECK(std::string(root["assets"][static_cast<size_t>(0)]["format"].getString()) ==
+              expectedFormat);
+
+        // KTX header check is meaningful only with the real encoder.  When
+        // the stub is in effect, the file is the original PNG bytes and
+        // offset 28 happens to land inside the IDAT chunk header.
+        if (isAstcEncoderAvailable())
+        {
+            CHECK(readKtxInternalFormat(outFile) == expectedGlFmt);
+        }
+    };
+
+    SECTION("low tier maps to ASTC 8x8")
+    {
+        runTier("low", "astc_8x8", 0x93B7u);  // GL_COMPRESSED_RGBA_ASTC_8x8
+    }
+    SECTION("mid tier maps to ASTC 6x6")
+    {
+        runTier("mid", "astc_6x6", 0x93B4u);  // GL_COMPRESSED_RGBA_ASTC_6x6
+    }
+    SECTION("high tier maps to ASTC 4x4")
+    {
+        runTier("high", "astc_4x4", 0x93B0u);  // GL_COMPRESSED_RGBA_ASTC_4x4
     }
 }
 
