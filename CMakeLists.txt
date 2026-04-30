@@ -1665,22 +1665,17 @@ if(SAMA_IOS)
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 
     # Bundle runtime assets into the .app under Resources/ so IosFileSystem's
-    # [NSBundle mainBundle].resourcePath lookup finds them.  The helper
-    # preserves subdirectories (fonts/X.png -> Resources/fonts/X.png) so
-    # asset keys resolve identically on iOS and desktop.  See
-    # cmake/SamaIosAssets.cmake for the manifest design notes (this is the
-    # "intermediate" form — a JSON manifest could parse-and-forward to the
-    # same helper later).
+    # [NSBundle mainBundle].resourcePath lookup finds them.  The asset list
+    # lives in apps/ios_test/project.json under the `assets` key (common +
+    # per-tier arrays); the manifest-driven helper computes the union of
+    # common + every tier and forwards to the bundling primitive.  All
+    # tiers are bundled into one .app for now (per-tier IPA splitting is
+    # Phase D's job).  See cmake/SamaIosAssets.cmake for the schema.
     include(${SAMA_ROOT_DIR}/cmake/SamaIosAssets.cmake)
-    sama_ios_bundle_assets(
+    sama_ios_bundle_assets_from_manifest(
         TARGET      ios_test
         ASSETS_ROOT ${SAMA_ROOT_DIR}/assets
-        ASSETS
-            DamagedHelmet.glb
-            fonts/JetBrainsMono-msdf.png
-            fonts/JetBrainsMono-msdf.json
-            fonts/ChunkFive-msdf.png
-            fonts/ChunkFive-msdf.json
+        MANIFEST    ${SAMA_ROOT_DIR}/apps/ios_test/project.json
     )
 
     set_target_properties(ios_test PROPERTIES

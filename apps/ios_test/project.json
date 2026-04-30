@@ -1,0 +1,15 @@
+{
+    "_comment": "iOS test app — Phase C asset manifest. Paths are relative to the engine `assets/` directory; the CMake helper sama_ios_bundle_assets_from_manifest reads this file at configure time and forwards the union of `common` + every tier list to sama_ios_bundle_assets(). Per Phase C, all tiers are bundled into one .app — per-tier IPA splitting is Phase D's job.",
+    "name": "Sama iOS Test",
+    "assets": {
+        "common": [
+            "fonts/JetBrainsMono-msdf.png",
+            "fonts/JetBrainsMono-msdf.json",
+            "fonts/ChunkFive-msdf.png",
+            "fonts/ChunkFive-msdf.json"
+        ],
+        "low":  ["DamagedHelmet.glb"],
+        "mid":  ["DamagedHelmet.glb"],
+        "high": ["DamagedHelmet.glb"]
+    }
+}

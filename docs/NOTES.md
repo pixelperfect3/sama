@@ -1560,3 +1560,28 @@ The simulator log line confirms the path is live:
 [Sama][iOS] ProjectConfig::activeTier = "high"
 ```
 Simulator → `High` matches the existing tier table (we want devs to exercise the full feature set on host hardware; per-tier IPA splitting is a separate Phase D concern). Verified end-to-end on iPhone 15 simulator via `xcrun simctl launch --console-pty`; helmet scene still renders, no regressions.
+
+**iOS asset manifest: JSON layered on top of the primitive bundler**
+
+Phase C asked for a JSON-driven asset manifest that feeds the existing `sama_ios_bundle_assets()` helper without changing its signature. The manifest schema lives under an `assets` key in `apps/<game>/project.json`:
+
+```json
+{
+    "assets": {
+        "common": [ "fonts/...png", "fonts/...json" ],
+        "low":    [ "models/Foo_low.glb" ],
+        "mid":    [ "models/Foo.glb" ],
+        "high":   [ "models/Foo.glb", "env/cubemap_high.ktx" ]
+    }
+}
+```
+
+Three design choices worth recording:
+
+1. *Two CMake functions, not one.* `sama_ios_bundle_assets()` stays a pure file-I/O primitive (path validation, `MACOSX_PACKAGE_LOCATION` plumbing); `sama_ios_bundle_assets_from_manifest()` is the JSON-aware layer that calls it. Trade-off: two functions instead of one — but the primitive remains useful for codegen / programmatic call sites that want to compute the asset list themselves, and we can swap manifest formats (YAML, TOML, a different JSON shape) without touching the bundling logic. The brief explicitly required not changing the primitive's signature, which made the layered design the natural choice.
+
+2. *Bundle ALL tiers' assets into one `.app` for now.* The function defaults `TIERS=low;mid;high`. For Phase C the goal is "iOS sample app boots end-to-end from a manifest"; carrying all tiers means the runtime tier choice (per item 1) just selects which subset to *load*, not which is *available*. Per-tier IPA splitting is Phase D's job — it costs a separate `xcodebuild` invocation per tier with a different `TIERS` filter, so we want that to be a CLI flag rather than a CMake configure-time knob. The TIERS argument exists so a developer can opt in early (e.g. produce a "high"-only debug build to save bundle size during iteration), but the default keeps the simple build pipeline simple.
+
+3. *Parse with `string(JSON ...)`, not a third-party tool.* CMake 3.20 (our minimum) ships built-in JSON parsing. Using it avoids adding a Python dependency to the iOS build path or introducing a vendored JSON parser to the cmake/ tree. Downside: `string(JSON ...)` errors are clunky to surface — we wrap each access in a `string(JSON ... ERROR_VARIABLE)` and emit a `FATAL_ERROR` with a path and the offending key, which matches the primitive helper's existing diagnostics. The macro that walks each tier list keeps the parent-scope mutation pattern in one place; using a function would've required juggling `PARENT_SCOPE` for the accumulated list.
+
+Verified on iPhone 15 simulator: `apps/ios_test/project.json` lists 4 fonts (common) + `DamagedHelmet.glb` (in all three tiers), and the resulting `.app` bundle contains exactly 5 asset files (not 7 — the helmet's deduplication works). The sample app's runtime log shows `MSDF font bytes: json=21661 png=49169`, confirming the bundle path resolves through `IosFileSystem`.
