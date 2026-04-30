@@ -6,6 +6,8 @@
 #include <android/log.h>
 #endif
 
+#include <cstdio>
+
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 
@@ -108,8 +110,32 @@ bool Renderer::init(const RendererDesc& desc)
         postProcess_.init(static_cast<uint16_t>(desc.width), static_cast<uint16_t>(desc.height));
     }
 
+    // Apply built-in view labels for GPU debugger / perf overlay readability.
+    // Safe to call in headless mode — bgfx accepts setViewName on the Noop
+    // renderer, it simply has no observable effect.
+    setupDefaultViewNames();
+
     initialized_ = true;
     return true;
+}
+
+void Renderer::setupDefaultViewNames()
+{
+    for (ViewId i = 0; i < kMaxShadowViews; ++i)
+    {
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "Shadow %u", static_cast<unsigned>(i));
+        bgfx::setViewName(static_cast<bgfx::ViewId>(kViewShadowBase + i), buf);
+    }
+    bgfx::setViewName(kViewDepth, "Depth Prepass");
+    bgfx::setViewName(kViewOpaque, "Opaque");
+    bgfx::setViewName(kViewTransparent, "Transparent");
+    bgfx::setViewName(kViewUi, "UI 3D");
+    bgfx::setViewName(kViewImGui, "ImGui");
+    // kViewGameUi (48) and kViewDebugHud (49) are owned by the game /
+    // DebugHud; UiRenderer::render and DebugHud::end label those.
+    // Post-process sub-pass views (16..47) are labelled by PostProcessSystem
+    // when each sub-pass is allocated.
 }
 
 void Renderer::beginFrame()

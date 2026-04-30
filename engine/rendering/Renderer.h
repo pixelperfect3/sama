@@ -63,6 +63,14 @@ public:
     }
 
 private:
+    // Label the engine's built-in views (Shadow 0..7, Depth Prepass, Opaque,
+    // Transparent, UI 3D, ImGui) via bgfx::setViewName so they show up in
+    // perf overlays and GPU debuggers (RenderDoc, AGI, Instruments).  Called
+    // once from init() after bgfx::init succeeds.  kViewGameUi (48) and
+    // kViewDebugHud (49) are owned by the game / DebugHud respectively;
+    // post-process sub-pass views are labelled by PostProcessSystem.
+    void setupDefaultViewNames();
+
     bool initialized_ = false;
     bool headless_ = false;
 

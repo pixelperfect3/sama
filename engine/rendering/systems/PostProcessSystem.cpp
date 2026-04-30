@@ -3,6 +3,8 @@
 #include <TargetConditionals.h>
 #include <bgfx/bgfx.h>
 
+#include <cstdio>
+
 #ifdef __ANDROID__
 // On Android, post-process programs are loaded from pre-compiled SPIRV
 // shipped in the APK (see android/compile_shaders.sh). The declarations
@@ -229,6 +231,7 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
     // ------------------------------------------------------------------
     if (settings.ssao.enabled)
     {
+        bgfx::setViewName(viewId, "SSAO");
         ssaoSystem_.submit(settings.ssao, uniforms, resources_.sceneDepth(), viewId, fsTriVb_);
         ++viewId;
     }
@@ -257,6 +260,7 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
             bgfx::setUniform(uniforms.u_bloomParams, bloomParamsData);
             bgfx::setTexture(0, uniforms.s_hdrColor, resources_.hdrColor());
 
+            bgfx::setViewName(viewId, "Bloom Threshold");
             submitFullscreenPass(viewId, resources_.bloomLevelFb(0), w, h, fsTriVb_,
                                  bloomThreshProgram_);
             ++viewId;
@@ -281,6 +285,9 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
             bgfx::setUniform(uniforms.u_texelSize, texelSizeData);
             bgfx::setTexture(0, uniforms.s_hdrColor, resources_.bloomLevel(i - 1));
 
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "Bloom Down %u", static_cast<unsigned>(i));
+            bgfx::setViewName(viewId, buf);
             submitFullscreenPass(viewId, resources_.bloomLevelFb(i), dstW > 0 ? dstW : 1,
                                  dstH > 0 ? dstH : 1, fsTriVb_, bloomDownProgram_);
             ++viewId;
@@ -307,6 +314,9 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
             bgfx::setTexture(0, uniforms.s_hdrColor, resources_.bloomLevel(i));
             bgfx::setTexture(1, uniforms.s_bloomPrev, resources_.bloomLevel(i - 1));
 
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "Bloom Up %u", static_cast<unsigned>(i));
+            bgfx::setViewName(viewId, buf);
             submitFullscreenPass(viewId, resources_.bloomLevelFb(i - 1), dstW > 0 ? dstW : 1,
                                  dstH > 0 ? dstH : 1, fsTriVb_, bloomUpProgram_);
             ++viewId;
@@ -337,6 +347,7 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
             bgfx::setTexture(1, uniforms.s_bloomTex, resources_.hdrColor());
         }
 
+        bgfx::setViewName(viewId, "Tonemap");
         bgfx::setViewFrameBuffer(viewId, tonemapTarget);
         bgfx::setViewRect(viewId, 0, 0, w, h);
         bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
@@ -361,6 +372,7 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
         bgfx::setTexture(0, uniforms.s_ldrColor, resources_.ldrColor());
 
         // Final pass always targets the backbuffer.
+        bgfx::setViewName(viewId, "FXAA");
         bgfx::setViewFrameBuffer(viewId, BGFX_INVALID_HANDLE);
         bgfx::setViewRect(viewId, 0, 0, w, h);
         bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
