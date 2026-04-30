@@ -1,8 +1,7 @@
 #pragma once
 
-#include <bgfx/bgfx.h>
-
 #include "engine/math/Types.h"
+#include "engine/rendering/HandleTypes.h"
 
 namespace engine::rendering
 {
@@ -15,6 +14,12 @@ namespace engine::rendering
 // for a single pass in one chain, making it impossible to accidentally set
 // state on the wrong view ID.
 //
+// This header is intentionally bgfx-free — game code and other engine
+// modules may include it without dragging in <bgfx/bgfx.h>.  All bgfx
+// calls live in RenderPass.cpp, where engine::rendering::FrameBufferHandle
+// is converted to bgfx::FrameBufferHandle via the bit-identical layout
+// guarded by static_asserts in that translation unit.
+//
 // Example — shadow pass:
 //   RenderPass(kViewShadowBase)
 //       .framebuffer(shadowFb)
@@ -24,7 +29,7 @@ namespace engine::rendering
 //
 // Example — opaque pass (renders to backbuffer):
 //   RenderPass(kViewOpaque)
-//       .framebuffer(BGFX_INVALID_HANDLE)
+//       .framebuffer()                  // default = kInvalidFramebuffer
 //       .rect(0, 0, w, h)
 //       .clearColorAndDepth(0x87CEEBFF)
 //       .transform(camView, camProj);
@@ -33,10 +38,10 @@ namespace engine::rendering
 class RenderPass
 {
 public:
-    explicit RenderPass(bgfx::ViewId viewId) : viewId_(viewId) {}
+    explicit RenderPass(ViewId viewId) : viewId_(viewId) {}
 
-    // Bind a framebuffer.  Pass BGFX_INVALID_HANDLE to render to the backbuffer.
-    RenderPass& framebuffer(bgfx::FrameBufferHandle fb);
+    // Bind a framebuffer.  Default kInvalidFramebuffer renders to the backbuffer.
+    RenderPass& framebuffer(FrameBufferHandle fb = kInvalidFramebuffer);
 
     // Set the viewport rectangle (pixels, top-left origin).
     RenderPass& rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
@@ -47,19 +52,40 @@ public:
     // Clear depth only — typical for shadow passes.
     RenderPass& clearDepth(float depth = 1.f);
 
+    // Clear colour only — typical for UI overlays that want to wipe the
+    // backbuffer without disturbing depth (or when the view has no depth
+    // attachment).
+    RenderPass& clearColor(uint32_t rgba);
+
+    // Reset the persistent clear state to BGFX_CLEAR_NONE.
+    //
+    // Rationale: bgfx's setViewClear flags persist across frames.  If a
+    // previous frame configured the view with CLEAR_COLOR_AND_DEPTH and a
+    // later frame "unconfigures" it (e.g. when transitioning game states),
+    // the stale clear flags can wipe the framebuffer at the start of the
+    // next frame and silently break rendering.  Calling clearNone() on a
+    // view explicitly tells bgfx "do not clear anything for this view".
+    // This was originally needed to fix an Android return-to-title bug
+    // where stale CLEAR_COLOR_AND_DEPTH wiped the opaque pass.
+    RenderPass& clearNone();
+
     // Upload view and projection matrices.
     RenderPass& transform(const math::Mat4& view, const math::Mat4& proj);
 
     // Ensure bgfx processes this view even when no draw calls are submitted.
     RenderPass& touch();
 
-    [[nodiscard]] bgfx::ViewId viewId() const
+    // Set the GPU-debugger / perf-overlay label for this view.
+    // Wraps bgfx::setViewName.  The label string is copied internally by bgfx.
+    RenderPass& name(const char* label);
+
+    [[nodiscard]] ViewId viewId() const
     {
         return viewId_;
     }
 
 private:
-    bgfx::ViewId viewId_;
+    ViewId viewId_;
 };
 
 }  // namespace engine::rendering

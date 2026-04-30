@@ -15,9 +15,9 @@ namespace engine::rendering
 static_assert(sizeof(engine::rendering::FrameBufferHandle) == sizeof(bgfx::FrameBufferHandle));
 static_assert(alignof(engine::rendering::FrameBufferHandle) == alignof(bgfx::FrameBufferHandle));
 
-RenderPass& RenderPass::framebuffer(bgfx::FrameBufferHandle fb)
+RenderPass& RenderPass::framebuffer(FrameBufferHandle fb)
 {
-    bgfx::setViewFrameBuffer(viewId_, fb);
+    bgfx::setViewFrameBuffer(viewId_, bgfx::FrameBufferHandle{fb.idx});
     return *this;
 }
 
@@ -39,6 +39,18 @@ RenderPass& RenderPass::clearDepth(float depth)
     return *this;
 }
 
+RenderPass& RenderPass::clearColor(uint32_t rgba)
+{
+    bgfx::setViewClear(viewId_, BGFX_CLEAR_COLOR, rgba, 1.f, 0);
+    return *this;
+}
+
+RenderPass& RenderPass::clearNone()
+{
+    bgfx::setViewClear(viewId_, BGFX_CLEAR_NONE);
+    return *this;
+}
+
 RenderPass& RenderPass::transform(const math::Mat4& view, const math::Mat4& proj)
 {
     bgfx::setViewTransform(viewId_, glm::value_ptr(view), glm::value_ptr(proj));
@@ -48,6 +60,12 @@ RenderPass& RenderPass::transform(const math::Mat4& view, const math::Mat4& proj
 RenderPass& RenderPass::touch()
 {
     bgfx::touch(viewId_);
+    return *this;
+}
+
+RenderPass& RenderPass::name(const char* label)
+{
+    bgfx::setViewName(viewId_, label);
     return *this;
 }
 

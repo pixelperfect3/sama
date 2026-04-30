@@ -105,7 +105,7 @@ void ShadowRenderer::beginCascade(uint32_t cascadeIdx, const math::Mat4& lightVi
     }
 
     RenderPass(viewId)
-        .framebuffer(fb_[i])
+        .framebuffer({fb_[i].idx})
         .rect(x, y, w, h)
         .clearDepth(1.0f)
         .transform(lightView, lightProj);

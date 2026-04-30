@@ -124,8 +124,9 @@ void Renderer::beginFrame()
     // where postProcess_ was not initialised and sceneFb() is invalid.
     if (!headless_)
     {
-        RenderPass(kViewOpaque).framebuffer(postProcess_.resources().sceneFb());
-        RenderPass(kViewTransparent).framebuffer(postProcess_.resources().sceneFb());
+        const auto sceneFb = postProcess_.resources().sceneFb();
+        RenderPass(kViewOpaque).framebuffer({sceneFb.idx});
+        RenderPass(kViewTransparent).framebuffer({sceneFb.idx});
     }
 
     // Ensure view 0 is submitted even when the frame has no shadow draw calls.
@@ -138,7 +139,7 @@ void Renderer::beginFrameDirect()
         return;
 
     // kViewOpaque writes directly to the backbuffer — bypass post-processing.
-    RenderPass(kViewOpaque).framebuffer(BGFX_INVALID_HANDLE);
+    RenderPass(kViewOpaque).framebuffer();
     RenderPass(kViewShadowBase).touch();
 }
 
