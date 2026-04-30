@@ -105,7 +105,7 @@ bgfx supports Metal on iOS. The renderer requires zero shader changes — bgfx's
 - [x] `IosWindow` — `UIWindow` + `CAMetalLayer`-backed `_SamaMetalView`; tracks `drawableSize = bounds × contentScaleFactor`
 - [x] `IosTouchInput` — `UITouch` overlay; multitouch slot-id reuse; first-touch-as-mouse mapping
 - [x] `IosGyro` — `CMMotionManager` `startDeviceMotionUpdatesUsingReferenceFrame:`; pull model (one sample per frame); zero on simulator (no IMU available)
-- [x] App lifecycle — `UIApplicationDelegate` (`_SamaAppDelegate`) with `CADisplayLink`; `Engine::initIos` + `GameRunner::{runIos,tickIos,shutdownIos}` wired through; pause on resignActive, resume on becomeActive
+- [x] App lifecycle — `UIApplicationDelegate` (`_SamaAppDelegate`) with `CADisplayLink`; `Engine::initIos` + `GameRunner::{runIos,tickIos,shutdownIos}` wired through; pause on resignActive, resume on becomeActive.  CADisplayLink frame rate is driven by the active tier's `targetFPS` via `preferredFrameRateRange` (iOS 15+) — low/mid clamp at 30fps, high targets 60fps with a 30..120Hz band so ProMotion displays can negotiate up.
 - [x] `engine_rendering` builds for iOS — Metal-only shader headers retained, ESSL/GLSL/SPIRV gated out with `#if !TARGET_OS_IPHONE`; `BGFX_PLATFORM_SUPPORTS_ESSL=0` set on `engine_rendering`
 - [x] Sample app `apps/ios_test` mirrors `apps/android_test`: helmet scene, touch trail, multi-touch HUD, gyro hue cycling
 - [x] Audio: SoLoud + miniaudio CoreAudio backend wired through `Engine::initIos`; falls back to `NullAudioEngine` if SoLoud init fails. `soloud_miniaudio.cpp` compiled as Obj-C++ on iOS (miniaudio's CoreAudio path uses `AVAudioSession` + `@autoreleasepool`).

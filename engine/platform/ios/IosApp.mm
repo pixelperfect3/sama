@@ -111,6 +111,7 @@
     // / cascade count via TierConfig.  Future work will read the same
     // ProjectConfig from the bundle's project.json; for now there is no
     // such file in the iOS bundle, so we use defaults + the detected tier.
+    int targetFps = 60;  // safe default; overridden below if a tier was chosen
     if (_game != nullptr)
     {
         _runner = new engine::game::GameRunner(*_game);
@@ -120,6 +121,10 @@
         config.activeTier = engine::platform::ios::tierToProjectConfigName(detectedTier);
         std::fprintf(stderr, "[Sama][iOS] ProjectConfig::activeTier = \"%s\"\n",
                      config.activeTier.c_str());
+
+        // Pull targetFPS from the active tier so we can hand it to the
+        // CADisplayLink below.  Built-in tiers: low=30, mid=30, high=60.
+        targetFps = config.getActiveTier().targetFPS;
 
         const engine::core::EngineDesc desc = config.toEngineDesc();
         const int rc =
@@ -133,9 +138,35 @@
     }
 
     // -- CADisplayLink (drives the per-frame tick) ------------------------
-    // 60Hz default; high-tier devices that opted in via Info.plist's
-    // CADisableMinimumFrameDurationOnPhone can negotiate a higher rate.
+    // Frame rate cap is driven by the active tier's targetFPS:
+    //   low/mid tiers cap at 30fps so the GPU has headroom and the device
+    //   stays cool; high tier targets 60fps (or higher on ProMotion
+    //   displays — we ask for the system max as the upper bound).
+    //
+    // CAFrameRateRange (iOS 15+) is the modern API.  preferredFramesPerSecond
+    // alone is deprecated for high-rate displays; on a 120Hz iPad Pro the
+    // legacy property would clamp to 60fps even with CADisableMinimumFrame
+    // DurationOnPhone set.  CAFrameRateRangeMake(min, max, preferred) lets
+    // us be explicit about the band the system can negotiate.
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(onFrame:)];
+    if (@available(iOS 15.0, *))
+    {
+        // CAFrameRateRange wants min<=preferred<=max with all three > 0.
+        // High tier (60fps target) gets a 30..120Hz band so ProMotion
+        // displays can negotiate up; low/mid (30fps target) get a tight
+        // 30..30 band to keep the GPU cool.  CAFrameRateRangeDefault.max
+        // is 0 and would throw NSInvalidArgumentException, hence the
+        // explicit numeric upper bound.
+        const float pref = static_cast<float>(targetFps);
+        const float minFps = (targetFps >= 60) ? 30.0f : pref;
+        const float maxFps = (targetFps >= 60) ? 120.0f : pref;
+        self.displayLink.preferredFrameRateRange = CAFrameRateRangeMake(minFps, maxFps, pref);
+    }
+    else
+    {
+        self.displayLink.preferredFramesPerSecond = targetFps;
+    }
+    std::fprintf(stderr, "[Sama][iOS] CADisplayLink targetFps = %d\n", targetFps);
     [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 
     return YES;
