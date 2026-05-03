@@ -90,7 +90,7 @@ inputSys.update(inputState)
 cam.update(inputState, dt)
 
 renderer.beginFrameDirect()
-  └─ RenderPass(kViewOpaque).framebuffer(BGFX_INVALID_HANDLE)
+  └─ RenderPass(kViewOpaque).framebuffer(engine::rendering::kInvalidFramebuffer)
      RenderPass(kViewShadowBase).touch()
 
 ─────────────────────────────────────────────────────────────────
