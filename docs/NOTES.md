@@ -1881,14 +1881,14 @@ module zips to `bundletool build-bundle` via the comma-separated
 ### Why install-time was easy and dynamic delivery was not
 
 **Install-time packs are pure build pipeline.** Play Store delivers
-them with the base APK during the user’\s first install and merges
+them with the base APK during the user's first install and merges
 them so the assets land at the same `/data/app/.../assets/<pack>/`
 paths the runtime `AAssetManager` already reads. The engine code
 sees no difference between an install-time-pack file and a base-APK
 file. Result: zero runtime change, all the work is in the AAB
 structure that bundletool builds at developer machine / CI time.
 
-**Fast-follow and on-demand packs are pure runtime.** They’e
+**Fast-follow and on-demand packs are pure runtime.** They're
 downloaded after install (fast-follow: in the background right after
 install completes; on-demand: when the game requests them). Tracking
 download state, requesting cellular vs Wi-Fi, surfacing user consent
