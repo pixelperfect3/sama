@@ -243,8 +243,8 @@ See [`docs/IOS_SUPPORT.md`](docs/IOS_SUPPORT.md) for the full architecture, tier
 build-tools 34.0.0+, Java 17+. `bundletool` for AAB generation.
 
 Hardware verified on Pixel 9: Vulkan + PBR + cast shadows + post-processing + audio + touch + gyro,
-60fps at 2251×1080. The remaining gap is ImGui (engine skips it on Android — debug overlays only
-work on desktop).
+60fps at 2251×1080. Debug overlays via dear-imgui (bgfx examples/common/imgui wrapper) also work on
+Android — single-finger taps land on ImGui widgets via the existing touch→primary-mouse synthesis.
 
 See [`docs/ANDROID_SUPPORT.md`](docs/ANDROID_SUPPORT.md) for the full architecture and roadmap.
 

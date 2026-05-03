@@ -1694,3 +1694,50 @@ Picked the cross-platform path: `engine::input::GestureRecognizer` reads `InputS
 - *Touch-id stability assumed.* The recognizer assumes `TouchPoint::id` is stable across frames within one gesture. Both `AndroidInput` and `IosInputBackend` already guarantee this (it's the contract from `InputState`'s docstring), but a future backend that violates it would produce constant re-anchoring and zero deltas. Worth a comment in the recognizer's header — added.
 
 The visual side (`engine::ui::renderVirtualJoystick`) made the same call for the same reasons: it's a free function in `engine/ui/`, not coupled to the Android `VirtualJoystick` class beyond reading `joy.config()` + `joy.direction()`. Once the iOS touch backend gets a `VirtualJoystick` equivalent (likely the same class — the config + update math is platform-free already, only the file path needs to move), the same renderer works there with no changes.
+
+## ImGui on Android (2026-04-30)
+
+Wired the bgfx examples/common/imgui wrapper into the Android `Engine` lifecycle so debug overlays + the engine's existing dev tools (perf overlay, debug texture panel) work on device. iOS still skipped — that is a separate follow-up because it needs touch→IO plumbing in `IosInputBackend` plus an iOS-side decision on font scale.
+
+### Decision: reuse the bgfx imgui wrapper as-is rather than write an engine-side ImGui submit path
+
+Two paths were on the table:
+
+1. **Wrapper-port**: link bgfx's `examples/common/imgui/imgui.cpp` (already built into `engine_debug` for desktop) into the Android build and call `imguiCreate / imguiBeginFrame / imguiEndFrame / imguiDestroy` from `Engine::initAndroid` / `beginFrame` / `endFrame` / `shutdown`. Same calls as desktop.
+2. **Engine-side submit**: write a new `engine::rendering::ImGuiRenderer` that owns the dear-imgui context, loads `vs/fs_ocornut_imgui` SPIRV from the APK via `loadShader()`, allocates transient vertex/index buffers each frame, and submits them on view 15. Bypass the bgfx wrapper entirely.
+
+Picked path 1 (wrapper-port). The whole change ended up being one `#include <imgui.h>`, an Android-branch `imguiCreate(16.f)` after input init, an `imguiBeginFrame(...)` in `beginFrame()`, an `imguiEndFrame()` in `endFrame()`, an `imguiDestroy()` in `shutdown()`, and replacing the stub `imguiWantsMouse() { return false; }` with `return ImGui::GetIO().WantCaptureMouse;`. ~50 lines net in `Engine.cpp`. No CMake change, no new shader compile step, no APK bundling change.
+
+### Why path 1 was right (in this case)
+
+- **`engine_debug` was already linking on Android.** The bgfx imgui wrapper has zero GLFW/SDL/X11 dependencies — just bgfx, bx, bimg, and dear-imgui — so it cross-compiles for `aarch64-linux-android` without any patches. `libengine_debug.a` was already on disk in `build/android/arm64-v8a/` from previous builds; the symbols just weren't being kept because nothing in `engine_core`'s Android branch referenced them. Once `imguiCreate` etc. are called, the linker keeps the wrapper.
+
+- **No separate shader-bundling step needed.** bgfx's wrapper embeds the imgui shaders via `BGFX_EMBEDDED_SHADER`, which expands to a `bgfx::EmbeddedShader[]` containing variants for every renderer type (DXBC, DXIL, GLSL, ESSL, **SPIRV**, Metal, PSSL, WGSL). At runtime `bgfx::createEmbeddedShader` looks at `bgfx::getRendererType()` and picks the SPIRV variant when running on Vulkan. Our Android build has the SPIRV bytecode baked into the `.so` already (see `vs_ocornut_imgui_spv[1293]` in `build/_deps/bgfx_cmake-src/bgfx/examples/common/imgui/vs_ocornut_imgui.bin.h`).
+
+  Engine-side submit would have needed two more SPIRV `.bin` files in the APK (~5 KB), a `loadImguiProgram()` analog of `loadPbrProgram()` in `ShaderLoader.cpp`, and a duplicate copy of the wrapper's vertex layout / scissor / uniform setup logic — all to end up at the same place.
+
+- **Touch → mouse is already synthesized.** `AndroidInputBackend` turns the first touch pointer into `MouseButtonDown(Left)` + `MouseMove` so existing desktop code works on Android. The wrapper just needs `IMGUI_MBUT_LEFT` set in its `imguiBeginFrame(buttons, ...)` argument when `inputState_.isMouseButtonHeld(Left)` is true — three lines.
+
+- **`SAMA_HAS_IMGUI` macro instead of repeating `#if !defined(__ANDROID__) && !ENGINE_IS_IOS` everywhere.** Defined once at the top of `Engine.cpp` as `1` for desktop+Android and `0` for iOS. When iOS imgui lands, flip the iOS branch and remove the `#if !ENGINE_IS_IOS` — every other site stays as-is. Avoids the typical "I missed one of the eight `#if` sites" bug class.
+
+### When the engine-side path would have been better
+
+If any of these had been true I would have gone with path 2 instead:
+
+- bgfx's wrapper had a hard GLFW/SDL/desktop-only dependency that needed Android stubbing. (It doesn't.)
+- The wrapper used `BGFX_EMBEDDED_SHADER` for desktop-only renderer types and we needed to ship custom SPIRV. (It doesn't — SPIRV is in there.)
+- We wanted to swap out the imgui font for our own MSDF rendering. (We don't — the wrapper's ProggyClean default is fine for debug overlays, and the existing patch in the wrapper that pins it to ProggyClean rather than Roboto avoids an arm64 stb_truetype crash class noted in the wrapper itself.)
+- The wrapper allocated bgfx resources in a way that conflicted with our shader-loader / resource lifetime. (It doesn't — it owns its own static `OcornutImguiContext`.)
+
+### Things I deliberately did *not* do
+
+- **No multi-touch → multi-pointer ImGui IO.** ImGui has no native multi-touch concept; the second finger would just confuse cursor tracking. Single-finger tap is the right primitive for poking at debug overlays.
+- **No mouse-wheel / scroll plumbing.** Android has no wheel; passed `scroll=0` to `imguiBeginFrame`. Two-finger scroll on touchscreens could synthesize a wheel event, but ImGui scrolling is rare on a debug overlay sized for a phone.
+- **No software keyboard for text input.** ImGui text inputs would require popping the Android IME (`InputMethodManager.showSoftInput`) and routing characters back through `io.AddInputCharacter`. Out of scope for "debug overlay parity"; revisit if/when an actual on-device editor is needed.
+- **No iOS branch.** Stayed scoped to Android per the brief. The macro is structured so iOS is a one-line flip when the iOS-side touch routing is ready.
+
+### Verification
+
+- `engine_tests` desktop: 664 cases / 6574 assertions pass — identical to baseline (no behavioural change to desktop, the Android branch just sprouted the same calls the desktop branch already had).
+- `apps/android_test` on the `sama_mid` AVD (Android 13 / arm64): renders a small "Android ImGui Test" window with frame counter, touch readout, `imguiWantsMouse` display, and a "Press me" button. logcat shows `[imgui] button tapped (count=N)` incrementing on each tap, confirming the click is reaching ImGui's hit-test (`AndroidInputBackend` mouse-synthesis → `IMGUI_MBUT_LEFT` → `ImGui::Button` → callback).
+- APK size: 14.07 MB (was 13.4 MB before — +680 KB for ImGui = dear-imgui core + the bgfx wrapper). The shared object went from ~24.7 MB → 29.1 MB before stripping/compression — most of that is debug-info, the runtime cost is around the +680 KB observed in the APK.

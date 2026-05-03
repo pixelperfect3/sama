@@ -474,9 +474,23 @@ adb emu kill
 
 ### Remaining Limitations
 
-- [ ] **ImGui support on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false (`Engine.cpp` line 608). *Why:* No debug overlay or in-game tools on device. Requires bgfx imgui wrapper to compile for Android (currently desktop-only) and SPIRV versions of `vs_ocornut_imgui`/`fs_ocornut_imgui`.
 - [ ] **Pre-init Vulkan surface format query for robustness.** `Renderer::init()` hardcodes `formatColor = RGBA8` on Android. RGBA8 is mandatory per the Android CDD so this works on all real devices, but a future device or rendering target could need different. *Why:* Defensive against future hardware. Implementation: create temporary VkInstance + surface in `Renderer::init()` before `bgfx::init()`, call `vkGetPhysicalDeviceSurfaceFormatsKHR`, pick the first supported format from a priority list (RGBA8 → BGRA8 → R10G10B10A2 → ...), tear down, pass to bgfx.
 - [ ] **Sample app demonstrating opt-in post-processing on Android.** `android_test` uses the simple direct path. A reference scene proving bloom/tonemap/FXAA/SSAO work end-to-end on real hardware would catch any per-shader regressions and serve as the pattern game devs copy.
+
+### ImGui on Android (working)
+
+ImGui (the bgfx examples/common/imgui wrapper around dear-imgui) runs on Android via the same engine API as desktop:
+
+- `Engine::initAndroid()` calls `imguiCreate(16.f)` after the renderer is up. The wrapper's static context allocates its bgfx programs, vertex layout, and a font atlas texture.
+- `Engine::beginFrame()` (Android branch in `engine/core/Engine.cpp`) calls `imguiBeginFrame(mx, my, buttons, scroll=0, fbW, fbH, -1, kViewImGui)` with the synthesized primary touch from `AndroidInputBackend` mapped to `IMGUI_MBUT_LEFT`.
+- `Engine::endFrame()` calls `imguiEndFrame()` which submits the dear-imgui draw lists into `kViewImGui` (view 15).
+- `Engine::imguiWantsMouse()` returns `ImGui::GetIO().WantCaptureMouse`, the same as desktop, so games can `if (!engine.imguiWantsMouse()) { ... }` to gate their own touch handlers.
+
+No extra shader bundling step is needed: the bgfx imgui wrapper embeds SPIRV (and ESSL/GLSL/Metal) bytecode for `vs_ocornut_imgui` / `fs_ocornut_imgui` / `vs_imgui_image` / `fs_imgui_image` via `BGFX_EMBEDDED_SHADER`, and `bgfx::createEmbeddedShader` picks the SPIRV variant at runtime when the active renderer is Vulkan.
+
+Smoke tested in `apps/android_test/AndroidTestGame.cpp` — renders a window with a frame counter and a "Press me" button; tapping the button increments a counter and logs to logcat. The bgfx imgui wrapper compiles cleanly for `SAMA_ANDROID` (already linked into `engine_core` via `engine_debug`) — the only change required was wiring the `imguiCreate / imguiBeginFrame / imguiEndFrame / imguiDestroy` calls into the Android `Engine` lifecycle, all under the new `SAMA_HAS_IMGUI` macro (1 on desktop and Android, 0 on iOS — adding iOS later is a one-line flip).
+
+iOS imgui wiring is still pending (separate follow-up; would need iOS-side touch → ImGui IO plumbing).
 
 ### Bugs Fixed During Hardware Bring-up
 
