@@ -235,19 +235,38 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   ```bash
   ./android/build_apk.sh                                     # default: mid tier, arm64-v8a, release
   ./android/build_apk.sh --tier high --debug --install       # debug build + adb install
-  ./android/build_apk.sh --tier low --keystore release.jks   # release signing
+  ./android/build_apk.sh --tier low --keystore release.jks   # release signing (interactive password)
+  ./android/build_apk.sh --keystore release.jks --ks-pass 'hunter2' --ks-key-alias mykey  # CI: literal password
+  ./android/build_apk.sh --keystore release.jks --ks-pass-env SAMA_KS_PASS                # CI: env var (preferred)
   ./android/build_apk.sh --app-name "My Game" --package com.mygame.app --output MyGame.apk
   ```
 - [x] `adb install` integration via `--install` flag for quick deploy to connected device
 - [x] Build time optimization
   - Incremental native builds (CMake only recompiles changed sources)
   - Intermediate files cleaned after APK generation (base.apk, unsigned.apk, aligned.apk)
+- [x] Vulkan feature filter: AndroidManifest declares the canonical pair
+  `android.hardware.vulkan.level` (version=1) and
+  `android.hardware.vulkan.version` (version=0x00401000 = Vulkan 1.1).
+  Picked up by Play Store device-eligibility filters; bare
+  `android.hardware.vulkan` was non-canonical.
 
-### Known Issues (Phase F)
+### Resolved Issues (Phase F)
 
-- **Custom keystore with no `--ks-pass`:** When using `--keystore`, `apksigner` will prompt interactively for the password. In CI/automated builds, pass the keystore password via the `apksigner` environment or extend the script with a `--ks-pass` option.
-- **Stale staging directory:** The staging directory (`build/android/apk_staging/`) is not cleaned between runs. Stale files from previous builds could be included in the APK. Add `rm -rf "$STAGING_DIR"` before step 3 for clean builds.
-- **AndroidManifest.xml Vulkan feature:** The manifest uses `android.hardware.vulkan` as the feature name. The canonical name is `android.hardware.vulkan.level` with `android:version="1"` for Vulkan 1.1. The current value works on most devices but may not be recognized by all Play Store filters.
+The following issues were noted during Phase F and have since been fixed:
+
+- **Non-interactive keystore signing:** Added `--ks-pass`, `--ks-pass-env`,
+  `--ks-key-alias`, `--key-pass`, and `--key-pass-env` to both
+  `build_apk.sh` (apksigner) and `build_aab.sh` (jarsigner). Falls back
+  to interactive prompt when `--keystore` is supplied without a password
+  source, preserving the legacy behavior. `--ks-pass-env` is preferred in
+  CI to keep secrets out of `ps -ef` and shell history.
+- **Stale staging directory:** Both scripts now wipe their staging
+  directory at the start of asset processing (`[stage] Cleaning staging
+  directory: …`). Use `--no-clean-staging` for fast local iteration.
+- **AndroidManifest.xml Vulkan feature:** Replaced the bare
+  `android.hardware.vulkan` feature with the canonical
+  `android.hardware.vulkan.level` (version=1) + `android.hardware.vulkan.version`
+  (version=0x00401000 / Vulkan 1.1) pair.
 
 ---
 
