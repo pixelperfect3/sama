@@ -211,11 +211,11 @@ int main()
             const uint32_t n = eng.resources().textureCount();
             for (uint32_t i = 1; i <= n; ++i)
             {
-                bgfx::TextureHandle th = bgfx::TextureHandle{eng.resources().getTexture(i).idx};
+                engine::rendering::TextureHandle th = eng.resources().getTexture(i);
                 const char* name = (i <= 5) ? kTexNames[i - 1] : "Texture";
                 char label[64];
                 snprintf(label, sizeof(label), "[%u] %s", i, name);
-                texPanel.add(th, label);
+                texPanel.add(bgfx::TextureHandle{th.idx}, label);
             }
         }
         else if (helmetState == AssetState::Failed)
@@ -258,7 +258,8 @@ int main()
 
         // Shadow pass
         eng.shadow().beginCascade(0, lightView, lightProj);
-        drawCallSys.submitShadowDrawCalls(reg, eng.resources(), eng.shadowProgram(), 0);
+        drawCallSys.submitShadowDrawCalls(reg, eng.resources(),
+                                          bgfx::ProgramHandle{eng.shadowProgram().idx}, 0);
 
         // Opaque pass
         const auto W = eng.fbWidth();
@@ -289,7 +290,8 @@ int main()
             frame.prefiltered = ibl.prefiltered();
             frame.brdfLut = ibl.brdfLut();
         }
-        drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
+        drawCallSys.update(reg, eng.resources(), bgfx::ProgramHandle{eng.pbrProgram().idx},
+                           eng.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
         hud.begin(eng.fbWidth(), eng.fbHeight());

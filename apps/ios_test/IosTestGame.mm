@@ -398,7 +398,7 @@ public:
                          "shadowProgValid=%d\n",
                          casters, bgfx::isValid(atlas), sm[0][0], sm[0][1], sm[0][2], sm[0][3],
                          kLightDir.x, kLightDir.y, kLightDir.z,
-                         bgfx::isValid(engine.shadowProgram()));
+                         engine::rendering::isValid(engine.shadowProgram()));
         }
 
         // Opaque PBR pass.
