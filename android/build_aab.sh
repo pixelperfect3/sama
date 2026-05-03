@@ -3,15 +3,19 @@
 # Build an Android App Bundle (AAB) for Play Store distribution.
 #
 # Usage: ./android/build_aab.sh [options]
-#   --tier <low|mid|high>     Quality tier (default: mid)
-#   --keystore <path>         Keystore for signing (required for Play Store)
-#   --ks-pass <password>      Keystore password (prompted if not provided)
-#   --ks-alias <alias>        Key alias in keystore (default: sama)
-#   --key-pass <password>     Key password (prompted if not provided)
-#   --output <path>           Output AAB path (default: build/android/Game.aab)
-#   --app-name <name>         Application name (default: "Sama Game")
-#   --package <id>            Package ID (default: com.sama.game)
-#   --skip-armeabi            Skip armeabi-v7a build (arm64-v8a only)
+#   --tier <low|mid|high>       Quality tier (default: mid)
+#   --keystore <path>           Keystore for signing (required for Play Store)
+#   --ks-pass <password>        Keystore password (prompted if not provided).
+#                               SECURITY: appears in process listings and shell
+#                               history; prefer --ks-pass-env in CI.
+#   --ks-pass-env <ENV_VAR>     Read keystore password from named env var.
+#   --ks-alias <alias>          Key alias in keystore (default: sama)
+#   --key-pass <password>       Key password (prompted if not provided).
+#   --key-pass-env <ENV_VAR>    Read key password from named env var.
+#   --output <path>             Output AAB path (default: build/android/Game.aab)
+#   --app-name <name>           Application name (default: "Sama Game")
+#   --package <id>              Package ID (default: com.sama.game)
+#   --skip-armeabi              Skip armeabi-v7a build (arm64-v8a only)
 #
 # Environment variables:
 #   ANDROID_NDK      — path to the Android NDK
@@ -26,8 +30,10 @@ set -euo pipefail
 TIER="mid"
 KEYSTORE=""
 KS_PASS=""
+KS_PASS_ENV=""
 KS_ALIAS="sama"
 KEY_PASS=""
+KEY_PASS_ENV=""
 OUTPUT=""
 APP_NAME="Sama Game"
 PACKAGE_ID="com.sama.game"
@@ -37,17 +43,19 @@ SKIP_ARMEABI=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --tier)          TIER="$2";       shift 2 ;;
-        --keystore)      KEYSTORE="$2";   shift 2 ;;
-        --ks-pass)       KS_PASS="$2";    shift 2 ;;
-        --ks-alias)      KS_ALIAS="$2";   shift 2 ;;
-        --key-pass)      KEY_PASS="$2";   shift 2 ;;
-        --output)        OUTPUT="$2";     shift 2 ;;
-        --app-name)      APP_NAME="$2";   shift 2 ;;
-        --package)       PACKAGE_ID="$2"; shift 2 ;;
-        --skip-armeabi)  SKIP_ARMEABI=true; shift ;;
+        --tier)              TIER="$2";              shift 2 ;;
+        --keystore)          KEYSTORE="$2";          shift 2 ;;
+        --ks-pass)           KS_PASS="$2";           shift 2 ;;
+        --ks-pass-env)       KS_PASS_ENV="$2";       shift 2 ;;
+        --ks-alias)          KS_ALIAS="$2";          shift 2 ;;
+        --key-pass)          KEY_PASS="$2";          shift 2 ;;
+        --key-pass-env)      KEY_PASS_ENV="$2";      shift 2 ;;
+        --output)            OUTPUT="$2";            shift 2 ;;
+        --app-name)          APP_NAME="$2";          shift 2 ;;
+        --package)           PACKAGE_ID="$2";        shift 2 ;;
+        --skip-armeabi)      SKIP_ARMEABI=true;      shift ;;
         -h|--help)
-            head -19 "$0" | tail -17
+            head -24 "$0" | tail -23
             exit 0
             ;;
         *)
@@ -299,11 +307,33 @@ if [ -n "$KEYSTORE" ]; then
     fi
 
     JARSIGNER_ARGS=(-keystore "$KEYSTORE")
-    if [ -n "$KS_PASS" ]; then
+
+    # Keystore password: env var takes precedence over literal --ks-pass.
+    # jarsigner uses `-storepass:env NAME` for env-var lookup.
+    if [ -n "$KS_PASS_ENV" ]; then
+        if [ -z "${!KS_PASS_ENV:-}" ]; then
+            echo "ERROR: --ks-pass-env ${KS_PASS_ENV} is unset or empty in environment."
+            exit 1
+        fi
+        JARSIGNER_ARGS+=(-storepass:env "$KS_PASS_ENV")
+    elif [ -n "$KS_PASS" ]; then
         JARSIGNER_ARGS+=(-storepass "$KS_PASS")
     fi
-    if [ -n "$KEY_PASS" ]; then
+
+    # Key (alias) password: same precedence; falls back to keystore password
+    # source if only the keystore password was supplied.
+    if [ -n "$KEY_PASS_ENV" ]; then
+        if [ -z "${!KEY_PASS_ENV:-}" ]; then
+            echo "ERROR: --key-pass-env ${KEY_PASS_ENV} is unset or empty in environment."
+            exit 1
+        fi
+        JARSIGNER_ARGS+=(-keypass:env "$KEY_PASS_ENV")
+    elif [ -n "$KEY_PASS" ]; then
         JARSIGNER_ARGS+=(-keypass "$KEY_PASS")
+    elif [ -n "$KS_PASS_ENV" ]; then
+        JARSIGNER_ARGS+=(-keypass:env "$KS_PASS_ENV")
+    elif [ -n "$KS_PASS" ]; then
+        JARSIGNER_ARGS+=(-keypass "$KS_PASS")
     fi
 
     jarsigner "${JARSIGNER_ARGS[@]}" "$OUTPUT" "$KS_ALIAS"

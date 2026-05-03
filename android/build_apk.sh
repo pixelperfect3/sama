@@ -3,14 +3,24 @@
 # Build an Android APK for the Sama engine (Gradle-free).
 #
 # Usage: ./android/build_apk.sh [options]
-#   --tier <low|mid|high>     Quality tier (default: mid)
-#   --abi <arm64-v8a|...>     Target ABI (default: arm64-v8a)
-#   --debug                   Debug build (default: release)
-#   --keystore <path>         Keystore for signing (default: debug keystore)
-#   --output <path>           Output APK path (default: build/android/Game.apk)
-#   --install                 Install via adb after build
-#   --app-name <name>         Application name (default: "Sama Game")
-#   --package <id>            Package ID (default: com.sama.game)
+#   --tier <low|mid|high>       Quality tier (default: mid)
+#   --abi <arm64-v8a|...>       Target ABI (default: arm64-v8a)
+#   --debug                     Debug build (default: release)
+#   --keystore <path>           Keystore for signing (default: debug keystore)
+#   --ks-pass <password>        Keystore password (literal). With --keystore,
+#                               makes signing non-interactive. SECURITY: appears
+#                               in process listings and shell history; prefer
+#                               --ks-pass-env in CI.
+#   --ks-pass-env <ENV_VAR>     Read keystore password from named env var.
+#   --ks-key-alias <alias>      Key alias inside the keystore (default: same as
+#                               apksigner default — first alias).
+#   --key-pass <password>       Key (alias) password. Defaults to --ks-pass if
+#                               only --ks-pass is supplied.
+#   --key-pass-env <ENV_VAR>    Read key password from named env var.
+#   --output <path>             Output APK path (default: build/android/Game.apk)
+#   --install                   Install via adb after build
+#   --app-name <name>           Application name (default: "Sama Game")
+#   --package <id>              Package ID (default: com.sama.game)
 #
 # Environment variables:
 #   ANDROID_NDK      — path to the Android NDK
@@ -26,6 +36,11 @@ TIER="mid"
 ABI="arm64-v8a"
 BUILD_TYPE="Release"
 KEYSTORE=""
+KS_PASS=""
+KS_PASS_ENV=""
+KS_KEY_ALIAS=""
+KEY_PASS=""
+KEY_PASS_ENV=""
 OUTPUT=""
 INSTALL=false
 APP_NAME="Sama Game"
@@ -35,16 +50,21 @@ PACKAGE_ID="com.sama.game"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --tier)      TIER="$2";       shift 2 ;;
-        --abi)       ABI="$2";        shift 2 ;;
-        --debug)     BUILD_TYPE="Debug"; shift ;;
-        --keystore)  KEYSTORE="$2";   shift 2 ;;
-        --output)    OUTPUT="$2";     shift 2 ;;
-        --install)   INSTALL=true;    shift ;;
-        --app-name)  APP_NAME="$2";   shift 2 ;;
-        --package)   PACKAGE_ID="$2"; shift 2 ;;
+        --tier)              TIER="$2";              shift 2 ;;
+        --abi)               ABI="$2";               shift 2 ;;
+        --debug)             BUILD_TYPE="Debug";     shift ;;
+        --keystore)          KEYSTORE="$2";          shift 2 ;;
+        --ks-pass)           KS_PASS="$2";           shift 2 ;;
+        --ks-pass-env)       KS_PASS_ENV="$2";       shift 2 ;;
+        --ks-key-alias)      KS_KEY_ALIAS="$2";      shift 2 ;;
+        --key-pass)          KEY_PASS="$2";          shift 2 ;;
+        --key-pass-env)      KEY_PASS_ENV="$2";      shift 2 ;;
+        --output)            OUTPUT="$2";            shift 2 ;;
+        --install)           INSTALL=true;           shift ;;
+        --app-name)          APP_NAME="$2";          shift 2 ;;
+        --package)           PACKAGE_ID="$2";        shift 2 ;;
         -h|--help)
-            head -17 "$0" | tail -15
+            head -29 "$0" | tail -28
             exit 0
             ;;
         *)
@@ -354,7 +374,43 @@ echo "[7/7] Signing APK..."
 mkdir -p "$(dirname "$OUTPUT")"
 
 if [ -n "$KEYSTORE" ]; then
-    "$APKSIGNER" sign --ks "$KEYSTORE" --out "$OUTPUT" "$ALIGNED_APK"
+    # Resolve keystore + key password sources. Precedence: --ks-pass-env >
+    # --ks-pass > interactive prompt (apksigner default). When only --ks-pass
+    # is supplied, reuse it for the key (alias) password — the common case
+    # where alias and store passwords match.
+    APKSIGNER_ARGS=(sign --ks "$KEYSTORE")
+
+    if [ -n "$KS_PASS_ENV" ]; then
+        if [ -z "${!KS_PASS_ENV:-}" ]; then
+            echo "ERROR: --ks-pass-env ${KS_PASS_ENV} is unset or empty in environment."
+            exit 1
+        fi
+        APKSIGNER_ARGS+=(--ks-pass "env:${KS_PASS_ENV}")
+    elif [ -n "$KS_PASS" ]; then
+        APKSIGNER_ARGS+=(--ks-pass "pass:${KS_PASS}")
+    fi
+
+    if [ -n "$KS_KEY_ALIAS" ]; then
+        APKSIGNER_ARGS+=(--ks-key-alias "$KS_KEY_ALIAS")
+    fi
+
+    if [ -n "$KEY_PASS_ENV" ]; then
+        if [ -z "${!KEY_PASS_ENV:-}" ]; then
+            echo "ERROR: --key-pass-env ${KEY_PASS_ENV} is unset or empty in environment."
+            exit 1
+        fi
+        APKSIGNER_ARGS+=(--key-pass "env:${KEY_PASS_ENV}")
+    elif [ -n "$KEY_PASS" ]; then
+        APKSIGNER_ARGS+=(--key-pass "pass:${KEY_PASS}")
+    elif [ -n "$KS_PASS_ENV" ]; then
+        # Reuse keystore env var for the key (alias) when key pass not given.
+        APKSIGNER_ARGS+=(--key-pass "env:${KS_PASS_ENV}")
+    elif [ -n "$KS_PASS" ]; then
+        APKSIGNER_ARGS+=(--key-pass "pass:${KS_PASS}")
+    fi
+
+    APKSIGNER_ARGS+=(--out "$OUTPUT" "$ALIGNED_APK")
+    "$APKSIGNER" "${APKSIGNER_ARGS[@]}"
 else
     # Use or create debug keystore
     DEBUG_KS="$HOME/.android/debug.keystore"
