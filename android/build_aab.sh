@@ -31,6 +31,12 @@
 #                               Fast-follow / on-demand packs require Play
 #                               Core's AssetPackManager (Java) which is not
 #                               wired up — see ANDROID_SUPPORT.md Phase H.
+#   --metadata                  Write output-metadata.json next to the AAB,
+#                               in the format expected by Play Console / the
+#                               Play Developer API. versionCode and
+#                               versionName are read from AndroidManifest.xml
+#                               when present, otherwise default to 1 / "1.0"
+#                               with a stderr warning.
 #
 # Environment variables:
 #   ANDROID_NDK      — path to the Android NDK
@@ -54,6 +60,7 @@ OUTPUT=""
 APP_NAME="Sama Game"
 PACKAGE_ID="com.sama.game"
 SKIP_ARMEABI=false
+WRITE_METADATA=false
 
 # Parallel arrays of asset pack names and source dirs.
 ASSET_PACK_NAMES=()
@@ -75,6 +82,7 @@ while [[ $# -gt 0 ]]; do
         --app-name)          APP_NAME="$2";          shift 2 ;;
         --package)           PACKAGE_ID="$2";        shift 2 ;;
         --skip-armeabi)      SKIP_ARMEABI=true;      shift ;;
+        --metadata)          WRITE_METADATA=true;    shift ;;
         --asset-pack)
             # Format: name:source-dir. The colon separates the pack name (a
             # valid split id) from a path. The path itself may contain
@@ -92,7 +100,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            head -39 "$0" | tail -38
+            head -45 "$0" | tail -44
             exit 0
             ;;
         *)
@@ -297,11 +305,14 @@ if [ "${#ASSET_PACK_NAMES[@]}" -gt 0 ]; then
         echo "    - ${ASSET_PACK_NAMES[$i]}  (${ASSET_PACK_DIRS[$i]}, $((PACK_KB / 1024)) MiB)"
     done
 fi
+if [ "$WRITE_METADATA" = true ]; then
+    echo "  Metadata:    output-metadata.json (Play Console)"
+fi
 echo ""
 
 # ── Step 1: Build native libraries for all ABIs ────────────────────────────
 
-echo "[1/6] Building native libraries..."
+echo "[1/7] Building native libraries..."
 for ABI in $ABIS; do
     echo "  Building ${ABI}..."
     "${PROJECT_ROOT}/android/build_android.sh" "$ABI" Release
@@ -316,7 +327,7 @@ done
 
 # ── Step 2: Process assets ──────────────────────────────────────────────────
 
-echo "[2/6] Processing assets for tier '${TIER}'..."
+echo "[2/7] Processing assets for tier '${TIER}'..."
 ASSET_TOOL="${PROJECT_ROOT}/build/sama_asset_tool"
 ASSETS_DIR="${PROJECT_ROOT}/assets"
 ASSETS_OUTPUT="${STAGING_DIR}/base/assets"
@@ -344,7 +355,7 @@ fi
 
 # ── Step 3: Create base module staging structure ────────────────────────────
 
-echo "[3/6] Staging AAB base module..."
+echo "[3/7] Staging AAB base module..."
 mkdir -p "${STAGING_DIR}/base/manifest"
 mkdir -p "${STAGING_DIR}/base/dex"
 
@@ -363,7 +374,7 @@ sed -e "s/com\\.sama\\.engine/${PACKAGE_ID//./\\.}/g" \
 
 # ── Step 4: Compile resources and create base module zip ────────────────────
 
-echo "[4/6] Creating base module..."
+echo "[4/7] Creating base module..."
 BASE_APK="${PROJECT_ROOT}/build/android/aab_base.apk"
 
 # Use aapt2 to link the manifest and create a base APK with compiled resources
@@ -418,7 +429,7 @@ PACK_ZIPS=()
 PACK_APKS=()
 PACK_PROTO_DIRS=()
 if [ "${#ASSET_PACK_NAMES[@]}" -gt 0 ]; then
-    echo "[4b/6] Staging ${#ASSET_PACK_NAMES[@]} asset pack module(s)..."
+    echo "[4b/7] Staging ${#ASSET_PACK_NAMES[@]} asset pack module(s)..."
     for i in "${!ASSET_PACK_NAMES[@]}"; do
         PACK_NAME="${ASSET_PACK_NAMES[$i]}"
         PACK_DIR="${ASSET_PACK_DIRS[$i]}"
@@ -477,7 +488,7 @@ fi
 
 # ── Step 5: Build AAB with bundletool ──────────────────────────────────────
 
-echo "[5/6] Building AAB with bundletool..."
+echo "[5/7] Building AAB with bundletool..."
 mkdir -p "$(dirname "$OUTPUT")"
 rm -f "$OUTPUT"
 
@@ -494,7 +505,7 @@ bundletool build-bundle \
 # ── Step 6: Sign the AAB (if keystore provided) ────────────────────────────
 
 if [ -n "$KEYSTORE" ]; then
-    echo "[6/6] Signing AAB..."
+    echo "[6/7] Signing AAB..."
     if [ ! -f "$KEYSTORE" ]; then
         echo "ERROR: Keystore not found at ${KEYSTORE}"
         exit 1
@@ -532,10 +543,82 @@ if [ -n "$KEYSTORE" ]; then
 
     jarsigner "${JARSIGNER_ARGS[@]}" "$OUTPUT" "$KS_ALIAS"
 else
-    echo "[6/6] Skipping signing (no --keystore provided)."
+    echo "[6/7] Skipping signing (no --keystore provided)."
     echo "  NOTE: AABs must be signed before uploading to Play Store."
     echo "  Sign later with:"
     echo "    jarsigner -keystore <path> ${OUTPUT} <alias>"
+fi
+
+# ── Step 7: Optional Play Console metadata sidecar ─────────────────────────
+#
+# `output-metadata.json` is the file the Android Gradle Plugin writes
+# alongside its outputs and that the Play Developer API + Fastlane's
+# `supply` action read to learn about each artifact (versionCode,
+# versionName, applicationId, output filename). Since we're Gradle-free
+# we have to synthesize it ourselves. Schema:
+#
+#   { "version": 3,
+#     "artifactType": { "type": "BUNDLE", "kind": "BUILT_BUNDLE" },
+#     "applicationId": "<package>",
+#     "variantName": "release",
+#     "elements": [ { "type": "BUNDLE", "filters": [],
+#                     "attributes": [ {"key":"versionCode","value":"<n>"},
+#                                     {"key":"versionName","value":"<s>"} ],
+#                     "outputFile": "<basename>" } ] }
+
+if [ "$WRITE_METADATA" = true ]; then
+    echo "[7/7] Writing Play Console metadata..."
+
+    # Pull versionCode / versionName from the source AndroidManifest.xml.
+    # The proto-format manifest aapt2 produces is binary so we grep the
+    # XML before linking. Today the template at android/AndroidManifest.xml
+    # does not set them (apps can override it), so default to 1 / "1.0"
+    # with a stderr warning when missing.
+    SRC_MANIFEST="${PROJECT_ROOT}/android/AndroidManifest.xml"
+    VERSION_CODE=""
+    VERSION_NAME=""
+    if [ -f "$SRC_MANIFEST" ]; then
+        # Match: android:versionCode="123"
+        VERSION_CODE=$(grep -oE 'android:versionCode="[0-9]+"' "$SRC_MANIFEST" \
+            | head -1 | sed -E 's/.*="([0-9]+)".*/\1/' || true)
+        # Match: android:versionName="1.2.3"
+        VERSION_NAME=$(grep -oE 'android:versionName="[^"]+"' "$SRC_MANIFEST" \
+            | head -1 | sed -E 's/.*="([^"]+)".*/\1/' || true)
+    fi
+    if [ -z "$VERSION_CODE" ]; then
+        echo "  WARNING: android:versionCode not set in ${SRC_MANIFEST}; defaulting to 1." >&2
+        VERSION_CODE="1"
+    fi
+    if [ -z "$VERSION_NAME" ]; then
+        echo "  WARNING: android:versionName not set in ${SRC_MANIFEST}; defaulting to \"1.0\"." >&2
+        VERSION_NAME="1.0"
+    fi
+
+    METADATA_PATH="$(dirname "$OUTPUT")/output-metadata.json"
+    OUTPUT_BASENAME="$(basename "$OUTPUT")"
+    cat > "$METADATA_PATH" <<EOF
+{
+  "version": 3,
+  "artifactType": {
+    "type": "BUNDLE",
+    "kind": "BUILT_BUNDLE"
+  },
+  "applicationId": "${PACKAGE_ID}",
+  "variantName": "release",
+  "elements": [
+    {
+      "type": "BUNDLE",
+      "filters": [],
+      "attributes": [
+        { "key": "versionCode", "value": "${VERSION_CODE}" },
+        { "key": "versionName", "value": "${VERSION_NAME}" }
+      ],
+      "outputFile": "${OUTPUT_BASENAME}"
+    }
+  ]
+}
+EOF
+    echo "  Wrote ${METADATA_PATH}"
 fi
 
 # ── Clean up intermediate files ─────────────────────────────────────────────
