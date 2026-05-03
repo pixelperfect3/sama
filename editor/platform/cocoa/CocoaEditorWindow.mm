@@ -388,6 +388,12 @@ static MenuActionFn s_menuActionCallback = nullptr;
         case 42:
             s_menuActionCallback("build_android_high");
             break;
+        case 43:
+            s_menuActionCallback("build_android_run");
+            break;
+        case 44:
+            s_menuActionCallback("build_android_settings");
+            break;
         default:
             break;
     }
@@ -397,6 +403,30 @@ static MenuActionFn s_menuActionCallback = nullptr;
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem
 {
     return YES;
+}
+@end
+
+// ---------------------------------------------------------------------------
+// BuildCancelTarget -- bridges the status bar's Cancel NSButton click to a
+// C++ std::function held by CocoaEditorWindow::Impl.
+// ---------------------------------------------------------------------------
+
+@interface EditorBuildCancelTarget : NSObject
+{
+@public
+    engine::editor::CocoaEditorWindow::BuildCancelHandler* handlerPtr;
+}
+- (void)cancelClicked:(id)sender;
+@end
+
+@implementation EditorBuildCancelTarget
+- (void)cancelClicked:(id)sender
+{
+    (void)sender;
+    if (handlerPtr && *handlerPtr)
+    {
+        (*handlerPtr)();
+    }
 }
 @end
 
@@ -498,6 +528,15 @@ struct CocoaEditorWindow::Impl
 
     // Bottom tab view for Console + Resources.
     NSTabView* bottomTabView = nil;
+
+    // Status bar widgets (Android build progress).
+    NSView* rootContainer = nil;     // root content view: split + status bar
+    NSView* statusBar = nil;         // bottom strip (height ~24)
+    NSTextField* statusLabel = nil;  // "Ready" / "Building APK…"
+    NSProgressIndicator* statusSpinner = nil;
+    NSButton* statusCancelButton = nil;
+    EditorBuildCancelTarget* cancelTarget = nil;
+    CocoaEditorWindow::BuildCancelHandler cancelHandler;  // C++ callback target
 
     uint32_t windowWidth = 0;
     uint32_t windowHeight = 0;
@@ -643,6 +682,13 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
             addItem(buildMenu, @"Android (Low)", @"", 40);
             addItem(buildMenu, @"Android (Mid)", @"", 41);
             addItem(buildMenu, @"Android (High)", @"", 42);
+            [buildMenu addItem:[NSMenuItem separatorItem]];
+            // Build & Run uses the persisted default tier from Settings.
+            // Cmd+R is the customary "run" shortcut on macOS.
+            NSMenuItem* runItem = addItem(buildMenu, @"Android — Build & Run", @"r", 43);
+            runItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+            [buildMenu addItem:[NSMenuItem separatorItem]];
+            addItem(buildMenu, @"Android Build Settings…", @"", 44);
             buildMenuItem.submenu = buildMenu;
             [menuBar addItem:buildMenuItem];
 
@@ -785,8 +831,109 @@ bool CocoaEditorWindow::init(uint32_t w, uint32_t h, const char* title)
         [impl_->verticalSplit adjustSubviews];
         [impl_->horizontalSplit adjustSubviews];
 
+        // -- Build status bar -------------------------------------------------
+        // A thin strip pinned to the bottom of the window: spinner +
+        // status label + cancel button. Idle state shows "Ready" with the
+        // spinner hidden. While an Android APK build is running it shows
+        // the current pipeline step parsed from the build script's output.
+        constexpr CGFloat kStatusBarHeight = 24.0;
+        impl_->statusBar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, w, kStatusBarHeight)];
+        impl_->statusBar.wantsLayer = YES;
+        impl_->statusBar.layer.backgroundColor = [[NSColor controlBackgroundColor] CGColor];
+        impl_->statusBar.translatesAutoresizingMaskIntoConstraints = NO;
+
+        // Top edge separator so it visually detaches from the bottom panel.
+        NSBox* statusSep = [[NSBox alloc] init];
+        statusSep.boxType = NSBoxSeparator;
+        statusSep.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->statusBar addSubview:statusSep];
+
+        impl_->statusSpinner = [[NSProgressIndicator alloc] init];
+        impl_->statusSpinner.style = NSProgressIndicatorStyleSpinning;
+        impl_->statusSpinner.controlSize = NSControlSizeSmall;
+        impl_->statusSpinner.indeterminate = YES;
+        impl_->statusSpinner.displayedWhenStopped = NO;
+        impl_->statusSpinner.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->statusBar addSubview:impl_->statusSpinner];
+
+        impl_->statusLabel = [NSTextField labelWithString:@"Ready"];
+        impl_->statusLabel.font = [NSFont systemFontOfSize:11.0];
+        impl_->statusLabel.textColor = [NSColor secondaryLabelColor];
+        impl_->statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        impl_->statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->statusBar addSubview:impl_->statusLabel];
+
+        impl_->cancelTarget = [[EditorBuildCancelTarget alloc] init];
+        impl_->cancelTarget->handlerPtr = &impl_->cancelHandler;
+
+        impl_->statusCancelButton = [[NSButton alloc] init];
+        impl_->statusCancelButton.title = @"Cancel";
+        impl_->statusCancelButton.bezelStyle = NSBezelStyleRounded;
+        impl_->statusCancelButton.controlSize = NSControlSizeMini;
+        impl_->statusCancelButton.font = [NSFont systemFontOfSize:10.0];
+        impl_->statusCancelButton.target = impl_->cancelTarget;
+        impl_->statusCancelButton.action = @selector(cancelClicked:);
+        impl_->statusCancelButton.hidden = YES;
+        impl_->statusCancelButton.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->statusBar addSubview:impl_->statusCancelButton];
+
+        [NSLayoutConstraint activateConstraints:@[
+            // Separator pinned to top of status bar.
+            [statusSep.topAnchor constraintEqualToAnchor:impl_->statusBar.topAnchor],
+            [statusSep.leadingAnchor constraintEqualToAnchor:impl_->statusBar.leadingAnchor],
+            [statusSep.trailingAnchor constraintEqualToAnchor:impl_->statusBar.trailingAnchor],
+            [statusSep.heightAnchor constraintEqualToConstant:1.0],
+            // Spinner left-aligned.
+            [impl_->statusSpinner.leadingAnchor
+                constraintEqualToAnchor:impl_->statusBar.leadingAnchor
+                               constant:8.0],
+            [impl_->statusSpinner.centerYAnchor
+                constraintEqualToAnchor:impl_->statusBar.centerYAnchor],
+            [impl_->statusSpinner.widthAnchor constraintEqualToConstant:14.0],
+            [impl_->statusSpinner.heightAnchor constraintEqualToConstant:14.0],
+            // Label centered next to spinner, expands to fill.
+            [impl_->statusLabel.leadingAnchor
+                constraintEqualToAnchor:impl_->statusSpinner.trailingAnchor
+                               constant:8.0],
+            [impl_->statusLabel.centerYAnchor
+                constraintEqualToAnchor:impl_->statusBar.centerYAnchor],
+            [impl_->statusLabel.trailingAnchor
+                constraintLessThanOrEqualToAnchor:impl_->statusCancelButton.leadingAnchor
+                                         constant:-8.0],
+            // Cancel button right-aligned.
+            [impl_->statusCancelButton.trailingAnchor
+                constraintEqualToAnchor:impl_->statusBar.trailingAnchor
+                               constant:-8.0],
+            [impl_->statusCancelButton.centerYAnchor
+                constraintEqualToAnchor:impl_->statusBar.centerYAnchor],
+        ]];
+
+        // Wrap split + status bar in a root container so AppKit owns the
+        // resize semantics correctly (split fills above, status bar fixed
+        // at the bottom).
+        impl_->rootContainer = [[NSView alloc] initWithFrame:frame];
+        impl_->verticalSplit.translatesAutoresizingMaskIntoConstraints = NO;
+        [impl_->rootContainer addSubview:impl_->verticalSplit];
+        [impl_->rootContainer addSubview:impl_->statusBar];
+        [NSLayoutConstraint activateConstraints:@[
+            [impl_->verticalSplit.topAnchor constraintEqualToAnchor:impl_->rootContainer.topAnchor],
+            [impl_->verticalSplit.leadingAnchor
+                constraintEqualToAnchor:impl_->rootContainer.leadingAnchor],
+            [impl_->verticalSplit.trailingAnchor
+                constraintEqualToAnchor:impl_->rootContainer.trailingAnchor],
+            [impl_->verticalSplit.bottomAnchor constraintEqualToAnchor:impl_->statusBar.topAnchor],
+
+            [impl_->statusBar.leadingAnchor
+                constraintEqualToAnchor:impl_->rootContainer.leadingAnchor],
+            [impl_->statusBar.trailingAnchor
+                constraintEqualToAnchor:impl_->rootContainer.trailingAnchor],
+            [impl_->statusBar.bottomAnchor
+                constraintEqualToAnchor:impl_->rootContainer.bottomAnchor],
+            [impl_->statusBar.heightAnchor constraintEqualToConstant:kStatusBarHeight],
+        ]];
+
         // Set as content view.
-        [impl_->window setContentView:impl_->verticalSplit];
+        [impl_->window setContentView:impl_->rootContainer];
 
         // Show the window.
         [impl_->window makeKeyAndOrderFront:nil];
@@ -867,6 +1014,12 @@ void CocoaEditorWindow::shutdown()
         impl_->metalLayer = nil;
         impl_->verticalSplit = nil;
         impl_->horizontalSplit = nil;
+        impl_->statusBar = nil;
+        impl_->statusLabel = nil;
+        impl_->statusSpinner = nil;
+        impl_->statusCancelButton = nil;
+        impl_->cancelTarget = nil;
+        impl_->rootContainer = nil;
     }
 }
 
@@ -1225,6 +1378,321 @@ CocoaAnimationView* CocoaEditorWindow::animationView() const
 void CocoaEditorWindow::setMenuCallback(MenuCallback callback)
 {
     s_menuActionCallback = callback;
+}
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+void CocoaEditorWindow::setBuildStatus(const char* text, BuildStatusKind kind)
+{
+    // The build thread calls this; UI updates must happen on the main queue.
+    NSString* nsText = [NSString stringWithUTF8String:(text ? text : "")];
+    BuildStatusKind capturedKind = kind;
+    NSProgressIndicator* spinner = impl_->statusSpinner;
+    NSTextField* label = impl_->statusLabel;
+    NSButton* cancel = impl_->statusCancelButton;
+
+    void (^update)(void) = ^{
+      if (label)
+      {
+          label.stringValue = nsText;
+          switch (capturedKind)
+          {
+              case BuildStatusKind::Failure:
+                  label.textColor = [NSColor systemRedColor];
+                  break;
+              case BuildStatusKind::Success:
+                  label.textColor = [NSColor systemGreenColor];
+                  break;
+              case BuildStatusKind::Running:
+                  label.textColor = [NSColor labelColor];
+                  break;
+              default:
+                  label.textColor = [NSColor secondaryLabelColor];
+                  break;
+          }
+      }
+      if (spinner)
+      {
+          if (capturedKind == BuildStatusKind::Running)
+              [spinner startAnimation:nil];
+          else
+              [spinner stopAnimation:nil];
+      }
+      if (cancel)
+      {
+          cancel.hidden = (capturedKind != BuildStatusKind::Running);
+      }
+    };
+
+    if ([NSThread isMainThread])
+    {
+        update();
+    }
+    else
+    {
+        dispatch_async(dispatch_get_main_queue(), update);
+    }
+}
+
+void CocoaEditorWindow::setBuildCancelHandler(BuildCancelHandler handler)
+{
+    impl_->cancelHandler = std::move(handler);
+}
+
+// ---------------------------------------------------------------------------
+// Android build settings (NSUserDefaults)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+constexpr const char* kKeyTier = "android.defaultTier";
+constexpr const char* kKeyKeystore = "android.keystorePath";
+constexpr const char* kKeyKsPassEnv = "android.keystorePassEnvVar";
+constexpr const char* kKeyOutput = "android.outputApkPath";
+constexpr const char* kKeyPackage = "android.packageId";
+constexpr const char* kKeyDeviceSerial = "android.lastDeviceSerial";
+constexpr const char* kKeyBuildAndRun = "android.buildAndRun";
+
+NSString* nsKey(const char* k)
+{
+    return [NSString stringWithUTF8String:k];
+}
+
+std::string nsToStd(NSString* s)
+{
+    if (!s)
+        return {};
+    const char* c = [s UTF8String];
+    return c ? std::string(c) : std::string();
+}
+}  // namespace
+
+AndroidBuildSettings CocoaEditorWindow::loadAndroidBuildSettings() const
+{
+    AndroidBuildSettings out;
+    @autoreleasepool
+    {
+        NSUserDefaults* d = [NSUserDefaults standardUserDefaults];
+        NSString* tier = [d stringForKey:nsKey(kKeyTier)];
+        if (tier && tier.length > 0)
+            out.defaultTier = nsToStd(tier);
+        out.keystorePath = nsToStd([d stringForKey:nsKey(kKeyKeystore)]);
+        out.keystorePasswordEnvVar = nsToStd([d stringForKey:nsKey(kKeyKsPassEnv)]);
+        out.outputApkPath = nsToStd([d stringForKey:nsKey(kKeyOutput)]);
+        NSString* pkg = [d stringForKey:nsKey(kKeyPackage)];
+        if (pkg && pkg.length > 0)
+            out.packageId = nsToStd(pkg);
+        out.lastDeviceSerial = nsToStd([d stringForKey:nsKey(kKeyDeviceSerial)]);
+        out.buildAndRun = [d boolForKey:nsKey(kKeyBuildAndRun)];
+    }
+    return out;
+}
+
+void CocoaEditorWindow::saveAndroidBuildSettings(const AndroidBuildSettings& s)
+{
+    @autoreleasepool
+    {
+        NSUserDefaults* d = [NSUserDefaults standardUserDefaults];
+        [d setObject:[NSString stringWithUTF8String:s.defaultTier.c_str()] forKey:nsKey(kKeyTier)];
+        [d setObject:[NSString stringWithUTF8String:s.keystorePath.c_str()]
+              forKey:nsKey(kKeyKeystore)];
+        [d setObject:[NSString stringWithUTF8String:s.keystorePasswordEnvVar.c_str()]
+              forKey:nsKey(kKeyKsPassEnv)];
+        [d setObject:[NSString stringWithUTF8String:s.outputApkPath.c_str()]
+              forKey:nsKey(kKeyOutput)];
+        [d setObject:[NSString stringWithUTF8String:s.packageId.c_str()] forKey:nsKey(kKeyPackage)];
+        [d setObject:[NSString stringWithUTF8String:s.lastDeviceSerial.c_str()]
+              forKey:nsKey(kKeyDeviceSerial)];
+        [d setBool:s.buildAndRun forKey:nsKey(kKeyBuildAndRun)];
+        [d synchronize];
+    }
+}
+
+bool CocoaEditorWindow::showAndroidBuildSettingsDialog(AndroidBuildSettings& outSettings)
+{
+    @autoreleasepool
+    {
+        AndroidBuildSettings current = loadAndroidBuildSettings();
+
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = @"Android Build Settings";
+        alert.informativeText = @"Configure default tier, keystore, output APK path, "
+                                @"package ID, and Build & Run behaviour. Settings persist "
+                                @"across editor sessions.";
+        [alert addButtonWithTitle:@"Save"];
+        [alert addButtonWithTitle:@"Cancel"];
+
+        // Build a vertical form view.
+        constexpr CGFloat kRowHeight = 26.0;
+        constexpr CGFloat kRowPad = 6.0;
+        constexpr CGFloat kLabelWidth = 150.0;
+        constexpr CGFloat kFieldWidth = 280.0;
+        constexpr CGFloat kFormWidth = kLabelWidth + 8.0 + kFieldWidth;
+        constexpr int kRowCount = 7;
+        constexpr CGFloat kFormHeight = kRowCount * kRowHeight + (kRowCount - 1) * kRowPad;
+
+        NSView* form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kFormWidth, kFormHeight)];
+
+        auto rowY = [&](int row) -> CGFloat
+        {
+            // Top-down layout: row 0 sits at the top.
+            return kFormHeight - (row + 1) * kRowHeight - row * kRowPad;
+        };
+
+        auto addLabel = [&](int row, NSString* text)
+        {
+            NSTextField* l = [NSTextField labelWithString:text];
+            l.font = [NSFont systemFontOfSize:11.0];
+            l.textColor = [NSColor secondaryLabelColor];
+            l.frame = NSMakeRect(0, rowY(row), kLabelWidth, kRowHeight);
+            l.alignment = NSTextAlignmentRight;
+            [form addSubview:l];
+        };
+
+        auto addField = [&](int row, NSString* value) -> NSTextField*
+        {
+            NSTextField* f =
+                [[NSTextField alloc] initWithFrame:NSMakeRect(kLabelWidth + 8.0, rowY(row),
+                                                              kFieldWidth, kRowHeight - 4)];
+            f.stringValue = value ? value : @"";
+            f.font = [NSFont systemFontOfSize:11.0];
+            [form addSubview:f];
+            return f;
+        };
+
+        // Row 0: Default tier (popup)
+        addLabel(0, @"Default tier:");
+        NSPopUpButton* tierPopup = [[NSPopUpButton alloc]
+            initWithFrame:NSMakeRect(kLabelWidth + 8.0, rowY(0), 120, kRowHeight - 2)
+                pullsDown:NO];
+        [tierPopup addItemsWithTitles:@[ @"low", @"mid", @"high" ]];
+        [tierPopup selectItemWithTitle:[NSString stringWithUTF8String:current.defaultTier.c_str()]];
+        [form addSubview:tierPopup];
+
+        // Row 1: Keystore path
+        addLabel(1, @"Keystore path:");
+        NSTextField* keystoreField =
+            addField(1, [NSString stringWithUTF8String:current.keystorePath.c_str()]);
+
+        // Row 2: Keystore password env var
+        addLabel(2, @"Keystore password env:");
+        NSTextField* ksPassEnvField =
+            addField(2, [NSString stringWithUTF8String:current.keystorePasswordEnvVar.c_str()]);
+
+        // Row 3: Output APK path
+        addLabel(3, @"Output APK path:");
+        NSTextField* outputField =
+            addField(3, [NSString stringWithUTF8String:current.outputApkPath.c_str()]);
+
+        // Row 4: Package ID
+        addLabel(4, @"Package ID:");
+        NSTextField* packageField =
+            addField(4, [NSString stringWithUTF8String:current.packageId.c_str()]);
+
+        // Row 5: Device serial (with refresh button)
+        addLabel(5, @"Device serial:");
+        NSTextField* deviceField =
+            addField(5, [NSString stringWithUTF8String:current.lastDeviceSerial.c_str()]);
+        deviceField.placeholderString = @"(empty = first connected)";
+
+        // Row 6: Build & Run after build
+        addLabel(6, @"");
+        NSButton* runCheckbox = [[NSButton alloc]
+            initWithFrame:NSMakeRect(kLabelWidth + 8.0, rowY(6), kFieldWidth, kRowHeight - 2)];
+        [runCheckbox setButtonType:NSButtonTypeSwitch];
+        runCheckbox.title = @"Build & Run after build (auto-install + launch)";
+        runCheckbox.font = [NSFont systemFontOfSize:11.0];
+        runCheckbox.state = current.buildAndRun ? NSControlStateValueOn : NSControlStateValueOff;
+        [form addSubview:runCheckbox];
+
+        alert.accessoryView = form;
+        alert.window.initialFirstResponder = keystoreField;
+
+        NSModalResponse resp = [alert runModal];
+        if (resp == NSAlertFirstButtonReturn)
+        {
+            AndroidBuildSettings updated;
+            updated.defaultTier = nsToStd([tierPopup titleOfSelectedItem]);
+            if (updated.defaultTier.empty())
+                updated.defaultTier = "mid";
+            updated.keystorePath = nsToStd(keystoreField.stringValue);
+            updated.keystorePasswordEnvVar = nsToStd(ksPassEnvField.stringValue);
+            updated.outputApkPath = nsToStd(outputField.stringValue);
+            updated.packageId = nsToStd(packageField.stringValue);
+            if (updated.packageId.empty())
+                updated.packageId = "com.sama.game";
+            updated.lastDeviceSerial = nsToStd(deviceField.stringValue);
+            updated.buildAndRun = (runCheckbox.state == NSControlStateValueOn);
+            saveAndroidBuildSettings(updated);
+            outSettings = updated;
+            return true;
+        }
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// adb device discovery + alerts
+// ---------------------------------------------------------------------------
+
+std::vector<CocoaEditorWindow::AdbDevice> CocoaEditorWindow::queryAdbDevices() const
+{
+    std::vector<AdbDevice> devices;
+    // Use plain popen — `adb devices -l` prints a stable line-oriented format:
+    //   List of devices attached
+    //   <serial>\t<state> [model:Foo product:Bar device:Baz transport_id:N]
+    FILE* pipe = popen("adb devices -l 2>/dev/null", "r");
+    if (!pipe)
+        return devices;
+    char buffer[1024];
+    bool firstLine = true;
+    while (fgets(buffer, sizeof(buffer), pipe))
+    {
+        std::string line(buffer);
+        if (!line.empty() && line.back() == '\n')
+            line.pop_back();
+        if (firstLine)
+        {
+            // Skip the "List of devices attached" header.
+            firstLine = false;
+            continue;
+        }
+        if (line.empty())
+            continue;
+        // Find the first whitespace separator.
+        size_t tab = line.find_first_of(" \t");
+        if (tab == std::string::npos)
+            continue;
+        AdbDevice d;
+        d.serial = line.substr(0, tab);
+        size_t rest = line.find_first_not_of(" \t", tab);
+        if (rest != std::string::npos)
+        {
+            d.description = line.substr(rest);
+        }
+        // Only keep devices in the "device" state (skip "offline",
+        // "unauthorized", etc.).
+        if (d.description.find("device") != std::string::npos)
+        {
+            devices.push_back(std::move(d));
+        }
+    }
+    pclose(pipe);
+    return devices;
+}
+
+void CocoaEditorWindow::showAlert(const char* title, const char* message)
+{
+    @autoreleasepool
+    {
+        NSAlert* alert = [[NSAlert alloc] init];
+        alert.messageText = [NSString stringWithUTF8String:(title ? title : "")];
+        alert.informativeText = [NSString stringWithUTF8String:(message ? message : "")];
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+    }
 }
 
 }  // namespace engine::editor

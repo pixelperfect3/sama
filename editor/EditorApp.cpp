@@ -2,12 +2,19 @@
 
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
+#include <crt_externs.h>  // _NSGetEnviron — for posix_spawn env passthrough
 #include <mach-o/dyld.h>  // _NSGetExecutablePath, for asset path resolution
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <glm/glm.hpp>
@@ -240,6 +247,32 @@ struct EditorApp::Impl
 
     // Menu action pending from native menu click (set by static callback).
     std::string pendingMenuAction;
+
+    // Android APK build state.  The build runs on a detached std::thread
+    // spawned by the Build > Android menu actions; the editor must remain
+    // interactive (rendering frames, processing input, polling for assets).
+    //
+    // Threading model (see docs/NOTES.md "Editor Build & Run threading"):
+    //   * UI thread   : owns the Cocoa run loop, status bar, menu wiring.
+    //                   Reads `androidBuildRunning` (atomic) to disable
+    //                   the per-tier menu items while a build is in flight.
+    //   * Build thread: spawns build_apk.sh via popen2, parses its stdout
+    //                   line-by-line, and pushes status updates back to
+    //                   the UI via window->setBuildStatus(...) (which
+    //                   marshals onto the main queue itself).  Owns the
+    //                   build process pid so the Cancel button can SIGTERM
+    //                   it from the UI thread.
+    //   * adb thread  : reused for queryAdbDevices() and `adb shell am
+    //                   start` after a successful Build & Run.  Spawned
+    //                   inline from the build thread on success, so we
+    //                   never block the UI on adb network round-trips.
+    std::atomic<bool> androidBuildRunning{false};
+    std::atomic<bool> androidBuildCancelRequested{false};
+    std::atomic<pid_t> androidBuildPid{-1};
+    // Whether the active build should auto-install + launch when it
+    // succeeds. Set by the Build & Run menu action; cleared when the
+    // build thread exits.
+    bool androidBuildAndRunActive = false;
 
     // Editor-loaded textures (separate from glTF-imported textures, which
     // are owned by the GltfSceneSpawner). When the user picks a new image
@@ -1037,6 +1070,130 @@ void EditorApp::Impl::refreshPropertiesView()
     lastSelectedEntity = entity;
 }
 
+// ---------------------------------------------------------------------------
+// Android build helpers (file-local).
+//
+// `spawnBuildProcess` runs the supplied argv via posix_spawn (so we get a
+// PID we can SIGTERM from the Cancel button) and returns the read end of
+// a pipe wrapped in a FILE* via fdopen. The caller drains the pipe
+// line-by-line and waitpid()s the child to harvest the exit status.
+//
+// Why posix_spawn instead of popen():
+//   popen() returns a FILE* but hides the underlying PID — there is no
+//   portable way to ask "what process did popen() fork?" so we can't
+//   send a SIGTERM when the user clicks Cancel. `posix_spawn` gives us
+//   the PID directly while keeping the same line-oriented stdout
+//   reading pattern.
+// ---------------------------------------------------------------------------
+namespace
+{
+
+struct SpawnedProcess
+{
+    pid_t pid = -1;
+    FILE* readFile = nullptr;
+};
+
+// On macOS, `environ` is not declared in <unistd.h> for executable
+// targets — it's exposed via crt_externs.h's `_NSGetEnviron()`. Use that
+// here so we don't depend on a non-portable extern declaration.
+SpawnedProcess spawnBuildProcess(const std::vector<std::string>& argv,
+                                 const std::vector<std::string>& extraEnv)
+{
+    SpawnedProcess out{};
+    int pipeFds[2];
+    if (pipe(pipeFds) != 0)
+        return out;
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipeFds[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, pipeFds[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
+    posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
+
+    std::vector<char*> argvC;
+    argvC.reserve(argv.size() + 1);
+    for (const auto& a : argv)
+        argvC.push_back(const_cast<char*>(a.c_str()));
+    argvC.push_back(nullptr);
+
+    // Build environment: copy current env + extra vars.
+    std::vector<std::string> envStorage;
+    char*** envp = _NSGetEnviron();
+    if (envp && *envp)
+    {
+        for (char** ep = *envp; *ep; ++ep)
+            envStorage.emplace_back(*ep);
+    }
+    for (const auto& kv : extraEnv)
+        envStorage.push_back(kv);
+    std::vector<char*> envC;
+    envC.reserve(envStorage.size() + 1);
+    for (auto& e : envStorage)
+        envC.push_back(const_cast<char*>(e.c_str()));
+    envC.push_back(nullptr);
+
+    pid_t pid = -1;
+    int rc = posix_spawnp(&pid, argvC[0], &actions, nullptr, argvC.data(), envC.data());
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipeFds[1]);
+
+    if (rc != 0)
+    {
+        close(pipeFds[0]);
+        return out;
+    }
+
+    out.pid = pid;
+    out.readFile = fdopen(pipeFds[0], "r");
+    if (!out.readFile)
+    {
+        close(pipeFds[0]);
+        // Reap the child we just started so we don't leak a zombie.
+        kill(pid, SIGTERM);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        out.pid = -1;
+    }
+    return out;
+}
+
+// Parse a build_apk.sh stdout line and return a short status-bar message.
+// Returns empty string if the line is not a known phase marker. The
+// build script's phase markers look like:
+//   [0/7] Compiling shaders to SPIRV for Android...
+//   [1/7] Building native library...
+//   ...
+//   [7/7] Signing APK...
+std::string buildPhaseFromLine(const std::string& line)
+{
+    if (line.size() < 6)
+        return {};
+    if (line[0] != '[')
+        return {};
+    // Look for a ']' followed by a space.
+    size_t close = line.find(']');
+    if (close == std::string::npos || close + 2 > line.size())
+        return {};
+    // Must be of the form "[N/M]" where N and M are digits.
+    bool valid = true;
+    for (size_t i = 1; i < close; ++i)
+    {
+        char c = line[i];
+        if (!(c >= '0' && c <= '9') && c != '/')
+        {
+            valid = false;
+            break;
+        }
+    }
+    if (!valid)
+        return {};
+    return line;  // The whole line is short and informative.
+}
+
+}  // namespace
+
 void EditorApp::Impl::syncConsoleView()
 {
     auto* cView = window->consoleView();
@@ -1158,13 +1315,14 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         impl_->whiteTex =
             bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
                                   bgfx::copy(kWhite, sizeof(kWhite)));
-        impl_->resources.setWhiteTexture(impl_->whiteTex);
+        impl_->resources.setWhiteTexture(engine::rendering::TextureHandle{impl_->whiteTex.idx});
 
         const uint8_t kNeutralNormal[4] = {128, 128, 255, 255};
         impl_->neutralNormalTex =
             bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
                                   bgfx::copy(kNeutralNormal, sizeof(kNeutralNormal)));
-        impl_->resources.setNeutralNormalTexture(impl_->neutralNormalTex);
+        impl_->resources.setNeutralNormalTexture(
+            engine::rendering::TextureHandle{impl_->neutralNormalTex.idx});
 
         uint8_t cubeFaces[6 * 4];
         for (int i = 0; i < 6 * 4; ++i)
@@ -1172,7 +1330,8 @@ bool EditorApp::init(uint32_t width, uint32_t height)
         impl_->whiteCubeTex =
             bgfx::createTextureCube(1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
                                     bgfx::copy(cubeFaces, sizeof(cubeFaces)));
-        impl_->resources.setWhiteCubeTexture(impl_->whiteCubeTex);
+        impl_->resources.setWhiteCubeTexture(
+            engine::rendering::TextureHandle{impl_->whiteCubeTex.idx});
 
         // 1x1 dummy shadow map so the PBR shader has a valid sampler.
         const uint8_t kWhiteDepth[4] = {255, 255, 255, 255};
@@ -3241,47 +3400,297 @@ void EditorApp::run()
                 }
             }
             else if (action == "build_android_low" || action == "build_android_mid" ||
-                     action == "build_android_high")
+                     action == "build_android_high" || action == "build_android_run")
             {
-                std::string tier = "mid";
-                if (action == "build_android_low")
-                    tier = "low";
-                else if (action == "build_android_high")
-                    tier = "high";
+                if (impl_->androidBuildRunning.load())
+                {
+                    EditorLog::instance().warning(
+                        "Android build already in progress; ignoring request.");
+                }
+                else
+                {
+                    AndroidBuildSettings settings = impl_->window->loadAndroidBuildSettings();
+                    std::string tier = settings.defaultTier;
+                    bool andRun = false;
 
-                EditorLog::instance().info(("Building Android APK (" + tier + " tier)...").c_str());
+                    if (action == "build_android_low")
+                        tier = "low";
+                    else if (action == "build_android_mid")
+                        tier = "mid";
+                    else if (action == "build_android_high")
+                        tier = "high";
+                    else  // build_android_run
+                        andRun = true;
 
-                std::thread buildThread(
-                    [tier]()
+                    if (tier != "low" && tier != "mid" && tier != "high")
+                        tier = "mid";
+
+                    // For Build & Run, sanity-check adb up-front so we
+                    // don't spend ~2 minutes building before noticing no
+                    // device is connected. The actual launch still
+                    // re-queries after install in case the user plugs in
+                    // a phone mid-build.
+                    bool aborted = false;
+                    if (andRun)
                     {
-                        std::string cmd = "./android/build_apk.sh --tier " + tier + " 2>&1";
-                        FILE* pipe = popen(cmd.c_str(), "r");
-                        if (!pipe)
+                        auto devices = impl_->window->queryAdbDevices();
+                        if (devices.empty())
                         {
-                            EditorLog::instance().error("Failed to start Android build");
-                            return;
+                            impl_->window->showAlert(
+                                "No Android device connected",
+                                "Build & Run requires an Android device or running emulator.\n"
+                                "\n"
+                                "1. Connect a device via USB and enable USB debugging\n"
+                                "   (Settings > System > Developer options > USB debugging),\n"
+                                "   OR start an emulator (e.g. `emulator -avd sama_mid`).\n"
+                                "2. Confirm with `adb devices` (the device should be listed).\n"
+                                "3. Then re-run Build > Android > Build & Run.");
+                            EditorLog::instance().warning(
+                                "Build & Run aborted: no adb device available.");
+                            aborted = true;
                         }
-                        char buffer[256];
-                        while (fgets(buffer, sizeof(buffer), pipe))
-                        {
-                            std::string line(buffer);
-                            if (!line.empty() && line.back() == '\n')
-                                line.pop_back();
-                            EditorLog::instance().info(line.c_str());
-                        }
-                        int result = pclose(pipe);
-                        if (result == 0)
-                        {
-                            EditorLog::instance().info("Android APK build complete!");
-                        }
-                        else
-                        {
-                            EditorLog::instance().error(
-                                ("Android APK build failed (exit " + std::to_string(result) + ")")
-                                    .c_str());
-                        }
-                    });
-                buildThread.detach();
+                    }
+
+                    if (!aborted)
+                    {
+                        EditorLog::instance().info(("Building Android APK (" + tier + " tier" +
+                                                    (andRun ? ", Build & Run" : "") + ")...")
+                                                       .c_str());
+                        impl_->window->setBuildStatus(
+                            ("Starting Android APK build (" + tier + ")...").c_str(),
+                            CocoaEditorWindow::BuildStatusKind::Running);
+
+                        impl_->androidBuildRunning = true;
+                        impl_->androidBuildCancelRequested = false;
+                        impl_->androidBuildPid = -1;
+                        impl_->androidBuildAndRunActive = andRun;
+
+                        auto* impl = impl_.get();
+                        auto* window = impl_->window.get();
+
+                        // Cancel handler: SIGTERM the running build process.
+                        // The build thread's drain loop will see EOF, waitpid
+                        // returns the signal, and the post-build logic logs
+                        // the cancellation. Marking `androidBuildCancelRequested`
+                        // suppresses the post-build install/launch step.
+                        window->setBuildCancelHandler(
+                            [impl]()
+                            {
+                                pid_t pid = impl->androidBuildPid.load();
+                                if (pid > 0)
+                                {
+                                    impl->androidBuildCancelRequested = true;
+                                    EditorLog::instance().warning(
+                                        ("Cancelling Android build (pid=" + std::to_string(pid) +
+                                         ")")
+                                            .c_str());
+                                    kill(pid, SIGTERM);
+                                }
+                            });
+
+                        std::thread buildThread(
+                            [impl, window, tier, andRun, settings]()
+                            {
+                                // Build argv for build_apk.sh.
+                                std::vector<std::string> argv;
+                                argv.push_back("./android/build_apk.sh");
+                                argv.push_back("--tier");
+                                argv.push_back(tier);
+                                if (!settings.packageId.empty() &&
+                                    settings.packageId != "com.sama.game")
+                                {
+                                    argv.push_back("--package");
+                                    argv.push_back(settings.packageId);
+                                }
+                                if (!settings.outputApkPath.empty())
+                                {
+                                    argv.push_back("--output");
+                                    argv.push_back(settings.outputApkPath);
+                                }
+                                if (!settings.keystorePath.empty())
+                                {
+                                    argv.push_back("--keystore");
+                                    argv.push_back(settings.keystorePath);
+                                    if (!settings.keystorePasswordEnvVar.empty())
+                                    {
+                                        argv.push_back("--ks-pass-env");
+                                        argv.push_back(settings.keystorePasswordEnvVar);
+                                    }
+                                }
+                                if (andRun)
+                                {
+                                    // Use --debug + --install so the script signs
+                                    // with the auto-generated debug keystore (no
+                                    // password prompt) and pushes via adb.
+                                    argv.push_back("--debug");
+                                    argv.push_back("--install");
+                                }
+
+                                SpawnedProcess proc = spawnBuildProcess(argv, {});
+                                if (proc.pid < 0 || !proc.readFile)
+                                {
+                                    EditorLog::instance().error("Failed to spawn build_apk.sh");
+                                    window->setBuildStatus(
+                                        "Build failed to start",
+                                        CocoaEditorWindow::BuildStatusKind::Failure);
+                                    impl->androidBuildRunning = false;
+                                    impl->androidBuildPid = -1;
+                                    window->setBuildCancelHandler(nullptr);
+                                    return;
+                                }
+                                impl->androidBuildPid = proc.pid;
+
+                                char buffer[1024];
+                                std::string lastPhase;
+                                while (fgets(buffer, sizeof(buffer), proc.readFile))
+                                {
+                                    std::string line(buffer);
+                                    if (!line.empty() && line.back() == '\n')
+                                        line.pop_back();
+                                    EditorLog::instance().info(line.c_str());
+
+                                    std::string phase = buildPhaseFromLine(line);
+                                    if (!phase.empty() && phase != lastPhase)
+                                    {
+                                        lastPhase = phase;
+                                        window->setBuildStatus(
+                                            phase.c_str(),
+                                            CocoaEditorWindow::BuildStatusKind::Running);
+                                    }
+                                }
+                                fclose(proc.readFile);
+                                int status = 0;
+                                waitpid(proc.pid, &status, 0);
+                                impl->androidBuildPid = -1;
+
+                                int exitCode = -1;
+                                bool signalled = false;
+                                if (WIFEXITED(status))
+                                    exitCode = WEXITSTATUS(status);
+                                else if (WIFSIGNALED(status))
+                                    signalled = true;
+
+                                bool wasCancelled = impl->androidBuildCancelRequested.load();
+
+                                if (wasCancelled || signalled)
+                                {
+                                    EditorLog::instance().warning("Android APK build cancelled.");
+                                    window->setBuildStatus(
+                                        "Build cancelled",
+                                        CocoaEditorWindow::BuildStatusKind::Failure);
+                                }
+                                else if (exitCode == 0)
+                                {
+                                    // Try to extract APK size from the script's
+                                    // "Size: ..." line for a friendlier final
+                                    // status. Fall back to plain success.
+                                    std::string outPath =
+                                        settings.outputApkPath.empty()
+                                            ? std::string("build/android/Game.apk")
+                                            : settings.outputApkPath;
+                                    std::string sizeStr;
+                                    std::error_code ec;
+                                    auto sz = std::filesystem::file_size(outPath, ec);
+                                    if (!ec)
+                                    {
+                                        double mb = sz / (1024.0 * 1024.0);
+                                        char buf[64];
+                                        snprintf(buf, sizeof(buf), "%.2f MB", mb);
+                                        sizeStr = buf;
+                                    }
+                                    std::string okMsg = sizeStr.empty()
+                                                            ? std::string("Build succeeded")
+                                                            : ("Build succeeded (" + sizeStr + ")");
+                                    EditorLog::instance().info(
+                                        ("Android APK build complete: " + okMsg).c_str());
+                                    window->setBuildStatus(
+                                        okMsg.c_str(), CocoaEditorWindow::BuildStatusKind::Success);
+
+                                    if (andRun)
+                                    {
+                                        // Launch on device. The build script
+                                        // already ran `adb install`; we only
+                                        // need `am start` here.
+                                        auto devices = window->queryAdbDevices();
+                                        if (devices.empty())
+                                        {
+                                            EditorLog::instance().warning(
+                                                "Build & Run: no device available for launch.");
+                                        }
+                                        else
+                                        {
+                                            std::string serial = settings.lastDeviceSerial;
+                                            if (serial.empty() ||
+                                                std::none_of(devices.begin(), devices.end(),
+                                                             [&](const auto& d)
+                                                             { return d.serial == serial; }))
+                                            {
+                                                serial = devices.front().serial;
+                                            }
+                                            std::string activity =
+                                                settings.packageId + "/android.app.NativeActivity";
+                                            std::string launchCmd = "adb -s " + serial +
+                                                                    " shell am start -n " +
+                                                                    activity + " 2>&1";
+                                            EditorLog::instance().info(
+                                                ("Launching: " + launchCmd).c_str());
+                                            FILE* lp = popen(launchCmd.c_str(), "r");
+                                            if (lp)
+                                            {
+                                                char lb[256];
+                                                while (fgets(lb, sizeof(lb), lp))
+                                                {
+                                                    std::string ll(lb);
+                                                    if (!ll.empty() && ll.back() == '\n')
+                                                        ll.pop_back();
+                                                    EditorLog::instance().info(ll.c_str());
+                                                }
+                                                int lrc = pclose(lp);
+                                                if (lrc == 0)
+                                                {
+                                                    window->setBuildStatus(
+                                                        ("Launched on " + serial).c_str(),
+                                                        CocoaEditorWindow::BuildStatusKind::
+                                                            Success);
+                                                }
+                                                else
+                                                {
+                                                    EditorLog::instance().warning(
+                                                        "adb am start returned non-zero exit.");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    std::string failMsg =
+                                        "Build failed (exit " + std::to_string(exitCode) + ")";
+                                    EditorLog::instance().error(
+                                        ("Android APK build failed: " + std::to_string(exitCode))
+                                            .c_str());
+                                    window->setBuildStatus(
+                                        failMsg.c_str(),
+                                        CocoaEditorWindow::BuildStatusKind::Failure);
+                                }
+
+                                impl->androidBuildRunning = false;
+                                impl->androidBuildAndRunActive = false;
+                                window->setBuildCancelHandler(nullptr);
+                            });
+                        buildThread.detach();
+                    }  // !aborted
+                }
+            }
+            else if (action == "build_android_settings")
+            {
+                AndroidBuildSettings s = impl_->window->loadAndroidBuildSettings();
+                if (impl_->window->showAndroidBuildSettingsDialog(s))
+                {
+                    EditorLog::instance().info(
+                        ("Android build settings saved (default tier: " + s.defaultTier + ")")
+                            .c_str());
+                }
             }
             impl_->pendingMenuAction.clear();
         }

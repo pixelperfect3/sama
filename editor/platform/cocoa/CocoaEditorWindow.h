@@ -1,6 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "editor/platform/IEditorWindow.h"
 
@@ -12,6 +15,22 @@ class CocoaPropertiesView;
 class CocoaConsoleView;
 class CocoaResourceView;
 class CocoaAnimationView;
+
+// ---------------------------------------------------------------------------
+// AndroidBuildSettings -- persisted Android build configuration.
+// Mirrors the Build > Android > Settings… dialog and is stored in
+// NSUserDefaults under the editor's bundle identifier.
+// ---------------------------------------------------------------------------
+struct AndroidBuildSettings
+{
+    std::string defaultTier = "mid";          // "low" | "mid" | "high"
+    std::string keystorePath;                 // empty = debug keystore
+    std::string keystorePasswordEnvVar;       // env var name (recommended)
+    std::string outputApkPath;                // empty = build/android/Game.apk
+    std::string packageId = "com.sama.game";  // matches AndroidManifest default
+    std::string lastDeviceSerial;             // adb -s <serial> for picking device
+    bool buildAndRun = false;                 // run after build by default
+};
 
 // ---------------------------------------------------------------------------
 // CocoaEditorWindow -- native macOS window backed by NSWindow + NSSplitView
@@ -84,6 +103,55 @@ public:
     // Action is a string like "save_scene", "undo", "create_cube".
     using MenuCallback = void (*)(const char* action);
     void setMenuCallback(MenuCallback callback);
+
+    // --- Android build status bar -------------------------------------------
+    //
+    // The status bar lives at the bottom of the window (below the bottom
+    // tabbed panel) and is the editor's single source of truth for "what is
+    // the Android APK build doing right now". `setBuildStatus(text, active)`
+    // updates the label and toggles the indeterminate spinner. When
+    // `succeeded` is set (build finished), the spinner stops and the cancel
+    // button hides. Safe to call from any thread — internally trampolines
+    // onto the main queue.
+    enum class BuildStatusKind
+    {
+        Idle,     // No build running. Cancel hidden, spinner hidden.
+        Running,  // Build in progress. Spinner spinning, cancel visible.
+        Success,  // Build finished OK. Spinner stopped, cancel hidden.
+        Failure,  // Build failed. Spinner stopped, cancel hidden, red text.
+    };
+    void setBuildStatus(const char* text, BuildStatusKind kind);
+
+    // Set the handler invoked when the user clicks the Cancel button in
+    // the status bar. Pass `nullptr` to clear.
+    using BuildCancelHandler = std::function<void()>;
+    void setBuildCancelHandler(BuildCancelHandler handler);
+
+    // --- Android build settings (NSUserDefaults persistence) ----------------
+    AndroidBuildSettings loadAndroidBuildSettings() const;
+    void saveAndroidBuildSettings(const AndroidBuildSettings& settings);
+
+    // Show a modal Android build settings sheet.  Returns true if the user
+    // saved changes, false if cancelled.  On save, the new values are
+    // persisted via `saveAndroidBuildSettings` and `outSettings` is
+    // overwritten with the new values.
+    bool showAndroidBuildSettingsDialog(AndroidBuildSettings& outSettings);
+
+    // --- Android device discovery -------------------------------------------
+    //
+    // Lightweight helpers that shell out to `adb`. Kept on the window class
+    // because their main consumer is the dialog (device picker) and the
+    // status bar (no-device alert) — both Cocoa code.
+    struct AdbDevice
+    {
+        std::string serial;       // device serial
+        std::string description;  // human-readable model/state
+    };
+    std::vector<AdbDevice> queryAdbDevices() const;
+
+    // Show a simple alert (OK button only).  Used by Build & Run when no
+    // device is connected to point the user at install instructions.
+    void showAlert(const char* title, const char* message);
 
     // --- Native panel views --------------------------------------------------
     CocoaHierarchyView* hierarchyView() const;
