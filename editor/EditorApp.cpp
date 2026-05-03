@@ -3717,7 +3717,10 @@ void EditorApp::run()
             // draws so it fills only those pixels where nothing else has been
             // drawn (depth test = LESS_EQUAL with the vertex shader forcing
             // depth = 1.0). The cubemap is mip 0 of the prefiltered IBL.
-            impl_->skybox.render(kViewOpaque, impl_->iblResources.prefiltered());
+            // SkyboxRenderer::render takes the bgfx-free TextureHandle wrapper;
+            // wrap the IBL prefiltered cubemap (still bgfx-typed) at the boundary.
+            impl_->skybox.render(kViewOpaque, engine::rendering::TextureHandle{
+                                                  impl_->iblResources.prefiltered().idx});
 
             // -- Gizmo rendering --------------------------------------------------
             // Hide all editor gizmos in Play/Paused mode so the viewport shows a

@@ -1,8 +1,9 @@
 #pragma once
 
-#include <bgfx/bgfx.h>
-
 #include <cstdint>
+#include <memory>
+
+#include "engine/rendering/HandleTypes.h"
 
 namespace engine::ui
 {
@@ -20,36 +21,37 @@ class UiDrawList;
 // Sets up an orthographic projection on the given view so that coordinates
 // map directly to logical screen pixels: (0,0) = top-left, (w,h) = bottom-
 // right.  Text commands are skipped (Phase 4).
+//
+// All bgfx types live behind a private Impl (pImpl) so the public header
+// stays bgfx-free; consumers (apps, games) only ever touch the public
+// init/shutdown/render API plus the engine-wrapped ViewId.
 // ---------------------------------------------------------------------------
 
 class UiRenderer
 {
 public:
+    UiRenderer();
+    ~UiRenderer();
+
+    UiRenderer(const UiRenderer&) = delete;
+    UiRenderer& operator=(const UiRenderer&) = delete;
+    UiRenderer(UiRenderer&&) noexcept;
+    UiRenderer& operator=(UiRenderer&&) noexcept;
+
     void init();
     void shutdown();
 
     // Render all draw commands for this frame.
-    // viewId: bgfx view to render on (e.g., kViewGameUi = 48)
+    // viewId: engine view to render on (e.g., kViewGameUi = 48)
     // screenW/H: logical screen size for orthographic projection
-    void render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_t screenW,
+    void render(const UiDrawList& drawList, engine::rendering::ViewId viewId, uint16_t screenW,
                 uint16_t screenH);
 
 private:
-    // Slug submission path — one draw call per glyph because the per-glyph
-    // curve range must be set as a uniform. Defined in UiRenderer.cpp.
-    void renderSlugText(const struct UiDrawCmd& cmd, const class SlugFont* font,
-                        bgfx::ProgramHandle prog, bgfx::ViewId viewId, uint64_t blendState);
-
-    bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
-    bgfx::VertexLayout layout_;
-    bgfx::UniformHandle s_texture_ = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle whiteTex_ = BGFX_INVALID_HANDLE;
-
-    // Rounded-rect path: own program + own vertex layout (extra vec4
-    // attribute carrying half-size + corner radius). Used only when a
-    // Rect command has cornerRadius > 0.
-    bgfx::ProgramHandle roundedProgram_ = BGFX_INVALID_HANDLE;
-    bgfx::VertexLayout roundedLayout_;
+    // pImpl — owns bgfx::ProgramHandle / VertexLayout / UniformHandle /
+    // TextureHandle members.  Defined entirely in UiRenderer.cpp.
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace engine::ui

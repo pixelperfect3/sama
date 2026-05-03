@@ -27,40 +27,61 @@ const SkyboxVertex kFullscreenTri[] = {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Impl — owns every bgfx-typed member so the public SkyboxRenderer header
+// can stay bgfx-free.  Same pImpl pattern as UiRenderer.
+// ---------------------------------------------------------------------------
+
+struct SkyboxRenderer::Impl
+{
+    bgfx::VertexBufferHandle vbh = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_skybox = BGFX_INVALID_HANDLE;
+};
+
+SkyboxRenderer::SkyboxRenderer() : impl_(std::make_unique<Impl>()) {}
+SkyboxRenderer::~SkyboxRenderer() = default;
+SkyboxRenderer::SkyboxRenderer(SkyboxRenderer&&) noexcept = default;
+SkyboxRenderer& SkyboxRenderer::operator=(SkyboxRenderer&&) noexcept = default;
+
 void SkyboxRenderer::init()
 {
     bgfx::VertexLayout layout;
     layout.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
 
-    vbh_ = bgfx::createVertexBuffer(bgfx::makeRef(kFullscreenTri, sizeof(kFullscreenTri)), layout);
-    s_skybox_ = bgfx::createUniform("s_skybox", bgfx::UniformType::Sampler);
+    impl_->vbh =
+        bgfx::createVertexBuffer(bgfx::makeRef(kFullscreenTri, sizeof(kFullscreenTri)), layout);
+    impl_->s_skybox = bgfx::createUniform("s_skybox", bgfx::UniformType::Sampler);
     // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
     // wrapper); widen to bgfx for the engine-internal storage member.
-    program_ = bgfx::ProgramHandle{loadSkyboxProgram().idx};
+    impl_->program = bgfx::ProgramHandle{loadSkyboxProgram().idx};
 }
 
 void SkyboxRenderer::shutdown()
 {
-    if (bgfx::isValid(program_))
+    if (bgfx::isValid(impl_->program))
     {
-        bgfx::destroy(program_);
-        program_ = BGFX_INVALID_HANDLE;
+        bgfx::destroy(impl_->program);
+        impl_->program = BGFX_INVALID_HANDLE;
     }
-    if (bgfx::isValid(s_skybox_))
+    if (bgfx::isValid(impl_->s_skybox))
     {
-        bgfx::destroy(s_skybox_);
-        s_skybox_ = BGFX_INVALID_HANDLE;
+        bgfx::destroy(impl_->s_skybox);
+        impl_->s_skybox = BGFX_INVALID_HANDLE;
     }
-    if (bgfx::isValid(vbh_))
+    if (bgfx::isValid(impl_->vbh))
     {
-        bgfx::destroy(vbh_);
-        vbh_ = BGFX_INVALID_HANDLE;
+        bgfx::destroy(impl_->vbh);
+        impl_->vbh = BGFX_INVALID_HANDLE;
     }
 }
 
-void SkyboxRenderer::render(bgfx::ViewId viewId, bgfx::TextureHandle cubemap)
+void SkyboxRenderer::render(ViewId viewId, TextureHandle cubemap)
 {
-    if (!bgfx::isValid(program_) || !bgfx::isValid(cubemap))
+    // Boundary conversion — the wrapped TextureHandle is layout-identical
+    // to bgfx::TextureHandle (RenderPass.cpp asserts this).
+    const bgfx::TextureHandle bgfxCube{cubemap.idx};
+    if (!bgfx::isValid(impl_->program) || !bgfx::isValid(bgfxCube))
         return;
 
     // Single fullscreen triangle. Depth test = LESS_EQUAL with depth write
@@ -70,10 +91,15 @@ void SkyboxRenderer::render(bgfx::ViewId viewId, bgfx::TextureHandle cubemap)
     const uint64_t state =
         BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_MSAA;
 
-    bgfx::setTexture(0, s_skybox_, cubemap);
-    bgfx::setVertexBuffer(0, vbh_);
+    bgfx::setTexture(0, impl_->s_skybox, bgfxCube);
+    bgfx::setVertexBuffer(0, impl_->vbh);
     bgfx::setState(state);
-    bgfx::submit(viewId, program_);
+    bgfx::submit(viewId, impl_->program);
+}
+
+bool SkyboxRenderer::isValid() const noexcept
+{
+    return bgfx::isValid(impl_->program);
 }
 
 }  // namespace engine::rendering

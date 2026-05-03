@@ -1,6 +1,8 @@
 #pragma once
 
-#include <bgfx/bgfx.h>
+#include <memory>
+
+#include "engine/rendering/HandleTypes.h"
 
 namespace engine::rendering
 {
@@ -28,28 +30,35 @@ namespace engine::rendering
 // shader samples the cubemap by the cube's local-space position (which
 // after the transform represents a direction from the camera into the
 // world) and applies a Reinhard tonemap.
+//
+// All bgfx-typed members live behind a private Impl (pImpl) so this header
+// stays bgfx-free.
 // ---------------------------------------------------------------------------
 
 class SkyboxRenderer
 {
 public:
+    SkyboxRenderer();
+    ~SkyboxRenderer();
+
+    SkyboxRenderer(const SkyboxRenderer&) = delete;
+    SkyboxRenderer& operator=(const SkyboxRenderer&) = delete;
+    SkyboxRenderer(SkyboxRenderer&&) noexcept;
+    SkyboxRenderer& operator=(SkyboxRenderer&&) noexcept;
+
     void init();
     void shutdown();
 
     // Submit one fullscreen skybox draw on the given view, sampling
     // `cubemap`. The view's transform must already be set (the skybox
     // shader reads u_view + u_proj).
-    void render(bgfx::ViewId viewId, bgfx::TextureHandle cubemap);
+    void render(ViewId viewId, TextureHandle cubemap);
 
-    bool isValid() const noexcept
-    {
-        return bgfx::isValid(program_);
-    }
+    [[nodiscard]] bool isValid() const noexcept;
 
 private:
-    bgfx::VertexBufferHandle vbh_ = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle s_skybox_ = BGFX_INVALID_HANDLE;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace engine::rendering

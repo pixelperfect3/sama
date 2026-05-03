@@ -109,66 +109,38 @@ static uint32_t utf8Next(const char** p)
 }
 
 // ---------------------------------------------------------------------------
-// init / shutdown
+// Impl — owns every bgfx-typed member so the public UiRenderer header can
+// stay bgfx-free.  The pImpl indirection costs one extra pointer load per
+// render() call, which is negligible compared to the per-frame batch
+// builder cost.
 // ---------------------------------------------------------------------------
 
-void UiRenderer::init()
+struct UiRenderer::Impl
 {
-    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
-    // wrapper); widen to bgfx for the engine-internal storage members.
-    program_ = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
-    layout_ = engine::rendering::spriteLayout();
+    bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
+    bgfx::VertexLayout layout;
+    bgfx::UniformHandle s_texture = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle whiteTex = BGFX_INVALID_HANDLE;
 
-    // Rounded-rect path: own program + own vertex layout. The layout is
-    // the sprite layout plus an extra TEXCOORD1 vec4 carrying (halfW,
-    // halfH, cornerRadius, _pad). All 4 vertices of one rect share the
-    // same value.
-    roundedProgram_ = bgfx::ProgramHandle{engine::rendering::loadRoundedRectProgram().idx};
-    roundedLayout_.begin()
-        .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
-        .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
-        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, /*normalized=*/true)
-        .add(bgfx::Attrib::TexCoord1, 4, bgfx::AttribType::Float)
-        .end();
+    // Rounded-rect path: own program + own vertex layout (extra vec4
+    // attribute carrying half-size + corner radius). Used only when a
+    // Rect command has cornerRadius > 0.
+    bgfx::ProgramHandle roundedProgram = BGFX_INVALID_HANDLE;
+    bgfx::VertexLayout roundedLayout;
 
-    s_texture_ = bgfx::createUniform("s_texture", bgfx::UniformType::Sampler);
+    void init();
+    void shutdown();
+    void render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_t screenW,
+                uint16_t screenH);
 
-    // Create a 1x1 white texture for solid-color rects.
-    const uint32_t white = 0xFFFFFFFF;
-    whiteTex_ = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8,
-                                      BGFX_TEXTURE_NONE | BGFX_SAMPLER_POINT,
-                                      bgfx::copy(&white, sizeof(white)));
-}
-
-void UiRenderer::shutdown()
-{
-    if (bgfx::isValid(program_))
-    {
-        bgfx::destroy(program_);
-        program_ = BGFX_INVALID_HANDLE;
-    }
-    if (bgfx::isValid(roundedProgram_))
-    {
-        bgfx::destroy(roundedProgram_);
-        roundedProgram_ = BGFX_INVALID_HANDLE;
-    }
-    if (bgfx::isValid(s_texture_))
-    {
-        bgfx::destroy(s_texture_);
-        s_texture_ = BGFX_INVALID_HANDLE;
-    }
-    if (bgfx::isValid(whiteTex_))
-    {
-        bgfx::destroy(whiteTex_);
-        whiteTex_ = BGFX_INVALID_HANDLE;
-    }
-}
+    // Slug submission path — one draw call per glyph because the per-glyph
+    // curve range must be set as a uniform.
+    void renderSlugText(const struct UiDrawCmd& cmd, const class SlugFont* font,
+                        bgfx::ProgramHandle prog, bgfx::ViewId viewId, uint64_t blendState);
+};
 
 // ---------------------------------------------------------------------------
-// Text pass helper — submit one batch of text commands that share the same
-// (program, atlas) pair. Builds one transient vertex/index buffer and
-// submits a single draw call. `totalGlyphs` must be the precomputed glyph
-// count across all commands in [begin, end).
+// Glyph counter — file-local helper for the text pass.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -193,11 +165,92 @@ uint32_t countGlyphs(const char* text)
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// render
+// UiRenderer — thin pImpl forwarders.
 // ---------------------------------------------------------------------------
 
-void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_t screenW,
-                        uint16_t screenH)
+UiRenderer::UiRenderer() : impl_(std::make_unique<Impl>()) {}
+UiRenderer::~UiRenderer() = default;
+UiRenderer::UiRenderer(UiRenderer&&) noexcept = default;
+UiRenderer& UiRenderer::operator=(UiRenderer&&) noexcept = default;
+
+void UiRenderer::init()
+{
+    impl_->init();
+}
+
+void UiRenderer::shutdown()
+{
+    impl_->shutdown();
+}
+
+void UiRenderer::render(const UiDrawList& drawList, engine::rendering::ViewId viewId,
+                        uint16_t screenW, uint16_t screenH)
+{
+    impl_->render(drawList, viewId, screenW, screenH);
+}
+
+// ---------------------------------------------------------------------------
+// Impl::init / shutdown
+// ---------------------------------------------------------------------------
+
+void UiRenderer::Impl::init()
+{
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage members.
+    program = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
+    layout = engine::rendering::spriteLayout();
+
+    // Rounded-rect path: own program + own vertex layout. The layout is
+    // the sprite layout plus an extra TEXCOORD1 vec4 carrying (halfW,
+    // halfH, cornerRadius, _pad). All 4 vertices of one rect share the
+    // same value.
+    roundedProgram = bgfx::ProgramHandle{engine::rendering::loadRoundedRectProgram().idx};
+    roundedLayout.begin()
+        .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, /*normalized=*/true)
+        .add(bgfx::Attrib::TexCoord1, 4, bgfx::AttribType::Float)
+        .end();
+
+    s_texture = bgfx::createUniform("s_texture", bgfx::UniformType::Sampler);
+
+    // Create a 1x1 white texture for solid-color rects.
+    const uint32_t white = 0xFFFFFFFF;
+    whiteTex = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8,
+                                     BGFX_TEXTURE_NONE | BGFX_SAMPLER_POINT,
+                                     bgfx::copy(&white, sizeof(white)));
+}
+
+void UiRenderer::Impl::shutdown()
+{
+    if (bgfx::isValid(program))
+    {
+        bgfx::destroy(program);
+        program = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(roundedProgram))
+    {
+        bgfx::destroy(roundedProgram);
+        roundedProgram = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(s_texture))
+    {
+        bgfx::destroy(s_texture);
+        s_texture = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(whiteTex))
+    {
+        bgfx::destroy(whiteTex);
+        whiteTex = BGFX_INVALID_HANDLE;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Impl::render
+// ---------------------------------------------------------------------------
+
+void UiRenderer::Impl::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_t screenW,
+                              uint16_t screenH)
 {
     const auto& cmds = drawList.commands();
     if (cmds.empty())
@@ -257,10 +310,10 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
         bgfx::TransientVertexBuffer tvb{};
         bgfx::TransientIndexBuffer tib{};
 
-        if (bgfx::getAvailTransientVertexBuffer(sharpCount * 4, layout_) &&
+        if (bgfx::getAvailTransientVertexBuffer(sharpCount * 4, layout) &&
             bgfx::getAvailTransientIndexBuffer(sharpCount * 6))
         {
-            bgfx::allocTransientVertexBuffer(&tvb, sharpCount * 4, layout_);
+            bgfx::allocTransientVertexBuffer(&tvb, sharpCount * 4, layout);
             bgfx::allocTransientIndexBuffer(&tib, sharpCount * 6);
 
             auto* verts = reinterpret_cast<UiVertex*>(tvb.data);
@@ -315,11 +368,11 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
                 ++qi;
             }
 
-            bgfx::setTexture(0, s_texture_, whiteTex_);
+            bgfx::setTexture(0, s_texture, whiteTex);
             bgfx::setState(blendState);
             bgfx::setVertexBuffer(0, &tvb);
             bgfx::setIndexBuffer(&tib);
-            bgfx::submit(viewId, program_);
+            bgfx::submit(viewId, program);
         }
     }
 
@@ -330,15 +383,15 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
     // uses fwidth() to derive an antialiased coverage mask.
     // =======================================================================
 
-    if (roundedCount > 0 && bgfx::isValid(roundedProgram_))
+    if (roundedCount > 0 && bgfx::isValid(roundedProgram))
     {
         bgfx::TransientVertexBuffer tvb{};
         bgfx::TransientIndexBuffer tib{};
 
-        if (bgfx::getAvailTransientVertexBuffer(roundedCount * 4, roundedLayout_) &&
+        if (bgfx::getAvailTransientVertexBuffer(roundedCount * 4, roundedLayout) &&
             bgfx::getAvailTransientIndexBuffer(roundedCount * 6))
         {
-            bgfx::allocTransientVertexBuffer(&tvb, roundedCount * 4, roundedLayout_);
+            bgfx::allocTransientVertexBuffer(&tvb, roundedCount * 4, roundedLayout);
             bgfx::allocTransientIndexBuffer(&tib, roundedCount * 6);
 
             auto* verts = reinterpret_cast<UiRoundedVertex*>(tvb.data);
@@ -379,11 +432,11 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
                 ++qi;
             }
 
-            bgfx::setTexture(0, s_texture_, whiteTex_);
+            bgfx::setTexture(0, s_texture, whiteTex);
             bgfx::setState(blendState);
             bgfx::setVertexBuffer(0, &tvb);
             bgfx::setIndexBuffer(&tib);
-            bgfx::submit(viewId, roundedProgram_);
+            bgfx::submit(viewId, roundedProgram);
         }
     }
 
@@ -465,7 +518,7 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
         if (glyphs > 16000)
             glyphs = 16000;
 
-        if (!bgfx::getAvailTransientVertexBuffer(glyphs * 4, layout_) ||
+        if (!bgfx::getAvailTransientVertexBuffer(glyphs * 4, layout) ||
             !bgfx::getAvailTransientIndexBuffer(glyphs * 6))
         {
             i = j;
@@ -474,7 +527,7 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
 
         bgfx::TransientVertexBuffer tvb{};
         bgfx::TransientIndexBuffer tib{};
-        bgfx::allocTransientVertexBuffer(&tvb, glyphs * 4, layout_);
+        bgfx::allocTransientVertexBuffer(&tvb, glyphs * 4, layout);
         bgfx::allocTransientIndexBuffer(&tib, glyphs * 6);
 
         auto* verts = reinterpret_cast<UiVertex*>(tvb.data);
@@ -543,7 +596,7 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
 
         if (emitted > 0)
         {
-            bgfx::setTexture(0, s_texture_, atlas);
+            bgfx::setTexture(0, s_texture, atlas);
             bgfx::setState(blendState);
             bgfx::setVertexBuffer(0, &tvb, 0, emitted * 4);
             bgfx::setIndexBuffer(&tib, 0, emitted * 6);
@@ -556,7 +609,7 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
 }
 
 // ---------------------------------------------------------------------------
-// renderSlugText — single text command, one draw per glyph.
+// Impl::renderSlugText — single text command, one draw per glyph.
 //
 // SlugFont stores per-glyph (curveOffset, curveCount) which the slug fragment
 // shader reads from u_slugParams. There is no atlas — the shader instead
@@ -568,8 +621,9 @@ void UiRenderer::render(const UiDrawList& drawList, bgfx::ViewId viewId, uint16_
 // reads v_texcoord0 as a glyph-local coordinate.
 // ---------------------------------------------------------------------------
 
-void UiRenderer::renderSlugText(const UiDrawCmd& cmd, const SlugFont* font,
-                                bgfx::ProgramHandle prog, bgfx::ViewId viewId, uint64_t blendState)
+void UiRenderer::Impl::renderSlugText(const UiDrawCmd& cmd, const SlugFont* font,
+                                      bgfx::ProgramHandle prog, bgfx::ViewId viewId,
+                                      uint64_t blendState)
 {
     if (!cmd.text || !font)
         return;
@@ -623,7 +677,7 @@ void UiRenderer::renderSlugText(const UiDrawCmd& cmd, const SlugFont* font,
         const float fT = sd->fontTop;
         const float fB = sd->fontTop - sd->fontHeight;
 
-        if (!bgfx::getAvailTransientVertexBuffer(4, layout_) ||
+        if (!bgfx::getAvailTransientVertexBuffer(4, layout) ||
             !bgfx::getAvailTransientIndexBuffer(6))
         {
             cursorX += g->advance * scale;
@@ -633,7 +687,7 @@ void UiRenderer::renderSlugText(const UiDrawCmd& cmd, const SlugFont* font,
 
         bgfx::TransientVertexBuffer tvb{};
         bgfx::TransientIndexBuffer tib{};
-        bgfx::allocTransientVertexBuffer(&tvb, 4, layout_);
+        bgfx::allocTransientVertexBuffer(&tvb, 4, layout);
         bgfx::allocTransientIndexBuffer(&tib, 6);
 
         auto* verts = reinterpret_cast<UiVertex*>(tvb.data);
@@ -651,9 +705,9 @@ void UiRenderer::renderSlugText(const UiDrawCmd& cmd, const SlugFont* font,
         idx[5] = 3;
 
         // Per-glyph uniform set + bind curve buffer + submit. Slug doesn't
-        // use sampler 0 (s_texture); we still bind whiteTex_ to silence
+        // use sampler 0 (s_texture); we still bind whiteTex to silence
         // any "no texture bound" warnings on backends that complain.
-        bgfx::setTexture(0, s_texture_, whiteTex_);
+        bgfx::setTexture(0, s_texture, whiteTex);
         font->bindResources();
         font->setCurrentGlyph(sd->curveOffset, sd->curveCount);
         bgfx::setState(blendState);
