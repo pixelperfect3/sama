@@ -94,8 +94,13 @@ constexpr GpuEntry kGpuTable[] = {
 };
 // clang-format on
 
-// Tier thresholds.  Same values as iOS so that a developer reading the
-// project.json doesn't have to remember which platform uses which cut-off.
+// Tier thresholds.  The Low cutoff matches iOS (< 3 GB), but the High
+// cutoff is 5 GB on Android vs 6 GB on iOS: most Android flagships ship
+// 6/8/12 GB and most mid-range devices ship 4 GB, so a 5 GB boundary
+// cleanly separates the two without grouping 6 GB devices into Mid.
+// (iOS uses 6 GB because the device-list path catches every shipping
+// SKU first, leaving the RAM heuristic only as a fallback for unknown
+// future devices.)
 constexpr uint64_t kRamLowMaxMb = 3072;   // < 3 GB  -> Low
 constexpr uint64_t kRamHighMinMb = 5120;  // >= 5 GB -> High
 

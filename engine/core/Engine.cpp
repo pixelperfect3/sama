@@ -462,9 +462,16 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     // here because bgfx hasn't been init'd yet (it requires the native
     // window which we're about to wait for); the RAM signal alone is
     // sufficient to distinguish the three tier buckets on real devices.
+    //
+    // We call classifyAndroidTier(ramMb) directly rather than
+    // detectAndroidTier() so /proc/meminfo is only read once — the
+    // GameRunner runAndroid(configPath) overload reads it again when it
+    // performs the tier substitution, which is fine (one read on init,
+    // one read on substitute), but doing it twice in a row here would
+    // be pointless.
     {
         const uint64_t ramMb = platform::android::androidTotalRamMb();
-        const auto tier = platform::android::detectAndroidTier();
+        const auto tier = platform::android::classifyAndroidTier("", ramMb);
         LOGI("Tier detected: %s (RAM %llu MB)", platform::android::androidTierLogName(tier),
              static_cast<unsigned long long>(ramMb));
     }
