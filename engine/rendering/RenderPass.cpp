@@ -9,11 +9,17 @@
 namespace engine::rendering
 {
 
-// Layout sanity checks — engine::rendering::FrameBufferHandle MUST be
-// bit-identical to bgfx::FrameBufferHandle so the boundary conversion
-// (FrameBufferHandle{h.idx} <-> bgfx::FrameBufferHandle{h.idx}) is a no-op.
+// Layout sanity checks — every opaque engine::rendering handle MUST be
+// bit-identical to its bgfx counterpart so the boundary conversion
+// (Handle{h.idx} <-> bgfx::Handle{h.idx}) is a no-op reinterpret.
 static_assert(sizeof(engine::rendering::FrameBufferHandle) == sizeof(bgfx::FrameBufferHandle));
 static_assert(alignof(engine::rendering::FrameBufferHandle) == alignof(bgfx::FrameBufferHandle));
+static_assert(sizeof(engine::rendering::ProgramHandle) == sizeof(bgfx::ProgramHandle));
+static_assert(alignof(engine::rendering::ProgramHandle) == alignof(bgfx::ProgramHandle));
+static_assert(sizeof(engine::rendering::TextureHandle) == sizeof(bgfx::TextureHandle));
+static_assert(alignof(engine::rendering::TextureHandle) == alignof(bgfx::TextureHandle));
+static_assert(sizeof(engine::rendering::UniformHandle) == sizeof(bgfx::UniformHandle));
+static_assert(alignof(engine::rendering::UniformHandle) == alignof(bgfx::UniformHandle));
 
 RenderPass& RenderPass::framebuffer(FrameBufferHandle fb)
 {

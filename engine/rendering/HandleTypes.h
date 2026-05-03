@@ -26,9 +26,51 @@ struct FrameBufferHandle
     uint16_t idx;
 };
 
+// Opaque shader-program handle.  Boundary conversion to/from
+// bgfx::ProgramHandle happens inside engine_rendering / engine_ui only.
+// See RenderPass.cpp for the layout sanity static_asserts.
+struct ProgramHandle
+{
+    uint16_t idx;
+};
+
+// Opaque texture handle (2D / cube — bgfx unifies them under a single type).
+// Boundary conversion to/from bgfx::TextureHandle happens inside
+// engine_rendering / engine_ui only.
+struct TextureHandle
+{
+    uint16_t idx;
+};
+
+// Opaque uniform handle.  Apps don't usually touch uniforms directly, but
+// engine internals (font / material / post-process code) do, so expose the
+// alias so we don't have to do another pass once those headers shake out.
+struct UniformHandle
+{
+    uint16_t idx;
+};
+
 inline constexpr FrameBufferHandle kInvalidFramebuffer{UINT16_MAX};
+inline constexpr ProgramHandle kInvalidProgram{UINT16_MAX};
+inline constexpr TextureHandle kInvalidTexture{UINT16_MAX};
+inline constexpr UniformHandle kInvalidUniform{UINT16_MAX};
 
 [[nodiscard]] constexpr bool isValid(FrameBufferHandle h)
+{
+    return h.idx != UINT16_MAX;
+}
+
+[[nodiscard]] constexpr bool isValid(ProgramHandle h)
+{
+    return h.idx != UINT16_MAX;
+}
+
+[[nodiscard]] constexpr bool isValid(TextureHandle h)
+{
+    return h.idx != UINT16_MAX;
+}
+
+[[nodiscard]] constexpr bool isValid(UniformHandle h)
 {
     return h.idx != UINT16_MAX;
 }
