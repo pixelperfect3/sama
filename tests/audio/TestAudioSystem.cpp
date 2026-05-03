@@ -240,3 +240,23 @@ TEST_CASE("update3dAudio called every frame", "[audio]")
 
     CHECK(fake.update3dAudioCallCount == 3);
 }
+
+// ---------------------------------------------------------------------------
+// setPauseAll plumbing — exercised by the mobile lifecycle handlers
+// (Engine::handleAndroidCmd APP_CMD_PAUSE/RESUME, iOS applicationWillResign).
+// FakeAudioEngine records the call so we can assert the contract.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("FakeAudioEngine records setPauseAll calls", "[audio]")
+{
+    FakeAudioEngine fake;
+    CHECK(fake.setPauseAllCallCount == 0);
+
+    fake.setPauseAll(true);
+    CHECK(fake.setPauseAllCallCount == 1);
+    CHECK(fake.lastPausedState == true);
+
+    fake.setPauseAll(false);
+    CHECK(fake.setPauseAllCallCount == 2);
+    CHECK(fake.lastPausedState == false);
+}

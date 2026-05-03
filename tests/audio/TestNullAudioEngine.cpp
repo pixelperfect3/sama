@@ -99,3 +99,21 @@ TEST_CASE("NullAudioEngine category volume get/set", "[audio]")
     // Other categories unchanged.
     CHECK(engine.getCategoryVolume(SoundCategory::Music) == 1.0f);
 }
+
+TEST_CASE("NullAudioEngine setPauseAll is a no-op", "[audio]")
+{
+    // The mobile platform layer (engine/core/Engine.cpp APP_CMD_PAUSE on
+    // Android, applicationWillResignActive on iOS) calls setPauseAll(true)
+    // unconditionally on the engine-owned IAudioEngine.  When SoLoud init
+    // failed and we fell back to NullAudioEngine, the call must be safe.
+    NullAudioEngine engine;
+    engine.init();
+
+    engine.setPauseAll(true);
+    engine.setPauseAll(false);
+    engine.setPauseAll(true);
+    engine.setPauseAll(true);  // idempotent
+
+    // No state, no crash, no observable side-effect.
+    CHECK(true);
+}
