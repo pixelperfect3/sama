@@ -1,10 +1,9 @@
 #pragma once
 
-#include <bgfx/bgfx.h>
-
 #include <cstdint>
 #include <vector>
 
+#include "engine/rendering/HandleTypes.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 
@@ -12,12 +11,17 @@ namespace engine::rendering
 {
 
 // ---------------------------------------------------------------------------
-// RenderResources — integer-keyed registry for live bgfx GPU handles.
+// RenderResources — integer-keyed registry for live GPU handles.
 //
 // Maps uint32_t IDs to Mesh (and in later phases: textures, materials, shaders).
 // IDs are allocated from a free list backed by a simple generation counter so
 // that slots are reused after removal.  Callers store the uint32_t ID in their
 // MeshComponent.
+//
+// Texture handles cross the public API as the bgfx-free
+// engine::rendering::TextureHandle wrapper (see HandleTypes.h); the boundary
+// conversion to bgfx::TextureHandle happens entirely inside RenderResources.cpp
+// so apps and other engine subsystems never have to include <bgfx/bgfx.h>.
 //
 // Thread safety: single-threaded; all mutations happen on the main thread
 // before render systems run.
@@ -29,7 +33,7 @@ public:
     RenderResources() = default;
     ~RenderResources() = default;
 
-    // Non-copyable — each Mesh holds live bgfx handles.
+    // Non-copyable — each Mesh holds live GPU handles.
     RenderResources(const RenderResources&) = delete;
     RenderResources& operator=(const RenderResources&) = delete;
 
@@ -48,7 +52,7 @@ public:
     // not live.  Pointer is valid until the next add/remove call.
     [[nodiscard]] const Mesh* getMesh(uint32_t id) const;
 
-    // Destroy the Mesh's bgfx handles and free the slot for reuse.
+    // Destroy the Mesh's GPU handles and free the slot for reuse.
     // No-op if the ID is not live.
     void removeMesh(uint32_t id);
 
@@ -60,7 +64,7 @@ public:
     // Default textures — 1×1 fallback textures for unbound slots.
     //
     // createDefaultTextures() allocates the white, neutral-normal, and white
-    // cube textures via bgfx and registers them with the setters below.
+    // cube textures and registers them with the setters below.
     // destroyDefaultTextures() destroys them.  Both are idempotent.
     //
     // Callers may still set individual textures manually via the setters
@@ -83,54 +87,54 @@ public:
     // when no texture is bound (e.g. SpriteComponent::textureId == 0).
     // -----------------------------------------------------------------------
 
-    void setWhiteTexture(bgfx::TextureHandle h)
+    void setWhiteTexture(TextureHandle h)
     {
         whiteTexture_ = h;
     }
-    [[nodiscard]] bgfx::TextureHandle whiteTexture() const
+    [[nodiscard]] TextureHandle whiteTexture() const
     {
         return whiteTexture_;
     }
 
     // Neutral normal map: 1×1 pixel of (128, 128, 255, 255) = tangent-space (0, 0, 1).
     // Use as fallback for s_normal when no normal map texture is assigned.
-    void setNeutralNormalTexture(bgfx::TextureHandle h)
+    void setNeutralNormalTexture(TextureHandle h)
     {
         neutralNormalTexture_ = h;
     }
-    [[nodiscard]] bgfx::TextureHandle neutralNormalTexture() const
+    [[nodiscard]] TextureHandle neutralNormalTexture() const
     {
         return neutralNormalTexture_;
     }
 
     // 1×1 white cube texture — fallback for unbound IBL cube samplers (slots 6, 7).
     // The handle is NOT owned by RenderResources; caller is responsible for its lifetime.
-    void setWhiteCubeTexture(bgfx::TextureHandle h)
+    void setWhiteCubeTexture(TextureHandle h)
     {
         whiteCubeTexture_ = h;
     }
-    [[nodiscard]] bgfx::TextureHandle whiteCubeTexture() const
+    [[nodiscard]] TextureHandle whiteCubeTexture() const
     {
         return whiteCubeTexture_;
     }
 
     // -----------------------------------------------------------------------
-    // Texture registry — stores non-owned bgfx handles (lifetime managed by
-    // the GltfAsset that uploaded them).  IDs are 1-based; 0 = no texture.
+    // Texture registry — stores non-owned texture handles (lifetime managed
+    // by the GltfAsset that uploaded them).  IDs are 1-based; 0 = no texture.
     // -----------------------------------------------------------------------
 
     // Register a texture handle and return its stable ID (1-based).
     // Reuses previously-freed slots before growing the vector.
-    uint32_t addTexture(bgfx::TextureHandle h);
+    uint32_t addTexture(TextureHandle h);
 
-    // Return the texture with the given ID, or BGFX_INVALID_HANDLE if not found.
-    [[nodiscard]] bgfx::TextureHandle getTexture(uint32_t id) const;
+    // Return the texture with the given ID, or kInvalidTexture if not found.
+    [[nodiscard]] TextureHandle getTexture(uint32_t id) const;
 
-    // Mark a previously addTexture()'d slot as free.  Does NOT call
-    // bgfx::destroy on the stored handle — the asset manager (or whatever
-    // else uploaded the texture) still owns the underlying GPU resource.
-    // Subsequent addTexture() calls may reuse the freed slot id.
-    // No-op if the id is 0 or already free.
+    // Mark a previously addTexture()'d slot as free.  Does NOT destroy the
+    // stored handle — the asset manager (or whatever else uploaded the
+    // texture) still owns the underlying GPU resource.  Subsequent
+    // addTexture() calls may reuse the freed slot id.  No-op if the id is 0
+    // or already free.
     void removeTexture(uint32_t id);
 
     // Number of texture slots currently allocated (including freed slots).
@@ -173,12 +177,17 @@ private:
         bool occupied = false;
     };
 
-    bgfx::TextureHandle whiteTexture_ = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle neutralNormalTexture_ = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle whiteCubeTexture_ = BGFX_INVALID_HANDLE;
+    // Default fallback textures — stored as the engine's bgfx-free wrapper.
+    // Boundary conversion happens in createDefaultTextures() / the consumer
+    // rendering systems that still talk to bgfx directly.
+    TextureHandle whiteTexture_ = kInvalidTexture;
+    TextureHandle neutralNormalTexture_ = kInvalidTexture;
+    TextureHandle whiteCubeTexture_ = kInvalidTexture;
 
     // Non-owned texture handles registered via addTexture().  Index 0 = ID 1.
-    std::vector<bgfx::TextureHandle> textures_;
+    // Storage is the engine's wrapped TextureHandle so the registry never
+    // depends on <bgfx/bgfx.h>.
+    std::vector<TextureHandle> textures_;
     std::vector<uint32_t> textureFreeList_;
 
     std::vector<Slot> slots_;

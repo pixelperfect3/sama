@@ -211,7 +211,7 @@ int main()
             const uint32_t n = eng.resources().textureCount();
             for (uint32_t i = 1; i <= n; ++i)
             {
-                bgfx::TextureHandle th = eng.resources().getTexture(i);
+                bgfx::TextureHandle th = bgfx::TextureHandle{eng.resources().getTexture(i).idx};
                 const char* name = (i <= 5) ? kTexNames[i - 1] : "Texture";
                 char label[64];
                 snprintf(label, sizeof(label), "[%u] %s", i, name);

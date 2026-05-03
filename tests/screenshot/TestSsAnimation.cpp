@@ -61,10 +61,10 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{loadShadowProgram().idx};
-    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{loadPbrProgram().idx};
-    bgfx::ProgramHandle skinnedShadowProg = bgfx::ProgramHandle{loadSkinnedShadowProgram().idx};
-    bgfx::ProgramHandle skinnedPbrProg = bgfx::ProgramHandle{loadSkinnedPbrProgram().idx};
+    ProgramHandle shadowProg = loadShadowProgram();
+    ProgramHandle pbrProg = loadPbrProgram();
+    ProgramHandle skinnedShadowProg = loadSkinnedShadowProgram();
+    ProgramHandle skinnedPbrProg = loadSkinnedPbrProgram();
 
     // -----------------------------------------------------------------------
     // Synchronously load Fox.glb.
@@ -95,8 +95,8 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     // Spawn skeleton + skinned mesh into ECS.
     // -----------------------------------------------------------------------
     RenderResources res;
-    res.setWhiteTexture(fx.whiteTex());
-    res.setNeutralNormalTexture(fx.neutralNormalTex());
+    res.setWhiteTexture(engine::rendering::TextureHandle{fx.whiteTex().idx});
+    res.setNeutralNormalTexture(engine::rendering::TextureHandle{fx.neutralNormalTex().idx});
 
     Registry reg;
     AnimationResources animRes;
@@ -165,8 +165,9 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     shadow.beginCascade(0, lightView, lightProj);
 
     DrawCallBuildSystem drawCallSys;
-    drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
-    drawCallSys.submitSkinnedShadowDrawCalls(reg, res, skinnedShadowProg, 0, bones);
+    drawCallSys.submitShadowDrawCalls(reg, res, bgfx::ProgramHandle{shadowProg.idx}, 0);
+    drawCallSys.submitSkinnedShadowDrawCalls(reg, res, bgfx::ProgramHandle{skinnedShadowProg.idx},
+                                             0, bones);
 
     // -----------------------------------------------------------------------
     // Opaque PBR pass → off-screen capture FB.
@@ -197,8 +198,9 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     frame.camPos[1] = camPos.y;
     frame.camPos[2] = camPos.z;
 
-    drawCallSys.update(reg, res, pbrProg, uniforms, frame);
-    drawCallSys.updateSkinned(reg, res, skinnedPbrProg, uniforms, frame, bones);
+    drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, uniforms, frame);
+    drawCallSys.updateSkinned(reg, res, bgfx::ProgramHandle{skinnedPbrProg.idx}, uniforms, frame,
+                              bones);
 
     auto pixels = fx.captureFrame();
 
@@ -207,14 +209,14 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     // -----------------------------------------------------------------------
     assets.release(handle);
     shadow.shutdown();
-    if (bgfx::isValid(shadowProg))
-        bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))
-        bgfx::destroy(pbrProg);
-    if (bgfx::isValid(skinnedShadowProg))
-        bgfx::destroy(skinnedShadowProg);
-    if (bgfx::isValid(skinnedPbrProg))
-        bgfx::destroy(skinnedPbrProg);
+    if (isValid(shadowProg))
+        bgfx::destroy(bgfx::ProgramHandle{shadowProg.idx});
+    if (isValid(pbrProg))
+        bgfx::destroy(bgfx::ProgramHandle{pbrProg.idx});
+    if (isValid(skinnedShadowProg))
+        bgfx::destroy(bgfx::ProgramHandle{skinnedShadowProg.idx});
+    if (isValid(skinnedPbrProg))
+        bgfx::destroy(bgfx::ProgramHandle{skinnedPbrProg.idx});
     res.destroyAll();
     uniforms.destroy();
 

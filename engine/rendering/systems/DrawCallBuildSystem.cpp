@@ -125,12 +125,14 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     if (!bgfx::isValid(program))
         return;
 
-    bgfx::TextureHandle whiteTex = res.whiteTexture();
-    bgfx::TextureHandle whiteCubeTex = res.whiteCubeTexture();
+    bgfx::TextureHandle whiteTex = bgfx::TextureHandle{res.whiteTexture().idx};
+    bgfx::TextureHandle whiteCubeTex = bgfx::TextureHandle{res.whiteCubeTexture().idx};
     // Neutral normal map: (128, 128, 255) → tangent-space (0, 0, 1) → N = Ngeom.
     // White (255, 255, 255) decodes to (1, 1, 1) which distorts the normal.
     bgfx::TextureHandle normalFallback =
-        bgfx::isValid(res.neutralNormalTexture()) ? res.neutralNormalTexture() : whiteTex;
+        bgfx::isValid(bgfx::TextureHandle{res.neutralNormalTexture().idx})
+            ? bgfx::TextureHandle{res.neutralNormalTexture().idx}
+            : whiteTex;
 
     // Frame-level uniforms — must be re-uploaded before every submit() because
     // bgfx resets all per-draw state after each submit().
@@ -195,7 +197,7 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             {
                 if (texId != 0)
                 {
-                    bgfx::TextureHandle t = res.getTexture(texId);
+                    bgfx::TextureHandle t = bgfx::TextureHandle{res.getTexture(texId).idx};
                     if (bgfx::isValid(t))
                         return t;
                 }
@@ -356,10 +358,12 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
     if (!bgfx::isValid(skinnedProgram) || !boneBuffer)
         return;
 
-    bgfx::TextureHandle whiteTex = res.whiteTexture();
-    bgfx::TextureHandle whiteCubeTex = res.whiteCubeTexture();
+    bgfx::TextureHandle whiteTex = bgfx::TextureHandle{res.whiteTexture().idx};
+    bgfx::TextureHandle whiteCubeTex = bgfx::TextureHandle{res.whiteCubeTexture().idx};
     bgfx::TextureHandle normalFallback =
-        bgfx::isValid(res.neutralNormalTexture()) ? res.neutralNormalTexture() : whiteTex;
+        bgfx::isValid(bgfx::TextureHandle{res.neutralNormalTexture().idx})
+            ? bgfx::TextureHandle{res.neutralNormalTexture().idx}
+            : whiteTex;
 
     const float frameW = static_cast<float>(frame.viewportW);
     const float frameH = static_cast<float>(frame.viewportH);
@@ -411,7 +415,7 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             {
                 if (texId != 0)
                 {
-                    bgfx::TextureHandle t = res.getTexture(texId);
+                    bgfx::TextureHandle t = bgfx::TextureHandle{res.getTexture(texId).idx};
                     if (bgfx::isValid(t))
                         return t;
                 }

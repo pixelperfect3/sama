@@ -516,7 +516,9 @@ uint32_t EditorApp::Impl::loadTextureForMaterial(const std::string& absolutePath
         return 0;
     }
 
-    const uint32_t resId = resources.addTexture(tex->handle);
+    // RenderResources::addTexture takes the bgfx-free TextureHandle
+    // wrapper; wrap the asset's bgfx handle at the boundary.
+    const uint32_t resId = resources.addTexture(engine::rendering::TextureHandle{tex->handle.idx});
     editorTextures.push_back({absolutePath, handle, resId, 0u});
 
     snprintf(statusMsg, sizeof(statusMsg), "Loaded texture (id=%u)", resId);
@@ -3685,12 +3687,15 @@ void EditorApp::run()
                             bgfx::setUniform(impl_->uniforms.u_material, matData, 2);
                             bgfx::setUniform(impl_->uniforms.u_dirLight, lightData, 2);
 
-                            bgfx::setTexture(0, impl_->uniforms.s_albedo,
-                                             impl_->resources.whiteTexture());
-                            bgfx::setTexture(1, impl_->uniforms.s_normal,
-                                             impl_->resources.neutralNormalTexture());
-                            bgfx::setTexture(2, impl_->uniforms.s_orm,
-                                             impl_->resources.whiteTexture());
+                            bgfx::setTexture(
+                                0, impl_->uniforms.s_albedo,
+                                bgfx::TextureHandle{impl_->resources.whiteTexture().idx});
+                            bgfx::setTexture(
+                                1, impl_->uniforms.s_normal,
+                                bgfx::TextureHandle{impl_->resources.neutralNormalTexture().idx});
+                            bgfx::setTexture(
+                                2, impl_->uniforms.s_orm,
+                                bgfx::TextureHandle{impl_->resources.whiteTexture().idx});
 
                             bgfx::setVertexBuffer(0, mesh->positionVbh);
                             if (bgfx::isValid(mesh->surfaceVbh))

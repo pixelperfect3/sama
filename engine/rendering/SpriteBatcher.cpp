@@ -163,7 +163,8 @@ void SpriteBatcher::flush(bgfx::Encoder* enc, bgfx::ProgramHandle program,
         if (bgfx::isValid(s_texture))
         {
             bgfx::TextureHandle invalid = BGFX_INVALID_HANDLE;
-            bgfx::TextureHandle tex = (batchTexId == 0) ? res.whiteTexture() : invalid;
+            bgfx::TextureHandle tex =
+                (batchTexId == 0) ? bgfx::TextureHandle{res.whiteTexture().idx} : invalid;
             enc->setTexture(0, s_texture, tex);
         }
 

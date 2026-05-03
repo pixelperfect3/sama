@@ -40,7 +40,9 @@ void registerResources(const GltfAsset& asset, rendering::RenderResources& res,
     std::vector<uint32_t> texIds;
     texIds.reserve(asset.textures.size());
     for (const auto& tex : asset.textures)
-        texIds.push_back(res.addTexture(tex.handle));
+        // RenderResources::addTexture takes the bgfx-free TextureHandle
+        // wrapper; wrap the asset's bgfx handle at the boundary.
+        texIds.push_back(res.addTexture(rendering::TextureHandle{tex.handle.idx}));
 
     // Remap material texture IDs from 1-based asset-texture-index to
     // the RenderResources texture IDs assigned above.

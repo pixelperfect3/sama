@@ -44,8 +44,8 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{loadShadowProgram().idx};
-    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{loadPbrProgram().idx};
+    ProgramHandle shadowProg = loadShadowProgram();
+    ProgramHandle pbrProg = loadPbrProgram();
 
     // -----------------------------------------------------------------------
     // Load the helmet GLB synchronously.
@@ -83,8 +83,8 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     // -----------------------------------------------------------------------
 
     RenderResources res;
-    res.setWhiteTexture(fx.whiteTex());
-    res.setNeutralNormalTexture(fx.neutralNormalTex());
+    res.setWhiteTexture(engine::rendering::TextureHandle{fx.whiteTex().idx});
+    res.setNeutralNormalTexture(engine::rendering::TextureHandle{fx.neutralNormalTex().idx});
 
     Registry reg;
     const GltfAsset* helmet = assets.get<GltfAsset>(handle);
@@ -115,7 +115,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     shadow.beginCascade(0, lightView, lightProj);
 
     DrawCallBuildSystem drawCallSys;
-    drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
+    drawCallSys.submitShadowDrawCalls(reg, res, bgfx::ProgramHandle{shadowProg.idx}, 0);
 
     // -----------------------------------------------------------------------
     // Opaque pass (view 9) → off-screen capture framebuffer
@@ -148,7 +148,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     frame.camPos[1] = camPos.y;
     frame.camPos[2] = camPos.z;
 
-    drawCallSys.update(reg, res, pbrProg, uniforms, frame);
+    drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, uniforms, frame);
 
     // -----------------------------------------------------------------------
     // Capture, compare, cleanup
@@ -158,10 +158,10 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
 
     assets.release(handle);
     shadow.shutdown();
-    if (bgfx::isValid(shadowProg))
-        bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))
-        bgfx::destroy(pbrProg);
+    if (isValid(shadowProg))
+        bgfx::destroy(bgfx::ProgramHandle{shadowProg.idx});
+    if (isValid(pbrProg))
+        bgfx::destroy(bgfx::ProgramHandle{pbrProg.idx});
     res.destroyAll();
     uniforms.destroy();
 

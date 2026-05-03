@@ -25,12 +25,12 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{engine::rendering::loadShadowProgram().idx};
-    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
+    engine::rendering::ProgramHandle shadowProg = engine::rendering::loadShadowProgram();
+    engine::rendering::ProgramHandle pbrProg = engine::rendering::loadPbrProgram();
 
     engine::rendering::RenderResources res;
-    res.setWhiteTexture(fx.whiteTex());
-    res.setNeutralNormalTexture(fx.neutralNormalTex());
+    res.setWhiteTexture(engine::rendering::TextureHandle{fx.whiteTex().idx});
+    res.setNeutralNormalTexture(engine::rendering::TextureHandle{fx.neutralNormalTex().idx});
 
     uint32_t meshId =
         res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));
@@ -67,7 +67,7 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
         bgfx::setVertexBuffer(0, mesh.positionVbh);
         bgfx::setIndexBuffer(mesh.ibh);
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
-        bgfx::submit(engine::rendering::kViewShadowBase, shadowProg);
+        bgfx::submit(engine::rendering::kViewShadowBase, bgfx::ProgramHandle{shadowProg.idx});
     }
 
     // -----------------------------------------------------------------------
@@ -107,7 +107,7 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
         bgfx::setVertexBuffer(1, mesh.surfaceVbh);
         bgfx::setIndexBuffer(mesh.ibh);
         bgfx::setState(BGFX_STATE_DEFAULT);
-        bgfx::submit(engine::rendering::kViewOpaque, pbrProg);
+        bgfx::submit(engine::rendering::kViewOpaque, bgfx::ProgramHandle{pbrProg.idx});
     }
 
     // Draw ground plane (shadow receiver)
@@ -129,16 +129,16 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
         bgfx::setVertexBuffer(1, mesh.surfaceVbh);
         bgfx::setIndexBuffer(mesh.ibh);
         bgfx::setState(BGFX_STATE_DEFAULT);
-        bgfx::submit(engine::rendering::kViewOpaque, pbrProg);
+        bgfx::submit(engine::rendering::kViewOpaque, bgfx::ProgramHandle{pbrProg.idx});
     }
 
     auto pixels = fx.captureFrame();
 
     shadow.shutdown();
-    if (bgfx::isValid(shadowProg))
-        bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))
-        bgfx::destroy(pbrProg);
+    if (engine::rendering::isValid(shadowProg))
+        bgfx::destroy(bgfx::ProgramHandle{shadowProg.idx});
+    if (engine::rendering::isValid(pbrProg))
+        bgfx::destroy(bgfx::ProgramHandle{pbrProg.idx});
     res.destroyAll();
     uniforms.destroy();
 

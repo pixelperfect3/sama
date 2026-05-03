@@ -24,7 +24,7 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle spriteProgram = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
+    engine::rendering::ProgramHandle spriteProgram = engine::rendering::loadSpriteProgram();
 
     // Set up the UI view target
     engine::rendering::RenderPass(engine::rendering::kViewUi)
@@ -34,7 +34,7 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
 
     engine::ecs::Registry reg;
     engine::rendering::RenderResources res;
-    res.setWhiteTexture(fx.whiteTex());
+    res.setWhiteTexture(engine::rendering::TextureHandle{fx.whiteTex().idx});
     engine::rendering::UiRenderSystem uiSys;
 
     // Helper to create a quad entity with a colored sprite
@@ -69,16 +69,16 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
     // UiRenderSystem resets kViewUi clear to BGFX_CLEAR_NONE (UI renders on top
     // of the 3D scene in production).  For the screenshot test we want a solid
     // background, so restore the clear and framebuffer after the system runs.
-    uiSys.update(reg, res, spriteProgram, uniforms.s_albedo, static_cast<uint16_t>(fx.width()),
-                 static_cast<uint16_t>(fx.height()));
+    uiSys.update(reg, res, bgfx::ProgramHandle{spriteProgram.idx}, uniforms.s_albedo,
+                 static_cast<uint16_t>(fx.width()), static_cast<uint16_t>(fx.height()));
     engine::rendering::RenderPass(engine::rendering::kViewUi)
         .framebuffer(fx.captureFb())
         .clearColorAndDepth(0x202020ff);
 
     auto pixels = fx.captureFrame();
 
-    if (bgfx::isValid(spriteProgram))
-        bgfx::destroy(spriteProgram);
+    if (engine::rendering::isValid(spriteProgram))
+        bgfx::destroy(bgfx::ProgramHandle{spriteProgram.idx});
     res.destroyAll();
     uniforms.destroy();
 
