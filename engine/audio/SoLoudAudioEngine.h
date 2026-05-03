@@ -44,6 +44,7 @@ public:
     void stop(SoundHandle handle) override;
     void stopAll() override;
     bool isPlaying(SoundHandle handle) const override;
+    void setPauseAll(bool paused) override;
 
     // Per-voice control
     void setVolume(SoundHandle handle, float volume) override;

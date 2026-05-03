@@ -25,6 +25,8 @@
 #include <android_native_app_glue.h>
 #include <bgfx/platform.h>
 
+#include "engine/audio/NullAudioEngine.h"
+#include "engine/audio/SoLoudAudioEngine.h"
 #include "engine/input/android/AndroidInputBackend.h"
 #include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidGlobals.h"
@@ -334,7 +336,10 @@ void Engine::handleAndroidCmd(struct android_app* app, int32_t cmd)
                 }
 
                 // If bgfx was already initialized (window recreation after
-                // orientation change), reset with the new window handle.
+                // orientation change OR resume from background), reset with
+                // the new window handle.  Vulkan's VkSurfaceKHR is tied to
+                // the previous ANativeWindow* and bgfx needs the new handle
+                // before the next swapchain image is acquired.
                 if (engine->renderer_.isInitialized())
                 {
                     uint32_t w = engine->androidWindow_->width();
@@ -352,6 +357,13 @@ void Engine::handleAndroidCmd(struct android_app* app, int32_t cmd)
             break;
 
         case APP_CMD_TERM_WINDOW:
+            // Surface is going away (user backgrounded the app or rotated
+            // the device).  Clear our cached pointer so beginFrame() blocks
+            // on ALooper_pollAll until the next APP_CMD_INIT_WINDOW.  The
+            // bgfx swap chain is invalid past this point — pushing frames
+            // would crash inside vkAcquireNextImageKHR.  bgfx itself is
+            // left running so we can rebind a new surface in
+            // APP_CMD_INIT_WINDOW without a full re-init.
             LOGI("APP_CMD_TERM_WINDOW");
             engine->androidWindow_->clearNativeWindow();
             break;
@@ -364,6 +376,43 @@ void Engine::handleAndroidCmd(struct android_app* app, int32_t cmd)
         case APP_CMD_LOST_FOCUS:
             LOGI("APP_CMD_LOST_FOCUS");
             engine->focused_ = false;
+            break;
+
+        case APP_CMD_PAUSE:
+            // Activity moving to the background.  Pause audio so the user
+            // doesn't hear the game while another app is foreground; disable
+            // gyro polling to save battery; flip the paused_ flag so
+            // beginFrame() blocks on ALooper_pollAll(-1) instead of busy
+            // looping.  Mirrors iOS applicationWillResignActive in
+            // engine/platform/ios/IosApp.mm.
+            LOGI("APP_CMD_PAUSE");
+            engine->paused_ = true;
+            if (engine->audio_)
+            {
+                engine->audio_->setPauseAll(true);
+            }
+            if (engine->androidGyro_)
+            {
+                engine->androidGyro_->setEnabled(false);
+            }
+            break;
+
+        case APP_CMD_RESUME:
+            // Activity returning to the foreground.  Re-enable gyro and
+            // unpause audio.  Note the bgfx surface is rebuilt separately
+            // via APP_CMD_TERM_WINDOW / APP_CMD_INIT_WINDOW — those fire
+            // around the pause/resume pair when the surface is invalidated
+            // (always on background, sometimes not on app switcher).
+            LOGI("APP_CMD_RESUME");
+            engine->paused_ = false;
+            if (engine->androidGyro_)
+            {
+                engine->androidGyro_->setEnabled(true);
+            }
+            if (engine->audio_)
+            {
+                engine->audio_->setPauseAll(false);
+            }
             break;
 
         case APP_CMD_CONFIG_CHANGED:
@@ -474,6 +523,34 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     // -- Frame arena ------------------------------------------------------
     frameArena_ = std::make_unique<memory::FrameArena>(desc.frameArenaSize);
 
+    // -- Audio (SoLoud via miniaudio -> AAudio / OpenSL ES) ---------------
+    // miniaudio's NULL-context init auto-selects the best available Android
+    // backend at runtime: AAudio on API 26+ (lower latency, modern), with
+    // an automatic fall-back to OpenSL ES on older devices.  Both backends
+    // are dlopen()'d (MA_NO_RUNTIME_LINKING is not defined) so we don't
+    // need to link libaaudio.so / libOpenSLES.so at compile time.  AAudio
+    // requires no manifest permission for output-only playback.
+    //
+    // On emulator images without an audio route SoLoudAudioEngine::init()
+    // returns false and we fall back to NullAudioEngine so games can call
+    // engine.audio() unconditionally.  Mirrors the iOS path above.
+    {
+        auto soloud = std::make_unique<audio::SoLoudAudioEngine>();
+        if (soloud->init())
+        {
+            LOGI("Audio: SoLoud (miniaudio) initialised");
+            audio_ = std::move(soloud);
+        }
+        else
+        {
+            LOGE("Audio: SoLoud init failed — falling back to NullAudioEngine");
+            soloud.reset();
+            auto null_audio = std::make_unique<audio::NullAudioEngine>();
+            null_audio->init();
+            audio_ = std::move(null_audio);
+        }
+    }
+
     // -- Timing -----------------------------------------------------------
     using Clock = std::chrono::steady_clock;
     auto now = Clock::now();
@@ -503,6 +580,14 @@ void Engine::shutdown()
 
     renderer_.endFrame();
     renderer_.shutdown();
+
+    // Audio: shut down before tearing down platform pointers.  Both backends
+    // (SoLoud + Null) are safe to shutdown() even if init failed.
+    if (audio_)
+    {
+        audio_->shutdown();
+        audio_.reset();
+    }
 
     inputSys_.reset();
     inputBackend_.reset();
@@ -534,9 +619,13 @@ bool Engine::beginFrame(float& outDt)
 
     for (;;)
     {
-        // Recompute timeout each iteration: block when not ready to render,
-        // non-blocking (0) when the window is up and focused.
-        int timeout = (androidWindow_->isReady() && focused_) ? 0 : -1;
+        // Recompute timeout each iteration: block when not ready to render
+        // (no surface, no focus, or activity paused), non-blocking (0)
+        // otherwise.  Blocking on ALooper_pollAll is the canonical Android
+        // idle pattern — it lets the OS suspend the thread until the next
+        // event, saving battery while the activity is in the background.
+        bool canRender = androidWindow_->isReady() && focused_ && !paused_;
+        int timeout = canRender ? 0 : -1;
         if (ALooper_pollAll(timeout, nullptr, &events, reinterpret_cast<void**>(&source)) < 0)
             break;
         if (source != nullptr)
@@ -548,8 +637,12 @@ bool Engine::beginFrame(float& outDt)
     if (androidApp_->destroyRequested)
         return false;
 
-    // If window is not ready (e.g. during surface transitions), skip frame.
-    if (!androidWindow_->isReady())
+    // If window is not ready (e.g. during surface transitions) or the
+    // activity is paused, skip the frame.  GameRunner's loop will see
+    // outDt == 0 and avoid advancing fixed-step physics, but it'll still
+    // call beginFrame() again so we keep draining APP_CMD_* events and
+    // detect APP_CMD_RESUME / APP_CMD_INIT_WINDOW promptly.
+    if (!androidWindow_->isReady() || paused_)
     {
         outDt = 0.f;
         return true;

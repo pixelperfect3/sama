@@ -36,6 +36,13 @@ public:
     virtual void stopAll() = 0;
     virtual bool isPlaying(SoundHandle handle) const = 0;
 
+    // Pause / resume every active voice without losing playback state.
+    // Used by the platform layer to suspend audio when the activity is
+    // backgrounded (Android APP_CMD_PAUSE / iOS applicationWillResignActive)
+    // and re-enable it on resume.  Idempotent: passing the same value twice
+    // is a no-op.
+    virtual void setPauseAll(bool paused) = 0;
+
     // Per-voice control
     virtual void setVolume(SoundHandle handle, float volume) = 0;
     virtual void setPitch(SoundHandle handle, float pitch) = 0;

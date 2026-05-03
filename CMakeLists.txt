@@ -1402,6 +1402,7 @@ if(SAMA_IOS)
     )
 elseif(SAMA_ANDROID)
     target_link_libraries(engine_core PUBLIC
+        engine_audio
         engine_input_android
         engine_memory
         engine_debug

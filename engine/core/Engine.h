@@ -53,7 +53,9 @@ class IosTouchInput;
 class IosGyro;
 class IosFileSystem;
 }  // namespace engine::platform::ios
+#endif
 
+#if ENGINE_IS_IOS || defined(__ANDROID__)
 namespace engine::audio
 {
 class IAudioEngine;
@@ -176,12 +178,14 @@ public:
         return *frameArena_;
     }
 
-#if ENGINE_IS_IOS
-    // Audio engine — owned by Engine on iOS so games get a working
-    // IAudioEngine without having to construct one themselves.  Backed by
-    // SoLoud's miniaudio backend (which uses CoreAudio on Apple platforms);
-    // falls back to NullAudioEngine if SoLoud init fails (e.g. simulator
-    // without an audio route).  Always non-null after initIos() succeeds.
+#if ENGINE_IS_IOS || defined(__ANDROID__)
+    // Audio engine — owned by Engine on mobile platforms so games get a
+    // working IAudioEngine without having to construct one themselves.
+    // Backed by SoLoud's miniaudio backend (CoreAudio on Apple, AAudio /
+    // OpenSL ES on Android — miniaudio auto-selects).  Falls back to
+    // NullAudioEngine if SoLoud init fails (e.g. simulator without an
+    // audio route).  Always non-null after initIos() / initAndroid()
+    // succeeds.
     [[nodiscard]] audio::IAudioEngine& audio()
     {
         return *audio_;
@@ -282,6 +286,13 @@ private:
     std::unique_ptr<platform::AndroidGyro> androidGyro_;
     std::unique_ptr<platform::AndroidFileSystem> androidFileSystem_;
     bool focused_ = false;
+
+    // Activity lifecycle flag.  Toggled by APP_CMD_PAUSE / APP_CMD_RESUME.
+    // While paused: rendering loop blocks on ALooper_pollAll, audio is
+    // paused via SoLoud::setPauseAll, gyro polling is disabled.  See
+    // engine/core/Engine.cpp handleAndroidCmd() for the lifecycle table
+    // and docs/ANDROID_SUPPORT.md Phase B for the design rationale.
+    bool paused_ = false;
 #else
     // iOS platform objects — owned by IosApp / the application delegate, not
     // by the Engine.  The Engine holds back-pointers so beginFrame/endFrame
@@ -315,10 +326,11 @@ private:
     // Frame arena
     std::unique_ptr<memory::FrameArena> frameArena_;
 
-#if ENGINE_IS_IOS
-    // Audio engine (iOS only — desktop / Android apps construct their own
-    // SoLoudAudioEngine).  Always non-null after initIos() succeeds, even
-    // if SoLoud failed to open an output device (we fall back to
+#if ENGINE_IS_IOS || defined(__ANDROID__)
+    // Audio engine (iOS / Android — desktop apps construct their own
+    // SoLoudAudioEngine since they have full control over the lifecycle).
+    // Always non-null after initIos() / initAndroid() succeeds, even if
+    // SoLoud failed to open an output device (we fall back to
     // NullAudioEngine in that case so games can call audio() unconditionally).
     std::unique_ptr<audio::IAudioEngine> audio_;
 #endif

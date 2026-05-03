@@ -65,6 +65,8 @@ public:
 
     int update3dAudioCallCount = 0;
     int stopAllCallCount = 0;
+    int setPauseAllCallCount = 0;
+    bool lastPausedState = false;
 
     // -----------------------------------------------------------------------
     // Configurable behavior
@@ -130,6 +132,12 @@ public:
     {
         playingHandles.clear();
         stopAllCallCount++;
+    }
+
+    void setPauseAll(bool paused) override
+    {
+        setPauseAllCallCount++;
+        lastPausedState = paused;
     }
 
     bool isPlaying(SoundHandle handle) const override

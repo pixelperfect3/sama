@@ -134,6 +134,15 @@ void SoLoudAudioEngine::stopAll()
     soloud_.stopAll();
 }
 
+void SoLoudAudioEngine::setPauseAll(bool paused)
+{
+    // SoLoud's setPauseAll pauses every active voice in the mixer (including
+    // the persistent category bus voices we kicked off in init()).  Calling
+    // it with the same value twice is effectively a no-op since SoLoud just
+    // sets a per-voice flag.
+    soloud_.setPauseAll(paused ? 1 : 0);
+}
+
 bool SoLoudAudioEngine::isPlaying(SoundHandle handle) const
 {
     return soloud_.isValidVoiceHandle(handle);

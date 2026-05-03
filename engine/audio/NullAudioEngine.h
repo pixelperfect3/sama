@@ -41,6 +41,7 @@ public:
 
     void stop(SoundHandle /*handle*/) override {}
     void stopAll() override {}
+    void setPauseAll(bool /*paused*/) override {}
 
     bool isPlaying(SoundHandle /*handle*/) const override
     {
