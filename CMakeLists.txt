@@ -1168,8 +1168,10 @@ add_executable(engine_tests
     tests/platform/TestAndroidKeyMap.cpp
     tests/platform/TestAndroidInput.cpp
     tests/platform/TestVirtualJoystick.cpp
+    tests/platform/TestAndroidTierDetect.cpp
     engine/platform/android/AndroidKeyMap.cpp
     engine/platform/android/VirtualJoystick.cpp
+    engine/platform/android/AndroidTierDetect.cpp
 )
 
 # iOS tier detection — implementation is Objective-C++ (.mm) but compiles
@@ -1551,6 +1553,7 @@ if(SAMA_ANDROID)
         engine/platform/android/AndroidGyro.cpp
         engine/platform/android/AndroidInput.cpp
         engine/platform/android/AndroidKeyMap.cpp
+        engine/platform/android/AndroidTierDetect.cpp
         engine/platform/android/AndroidWindow.cpp
         engine/platform/android/VirtualJoystick.cpp
     )
