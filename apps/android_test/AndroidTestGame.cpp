@@ -59,6 +59,7 @@
 #include "engine/ui/VirtualJoystickRenderer.h"
 #ifdef __ANDROID__
 #include <android/asset_manager.h>
+#include <imgui.h>  // bgfx examples/common/imgui wrapper — pulls dear-imgui
 
 #include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidGlobals.h"
@@ -762,6 +763,37 @@ public:
             // Render UI on view 48 (kViewGameUi)
             uiRenderer_.render(drawList_, 48, engine.fbWidth(), engine.fbHeight());
         }
+
+#ifdef __ANDROID__
+        // ImGui smoke test — verifies the bgfx imgui wrapper is alive on
+        // Android.  The Engine drives imguiBeginFrame / imguiEndFrame, so
+        // app code just calls ImGui::* between onUpdate calls.  A finger
+        // tap counts as a left click via AndroidInputBackend's primary-
+        // touch → mouse button synthesis, so the button below responds to
+        // taps.  Tap counter logs to logcat each press so we can confirm
+        // hit-testing works without a screen recording.
+        {
+            const auto& touches = engine.inputState().touches();
+            int touchX = touches.empty() ? 0 : static_cast<int>(touches.front().x);
+            int touchY = touches.empty() ? 0 : static_cast<int>(touches.front().y);
+
+            ImGui::SetNextWindowPos(ImVec2(50.f, 200.f), ImGuiCond_Once);
+            ImGui::SetNextWindowSize(ImVec2(360.f, 220.f), ImGuiCond_Once);
+            ImGui::Begin("Android ImGui Test");
+            ImGui::Text("Hello from Android! Frame %d", frameCount_);
+            ImGui::Text("Touch: (%d, %d) [%zu active]", touchX, touchY, touches.size());
+            ImGui::Text("imguiWantsMouse: %s", engine.imguiWantsMouse() ? "true" : "false");
+            if (ImGui::Button("Press me"))
+            {
+                ++imguiButtonPressCount_;
+                __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                                    "[imgui] button tapped (count=%d)", imguiButtonPressCount_);
+            }
+            ImGui::SameLine();
+            ImGui::Text("presses: %d", imguiButtonPressCount_);
+            ImGui::End();
+        }
+#endif
     }
 
 private:
@@ -810,6 +842,11 @@ private:
     // into the engine-owned SoLoud at init time.  Played once at init and
     // again on every new touch.  See onInit / onUpdate.
     uint32_t beepClipId_ = engine::audio::INVALID_SOUND;
+
+    // ImGui smoke test — counter for taps of the "Press me" button so we
+    // can verify the click landed (logged to logcat each press; also
+    // displayed inside the ImGui window itself).
+    int imguiButtonPressCount_ = 0;
 #endif
 
     void loadMsdfFont()
