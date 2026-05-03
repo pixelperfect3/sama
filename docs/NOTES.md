@@ -1718,7 +1718,7 @@ Picked path 1 (wrapper-port). The whole change ended up being one `#include <img
 
 - **Touch → mouse is already synthesized.** `AndroidInputBackend` turns the first touch pointer into `MouseButtonDown(Left)` + `MouseMove` so existing desktop code works on Android. The wrapper just needs `IMGUI_MBUT_LEFT` set in its `imguiBeginFrame(buttons, ...)` argument when `inputState_.isMouseButtonHeld(Left)` is true — three lines.
 
-- **`SAMA_HAS_IMGUI` macro instead of repeating `#if !defined(__ANDROID__) && !ENGINE_IS_IOS` everywhere.** Defined once at the top of `Engine.cpp` as `1` for desktop+Android and `0` for iOS. When iOS imgui lands, flip the iOS branch and remove the `#if !ENGINE_IS_IOS` — every other site stays as-is. Avoids the typical "I missed one of the eight `#if` sites" bug class.
+- **No new `#if` gates needed** — `Engine.cpp` already partitions desktop / Android / iOS into one big `#if !defined(__ANDROID__) && !ENGINE_IS_IOS` / `#elif defined(__ANDROID__)` / `#else` chain with separate copies of `init / shutdown / beginFrame / endFrame / imguiWantsMouse` per platform. The Android imgui calls live entirely inside the Android branch; the iOS branch keeps its no-op `imguiWantsMouse() { return false; }` until the iOS-side touch routing is ready. When iOS imgui lands it will mirror Android by editing the iOS branch directly — same shape, no macro to flip.
 
 ### When the engine-side path would have been better
 

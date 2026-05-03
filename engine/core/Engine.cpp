@@ -10,15 +10,14 @@
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ViewIds.h"
 
-// SAMA_HAS_IMGUI: 1 when ImGui is available on this platform, 0 otherwise.
-// Desktop and Android build the bgfx imgui wrapper (engine_debug target);
-// iOS does not yet (follow-up work).  Adding iOS later is a one-condition
-// flip here — no need to touch every #if guard scattered around this file.
-#if !ENGINE_IS_IOS
-#define SAMA_HAS_IMGUI 1
-#else
-#define SAMA_HAS_IMGUI 0
-#endif
+// ImGui availability per platform is gated by the platform-branch chain
+// below (`#if !defined(__ANDROID__) && !ENGINE_IS_IOS` → desktop, then
+// `#elif defined(__ANDROID__)` → Android, then `#else` → iOS).  Desktop and
+// Android both call `imguiCreate / imguiBeginFrame / imguiEndFrame /
+// imguiDestroy` from the bgfx examples/common/imgui wrapper; iOS skips
+// them (touch→IO plumbing is a follow-up).  When iOS imgui lands, add the
+// calls inside that branch's init/beginFrame/endFrame/shutdown/imguiWantsMouse
+// — same pattern Android used.
 
 #if !defined(__ANDROID__) && !ENGINE_IS_IOS
 #define GLFW_INCLUDE_NONE

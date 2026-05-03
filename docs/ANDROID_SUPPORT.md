@@ -337,7 +337,7 @@ With the completion of the Android game runner, **IGame implementations now work
 
 1. **`Engine` works on both platforms.** The public API (`resources()`, `inputState()`, `beginFrame()`/`endFrame()`, shader programs, framebuffer dimensions) is identical. Platform differences are hidden behind `#ifdef __ANDROID__` in the implementation:
    - Desktop: GLFW window, ImGui, mouse/keyboard input
-   - Android: `ANativeWindow`, touch/gyro input, no ImGui
+   - Android: `ANativeWindow`, touch/gyro input, ImGui via the bgfx examples/common/imgui wrapper (see "ImGui on Android" below)
 
 2. **`GameRunner` has desktop and Android entry points.** `run()` for desktop, `runAndroid()` for Android. Both call the same internal `runLoop()` which implements the fixed-timestep frame loop (accumulator-based, 60Hz default, configurable). The only difference is how `Engine` is initialized.
 
@@ -488,7 +488,7 @@ ImGui (the bgfx examples/common/imgui wrapper around dear-imgui) runs on Android
 
 No extra shader bundling step is needed: the bgfx imgui wrapper embeds SPIRV (and ESSL/GLSL/Metal) bytecode for `vs_ocornut_imgui` / `fs_ocornut_imgui` / `vs_imgui_image` / `fs_imgui_image` via `BGFX_EMBEDDED_SHADER`, and `bgfx::createEmbeddedShader` picks the SPIRV variant at runtime when the active renderer is Vulkan.
 
-Smoke tested in `apps/android_test/AndroidTestGame.cpp` — renders a window with a frame counter and a "Press me" button; tapping the button increments a counter and logs to logcat. The bgfx imgui wrapper compiles cleanly for `SAMA_ANDROID` (already linked into `engine_core` via `engine_debug`) — the only change required was wiring the `imguiCreate / imguiBeginFrame / imguiEndFrame / imguiDestroy` calls into the Android `Engine` lifecycle, all under the new `SAMA_HAS_IMGUI` macro (1 on desktop and Android, 0 on iOS — adding iOS later is a one-line flip).
+Smoke tested in `apps/android_test/AndroidTestGame.cpp` — renders a window with a frame counter and a "Press me" button; tapping the button increments a counter and logs to logcat. The bgfx imgui wrapper compiles cleanly for `SAMA_ANDROID` (already linked into `engine_core` via `engine_debug`) — the only change required was wiring the `imguiCreate / imguiBeginFrame / imguiEndFrame / imguiDestroy` calls into the Android branch of `Engine.cpp` (`#elif defined(__ANDROID__)`). The iOS branch (`#else`) does not call them yet; when iOS imgui lands it will mirror Android by editing that branch directly.
 
 iOS imgui wiring is still pending (separate follow-up; would need iOS-side touch → ImGui IO plumbing).
 
