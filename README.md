@@ -234,6 +234,13 @@ See [`docs/IOS_SUPPORT.md`](docs/IOS_SUPPORT.md) for the full architecture, tier
 
 # AAB for Play Store
 ./android/build_aab.sh --tier high --keystore release.jks --output MyGame.aab
+
+# AAB with install-time asset packs (for games over the 150 MB base APK soft cap)
+# and a Play Console output-metadata.json sidecar.
+./android/build_aab.sh --tier high \
+    --asset-pack audio:assets/audio \
+    --asset-pack hd_textures:assets/textures/high \
+    --metadata --keystore release.jks --output MyGame.aab
 ```
 
 **Tier presets:** `low` (512px, ASTC 8x8, ~30MB APK), `mid` (1024px, ASTC 6x6, ~60MB),

@@ -1859,3 +1859,99 @@ parallel). Rejected because:
 
 So: one global `androidBuildRunning` atomic. New requests log a
 warning and bail. Future "build all tiers" workflows can revisit.
+
+
+---
+
+## Play Asset Delivery — install-time only, no Play Core JNI bridge (2026-04-30)
+
+Phase H of the Android roadmap deferred two items: `output-metadata.json`
+generation and asset packs. Both shipped in `android/build_aab.sh` —
+but only **install-time** asset packs. Fast-follow and on-demand were
+left out and documented as a known limitation.
+
+### Decision
+
+Add `--asset-pack name:source-dir` (repeatable) and `--metadata` flags
+to `build_aab.sh`. Generate one bundle module per pack with a
+`dist:type="asset-pack"` + `<dist:install-time/>` manifest. Pass all
+module zips to `bundletool build-bundle` via the comma-separated
+`--modules=` argument. Skip Play Core / `AssetPackManager`.
+
+### Why install-time was easy and dynamic delivery was not
+
+**Install-time packs are pure build pipeline.** Play Store delivers
+them with the base APK during the user’\s first install and merges
+them so the assets land at the same `/data/app/.../assets/<pack>/`
+paths the runtime `AAssetManager` already reads. The engine code
+sees no difference between an install-time-pack file and a base-APK
+file. Result: zero runtime change, all the work is in the AAB
+structure that bundletool builds at developer machine / CI time.
+
+**Fast-follow and on-demand packs are pure runtime.** They’e
+downloaded after install (fast-follow: in the background right after
+install completes; on-demand: when the game requests them). Tracking
+download state, requesting cellular vs Wi-Fi, surfacing user consent
+prompts, pausing/resuming, and checking pack location all flow through
+Google Play Core's `AssetPackManager` — a Java-only API. There is no
+Play Core C/C++ binding, official or otherwise.
+
+### The tradeoff
+
+In scope:
+- Cleared the deferred Phase H asset-pack item with a working
+  install-time path.
+- Lifted the effective per-game ceiling from ~150 MB (base APK soft cap)
+  to ~6 GiB (1.5 GiB per pack × 4 packs realistic, 4 GiB total
+  install-time-delivery cap) without touching engine runtime code.
+- Kept the build pipeline gradle-free and the runtime pure
+  NativeActivity, both of which are explicit project goals.
+
+Out of scope (and the price):
+- Games that need >4 GiB total or want to defer optional content past
+  first install can't use this. Two examples that would actually hit
+  that wall: a multi-language game shipping localized voice audio (4 GiB
+  is plausible if you ship 10+ languages of voiceover), and any game
+  whose main pitch is "download and play in 30 seconds" but whose total
+  payload is >4 GiB.
+- For those games we punt to the documented escape hatch in
+  `docs/ANDROID_SUPPORT.md`: add a Kotlin/Java wrapper, JNI-bridge Play
+  Core, extend `AndroidFileSystem` to consult the manager. Real cost:
+  probably ~2 weeks of work and a permanent maintenance tax on the
+  manifest + an extra build step. Not worth doing speculatively.
+
+### Why we did not just skip asset packs entirely and tell devs to ship a fat APK
+
+Considered. Rejected because:
+1. Play Store enforces a hard 200 MB download size cap on the base APK
+   (the 150 MB number is the older soft cap on the install size of the
+   compressed APK; the 200 MB number is the size of the binary upload
+   itself). Any game over that — and a PBR scene with 2048px textures
+   gets there fast — literally cannot ship without splitting. Telling
+   the dev "build your own AAB tooling" defeats the point of having
+   `build_aab.sh` at all.
+2. Install-time packs are roughly half a day of bash. The cost-benefit
+   was lopsided in favor of just shipping it.
+
+### Verification
+
+- `bash -n android/build_aab.sh` — script parses cleanly (645 lines).
+- All argument-validation paths reachable without bundletool installed:
+  invalid tier, missing `:` in pack spec, reserved `base` name, invalid
+  split id (e.g. `has dash`), missing source dir, duplicate pack names —
+  each prints a specific ERROR and exits non-zero. Verified by running
+  `build_aab.sh --asset-pack ...` with the bad input and checking the
+  message.
+- `output-metadata.json` shape validated via `python3 -c "json.load"` and
+  asserted against the schema the AGP emits: `version: 3`,
+  `artifactType: { type: "BUNDLE", kind: "BUILT_BUNDLE" }`,
+  `applicationId`, `variantName: "release"`, `elements[0]` with type,
+  filters, attributes (versionCode + versionName), and outputFile.
+- `cmake --build build --target engine_tests` clean,
+  `build/engine_tests` 664 / 6574 — baseline preserved (no engine code
+  changed; Phase H is build-pipeline-only).
+- End-to-end bundletool smoke test (`build-apks --bundle ... --local-testing`,
+  `bundletool dump manifest`) was **not** run on this machine — neither
+  bundletool nor the Android SDK is installed in the dev environment.
+  The reviewer agent should run it before merging.
+

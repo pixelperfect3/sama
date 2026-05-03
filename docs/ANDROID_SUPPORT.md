@@ -350,12 +350,71 @@ The following issues were noted during Phase F and have since been fixed:
 - [x] Dependency validation at startup
   - Checks for `bundletool`, `jarsigner`, `cmake`, `aapt2`, Android NDK/SDK, `android.jar`
   - Clear install instructions for each missing tool
-- [ ] Asset packs for large games (>150MB base APK limit) (deferred)
-  - `install-time` asset pack for core assets
-  - `fast-follow` pack for optional content (additional levels, HD textures)
-  - Uses Play Asset Delivery API
-- [ ] Play Console metadata (deferred)
-  - Generate `output-metadata.json` compatible with Play Console upload
+- [x] **Install-time asset packs** for games over the 150 MB base APK soft cap
+  - `--asset-pack name:source-dir` flag on `build_aab.sh`, repeatable
+  - Each pack is staged as its own bundle module with a
+    `dist:type="asset-pack"` + `<dist:install-time/>` manifest, aapt2-linked
+    into proto format, zipped, and passed to `bundletool build-bundle`
+    alongside `base.zip` via `--modules=base.zip,pack1.zip,pack2.zip`
+  - Pack assets land at `assets/<name>/` on the device after Play Store
+    install — same path the runtime `AAssetManager` already reads, **no
+    engine code change required**
+  - Validation up front: pack name is a valid split id, isn't `base`, no
+    duplicates, source dir exists, per-pack uncompressed size ≤ 1.5 GiB
+    (Play Store hard limit), warning if total install-time delivery
+    exceeds 4 GiB (Play Console will reject the upload)
+  - Example invocation:
+    ```bash
+    ./android/build_aab.sh --tier high \
+        --asset-pack audio:assets/audio \
+        --asset-pack hd_textures:assets/textures/high \
+        --keystore release.jks --output MyGame.aab
+    ```
+- [x] **Play Console `output-metadata.json` generation**
+  - `--metadata` flag writes the file the Android Gradle Plugin emits and
+    that the Play Developer API + Fastlane's `supply` action consume
+  - `applicationId` from `--package`, `versionCode` and `versionName`
+    from `android/AndroidManifest.xml`; defaults to `1` and `"1.0"`
+    with a stderr warning when missing
+
+### Known limitation: dynamic asset pack delivery
+
+Only **install-time** packs are supported. The two dynamic delivery modes
+that Play Asset Delivery offers — **fast-follow** (downloaded right after
+install completes, but in the background) and **on-demand** (downloaded
+when the game requests them) — both require Google Play Core's
+`AssetPackManager`, which is a Java-only API. Tracking download state,
+requesting cellular vs Wi-Fi delivery, surfacing user consent prompts,
+and pausing/resuming downloads all require calls into Play Core from the
+running app.
+
+Sama uses pure NativeActivity (see "NativeActivity, not GameActivity" in
+**Key Design Decisions** below), so adopting Play Core would mean adding
+a JNI bridge and shipping a Java half of the application. That's a
+deliberate non-goal of this round — the build pipeline now generates a
+correct install-time AAB, which is enough for any game under the per-pack
+1.5 GiB / per-bundle 4 GiB Play Store install-time delivery limits.
+
+**Workaround for game devs who need >150 MB total:** use install-time
+packs (the `--asset-pack` flag above). They're delivered with the base
+APK during the user's first install, no runtime code change is required,
+and from the engine's perspective the assets just appear at the same
+`assets/...` paths the existing loaders already read.
+
+**For very large games (>1.5 GiB per pack or >4 GiB total install-time):**
+the workaround stops scaling. Either split the game so the install-time
+delivery fits inside 4 GiB total, or pick up the deferred work below.
+
+**If/when fast-follow / on-demand is needed,** the path is roughly:
+1. Add a thin Kotlin/Java wrapper activity that owns Play Core and
+   forwards lifecycle to NativeActivity (or convert to GameActivity,
+   which already has Play Core integration patterns).
+2. JNI-bridge `AssetPackManager.requestPackStates`, `fetch`, `getPackLocation`
+   into a new `engine::platform::android::AssetPackManager` C++ wrapper.
+3. Extend `AndroidFileSystem` to consult the manager's resolved pack
+   paths before falling back to the base APK's `assets/`.
+4. Surface download progress and error states via a new `IGame`
+   callback so games can render their own loading screen.
 
 ---
 
