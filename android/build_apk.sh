@@ -14,8 +14,10 @@
 #   --ks-pass-env <ENV_VAR>     Read keystore password from named env var.
 #   --ks-key-alias <alias>      Key alias inside the keystore (default: same as
 #                               apksigner default — first alias).
-#   --key-pass <password>       Key (alias) password. Defaults to --ks-pass if
-#                               only --ks-pass is supplied.
+#   --key-pass <password>       Key (alias) password. Defaults to whichever
+#                               --ks-pass / --ks-pass-env was supplied (the
+#                               common case where alias and store passwords
+#                               match).
 #   --key-pass-env <ENV_VAR>    Read key password from named env var.
 #   --no-clean-staging          Skip wiping build/android/apk_staging before
 #                               assembly. Faster iteration, but stale files
@@ -69,7 +71,7 @@ while [[ $# -gt 0 ]]; do
         --app-name)          APP_NAME="$2";          shift 2 ;;
         --package)           PACKAGE_ID="$2";        shift 2 ;;
         -h|--help)
-            head -32 "$0" | tail -31
+            head -34 "$0" | tail -33
             exit 0
             ;;
         *)
