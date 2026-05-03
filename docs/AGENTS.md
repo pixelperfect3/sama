@@ -2032,6 +2032,10 @@ Game code should never call `bgfx::` functions directly. Use engine abstractions
 | `bgfx::setDebug(BGFX_DEBUG_PROFILER)` + manual `bgfx::Stats` math | `engine::rendering::enableGpuProfiler()` + `sampleFrameStats()` |
 | `bgfx::ViewId` typedef | `engine::rendering::ViewId` (same `uint16_t`, no bgfx include) |
 | `bgfx::FrameBufferHandle` argument to `RenderPass::framebuffer()` | `engine::rendering::FrameBufferHandle{handle.idx}` (or default-construct for backbuffer) |
+| `bgfx::ProgramHandle` returned by `loadXxxProgram()` / `Engine::pbrProgram()` etc. | `engine::rendering::ProgramHandle` (same layout, layout-asserted no-op conversion) — store as the engine wrapper so the public surface stays bgfx-free |
+| `bgfx::TextureHandle` returned by `RenderResources::whiteTexture()` / `getTexture()` etc. | `engine::rendering::TextureHandle` — same layout-asserted wrapper. Wrap raw bgfx handles at the boundary with `engine::rendering::TextureHandle{h.idx}` when feeding e.g. `addTexture()` from a GLTF asset |
+| `bgfx::UniformHandle` (engine-internal, but the alias exists) | `engine::rendering::UniformHandle` — included so future font / material header passes don't have to add it |
+| `<bgfx/bgfx.h>` include in your game's CMake target | none — `engine_rendering` / `engine_ui` / `engine_core` no longer leak it through their public headers (`ShaderLoader.h`, `UiRenderer.h`, `SkyboxRenderer.h` are CTest-guarded; `RenderResources.h` and `Engine.h` still leak transitively via `Mesh.h` until that gets its own pass) |
 
 **Perf overlay — before/after:**
 
