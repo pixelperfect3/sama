@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "engine/audio/IAudioEngine.h"
 
 namespace engine::audio
