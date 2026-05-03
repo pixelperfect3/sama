@@ -17,6 +17,9 @@
 #   --key-pass <password>       Key (alias) password. Defaults to --ks-pass if
 #                               only --ks-pass is supplied.
 #   --key-pass-env <ENV_VAR>    Read key password from named env var.
+#   --no-clean-staging          Skip wiping build/android/apk_staging before
+#                               assembly. Faster iteration, but stale files
+#                               from previous builds may leak into the APK.
 #   --output <path>             Output APK path (default: build/android/Game.apk)
 #   --install                   Install via adb after build
 #   --app-name <name>           Application name (default: "Sama Game")
@@ -41,6 +44,7 @@ KS_PASS_ENV=""
 KS_KEY_ALIAS=""
 KEY_PASS=""
 KEY_PASS_ENV=""
+CLEAN_STAGING=true
 OUTPUT=""
 INSTALL=false
 APP_NAME="Sama Game"
@@ -59,12 +63,13 @@ while [[ $# -gt 0 ]]; do
         --ks-key-alias)      KS_KEY_ALIAS="$2";      shift 2 ;;
         --key-pass)          KEY_PASS="$2";          shift 2 ;;
         --key-pass-env)      KEY_PASS_ENV="$2";      shift 2 ;;
+        --no-clean-staging)  CLEAN_STAGING=false;    shift ;;
         --output)            OUTPUT="$2";            shift 2 ;;
         --install)           INSTALL=true;           shift ;;
         --app-name)          APP_NAME="$2";          shift 2 ;;
         --package)           PACKAGE_ID="$2";        shift 2 ;;
         -h|--help)
-            head -29 "$0" | tail -28
+            head -32 "$0" | tail -31
             exit 0
             ;;
         *)
@@ -241,6 +246,15 @@ echo "[2/7] Processing assets for tier '${TIER}'..."
 ASSET_TOOL="${PROJECT_ROOT}/build/sama_asset_tool"
 ASSETS_DIR="${PROJECT_ROOT}/assets"
 ASSETS_OUTPUT="${STAGING_DIR}/assets"
+
+# Wipe stale staging contents from prior builds before populating it. Without
+# this, removed shaders, tier-A→B asset switches, or renamed files leak into
+# the produced APK. Opt out with --no-clean-staging for fast local iteration.
+if [ "$CLEAN_STAGING" = true ]; then
+    echo "[stage] Cleaning staging directory: ${STAGING_DIR}"
+    rm -rf "$STAGING_DIR"
+fi
+mkdir -p "$STAGING_DIR"
 
 if [ -d "$ASSETS_DIR" ] && [ -x "$ASSET_TOOL" ]; then
     "$ASSET_TOOL" \

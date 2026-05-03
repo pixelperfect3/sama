@@ -12,6 +12,9 @@
 #   --ks-alias <alias>          Key alias in keystore (default: sama)
 #   --key-pass <password>       Key password (prompted if not provided).
 #   --key-pass-env <ENV_VAR>    Read key password from named env var.
+#   --no-clean-staging          Skip wiping build/android/aab_staging before
+#                               assembly (faster local iteration; off by default
+#                               since staging is also cleaned at end of run).
 #   --output <path>             Output AAB path (default: build/android/Game.aab)
 #   --app-name <name>           Application name (default: "Sama Game")
 #   --package <id>              Package ID (default: com.sama.game)
@@ -34,6 +37,7 @@ KS_PASS_ENV=""
 KS_ALIAS="sama"
 KEY_PASS=""
 KEY_PASS_ENV=""
+CLEAN_STAGING=true
 OUTPUT=""
 APP_NAME="Sama Game"
 PACKAGE_ID="com.sama.game"
@@ -50,12 +54,13 @@ while [[ $# -gt 0 ]]; do
         --ks-alias)          KS_ALIAS="$2";          shift 2 ;;
         --key-pass)          KEY_PASS="$2";          shift 2 ;;
         --key-pass-env)      KEY_PASS_ENV="$2";      shift 2 ;;
+        --no-clean-staging)  CLEAN_STAGING=false;    shift ;;
         --output)            OUTPUT="$2";            shift 2 ;;
         --app-name)          APP_NAME="$2";          shift 2 ;;
         --package)           PACKAGE_ID="$2";        shift 2 ;;
         --skip-armeabi)      SKIP_ARMEABI=true;      shift ;;
         -h|--help)
-            head -24 "$0" | tail -23
+            head -27 "$0" | tail -26
             exit 0
             ;;
         *)
@@ -216,7 +221,10 @@ ASSET_TOOL="${PROJECT_ROOT}/build/sama_asset_tool"
 ASSETS_DIR="${PROJECT_ROOT}/assets"
 ASSETS_OUTPUT="${STAGING_DIR}/base/assets"
 
-rm -rf "$STAGING_DIR"
+if [ "$CLEAN_STAGING" = true ]; then
+    echo "[stage] Cleaning staging directory: ${STAGING_DIR}"
+    rm -rf "$STAGING_DIR"
+fi
 mkdir -p "$ASSETS_OUTPUT"
 
 if [ -d "$ASSETS_DIR" ] && [ -x "$ASSET_TOOL" ]; then
