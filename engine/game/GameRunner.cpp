@@ -8,6 +8,10 @@
 #include "engine/game/ProjectConfig.h"
 #include "engine/scene/TransformSystem.h"
 
+#ifdef __ANDROID__
+#include "engine/platform/android/AndroidTierDetect.h"
+#endif
+
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 #include <memory>
 #endif
@@ -139,6 +143,18 @@ int GameRunner::runAndroid(struct android_app* app, const char* configPath)
     if (configPath)
     {
         config.loadFromFile(configPath);
+    }
+
+    // -- Runtime tier detection ------------------------------------------
+    // If the user did not specify `activeTier` in project.json, OR they
+    // wrote `"activeTier": "auto"` (sentinel), classify the host device
+    // and substitute the detected tier name.  An explicit "low" / "mid" /
+    // "high" / custom tier name is preserved as-is so games with
+    // hand-tuned tier selection are not silently overridden.
+    if (config.activeTier.empty() || config.activeTier == "auto")
+    {
+        const auto detected = platform::android::detectAndroidTier();
+        config.activeTier = platform::android::androidTierToProjectConfigName(detected);
     }
 
     fixedTimestep_ = config.physics.fixedTimestep;

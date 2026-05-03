@@ -31,6 +31,7 @@
 #include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidGlobals.h"
 #include "engine/platform/android/AndroidGyro.h"
+#include "engine/platform/android/AndroidTierDetect.h"
 #include "engine/platform/android/AndroidWindow.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "SamaEngine", __VA_ARGS__)
@@ -449,6 +450,24 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     app->onInputEvent = handleAndroidInput;
 
     LOGI("Sama Engine — Android init starting");
+
+    // -- Device tier detection --------------------------------------------
+    // Mirrors the iOS branch: classify the device (RAM via /proc/meminfo +
+    // GPU substring) and log the result so the tier choice is visible in
+    // logcat.  GameRunner's runAndroid(configPath) overload feeds the same
+    // detection result into ProjectConfig::activeTier when the project
+    // didn't specify one (or used the "auto" sentinel) — this call is
+    // purely informational so the user can see what was picked even when
+    // the project pinned a tier explicitly.  We pass an empty GPU name
+    // here because bgfx hasn't been init'd yet (it requires the native
+    // window which we're about to wait for); the RAM signal alone is
+    // sufficient to distinguish the three tier buckets on real devices.
+    {
+        const uint64_t ramMb = platform::android::androidTotalRamMb();
+        const auto tier = platform::android::detectAndroidTier();
+        LOGI("Tier detected: %s (RAM %llu MB)", platform::android::androidTierLogName(tier),
+             static_cast<unsigned long long>(ramMb));
+    }
 
     // Wait for the native window to become available.
     while (!androidWindow_->isReady())
