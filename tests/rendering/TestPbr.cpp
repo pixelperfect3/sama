@@ -135,11 +135,11 @@ TEST_CASE("loadPbrProgram: returns BGFX_INVALID_HANDLE in headless mode", "[pbr]
 
     // The Noop renderer cannot compile embedded shaders; the loader must handle
     // this gracefully and return an invalid handle rather than crashing.
-    bgfx::ProgramHandle program = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
-    REQUIRE(!bgfx::isValid(program));
+    engine::rendering::ProgramHandle program = engine::rendering::loadPbrProgram();
+    REQUIRE(!engine::rendering::isValid(program));
 
-    if (bgfx::isValid(program))
-        bgfx::destroy(program);
+    if (engine::rendering::isValid(program))
+        bgfx::destroy(bgfx::ProgramHandle{program.idx});
 }
 
 // ---------------------------------------------------------------------------
@@ -176,18 +176,18 @@ TEST_CASE("DrawCallBuildSystem: PBR overload smoke test with headless renderer",
     engine::rendering::ShaderUniforms uniforms{};
     uniforms.init();
 
-    bgfx::ProgramHandle program = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
+    engine::rendering::ProgramHandle program = engine::rendering::loadPbrProgram();
 
     bgfxCtx.renderer.beginFrame();
 
     engine::rendering::DrawCallBuildSystem dcbs;
     // Must not crash — the Noop renderer ignores all draw calls.
-    REQUIRE_NOTHROW(dcbs.update(reg, res, program, &uniforms));
+    REQUIRE_NOTHROW(dcbs.update(reg, res, bgfx::ProgramHandle{program.idx}, &uniforms));
 
     bgfxCtx.renderer.endFrame();
 
-    if (bgfx::isValid(program))
-        bgfx::destroy(program);
+    if (engine::rendering::isValid(program))
+        bgfx::destroy(bgfx::ProgramHandle{program.idx});
 
     uniforms.destroy();
     res.destroyAll();

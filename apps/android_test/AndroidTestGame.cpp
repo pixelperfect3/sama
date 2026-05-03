@@ -385,7 +385,8 @@ public:
 
         // Shadow pass — depth-only into cascade 0.
         engine.shadow().beginCascade(0, lightView, lightProj);
-        drawCallSys_.submitShadowDrawCalls(registry, engine.resources(), engine.shadowProgram(), 0);
+        drawCallSys_.submitShadowDrawCalls(registry, engine.resources(),
+                                           bgfx::ProgramHandle{engine.shadowProgram().idx}, 0);
 
         // Opaque PBR pass.
         const auto W = engine.fbWidth();
@@ -458,8 +459,8 @@ public:
         // ambient illumination from the environment and the shadow gets
         // washed out almost entirely.
         // if (ibl_.isValid()) { ... }
-        drawCallSys_.update(registry, engine.resources(), engine.pbrProgram(), engine.uniforms(),
-                            frame);
+        drawCallSys_.update(registry, engine.resources(),
+                            bgfx::ProgramHandle{engine.pbrProgram().idx}, engine.uniforms(), frame);
 
         // --- Text overlay via UiRenderer ---
         {

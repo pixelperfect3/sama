@@ -1,7 +1,6 @@
 #pragma once
 
 #include <TargetConditionals.h>
-#include <bgfx/bgfx.h>
 
 #include <cstdint>
 #include <memory>
@@ -9,6 +8,7 @@
 #include "engine/input/InputState.h"
 #include "engine/memory/FrameArena.h"
 #include "engine/platform/Window.h"
+#include "engine/rendering/HandleTypes.h"
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/Renderer.h"
 #include "engine/rendering/ShadowRenderer.h"
@@ -194,19 +194,19 @@ public:
 
     // ----- Shader programs (loaded once at init) -----
 
-    [[nodiscard]] bgfx::ProgramHandle pbrProgram() const
+    [[nodiscard]] rendering::ProgramHandle pbrProgram() const
     {
         return pbrProg_;
     }
-    [[nodiscard]] bgfx::ProgramHandle shadowProgram() const
+    [[nodiscard]] rendering::ProgramHandle shadowProgram() const
     {
         return shadowProg_;
     }
-    [[nodiscard]] bgfx::ProgramHandle skinnedPbrProgram() const
+    [[nodiscard]] rendering::ProgramHandle skinnedPbrProgram() const
     {
         return skinnedPbrProg_;
     }
-    [[nodiscard]] bgfx::ProgramHandle skinnedShadowProgram() const
+    [[nodiscard]] rendering::ProgramHandle skinnedShadowProgram() const
     {
         return skinnedShadowProg_;
     }
@@ -298,11 +298,14 @@ private:
     rendering::RenderResources resources_;
     rendering::ShadowRenderer shadow_;
 
-    // Shader programs
-    bgfx::ProgramHandle pbrProg_ = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle shadowProg_ = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle skinnedPbrProg_ = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle skinnedShadowProg_ = BGFX_INVALID_HANDLE;
+    // Shader programs — store as the engine's bgfx-free ProgramHandle so the
+    // public getter is a no-op return.  Boundary conversion to bgfx happens
+    // in Engine.cpp's destroy path (and any other place that still talks to
+    // bgfx directly).
+    rendering::ProgramHandle pbrProg_ = rendering::kInvalidProgram;
+    rendering::ProgramHandle shadowProg_ = rendering::kInvalidProgram;
+    rendering::ProgramHandle skinnedPbrProg_ = rendering::kInvalidProgram;
+    rendering::ProgramHandle skinnedShadowProg_ = rendering::kInvalidProgram;
 
     // Input
     std::unique_ptr<input::IInputBackend> inputBackend_;

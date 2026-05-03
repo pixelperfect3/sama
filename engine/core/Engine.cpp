@@ -51,6 +51,22 @@
 namespace engine::core
 {
 
+namespace
+{
+// Boundary helper — Engine stores programs as the bgfx-free
+// engine::rendering::ProgramHandle wrapper; bgfx::destroy still wants the
+// real bgfx handle.  Layout is asserted bit-identical in RenderPass.cpp so
+// the conversion is a no-op reinterpret of the underlying uint16_t.
+inline void destroyProgram(rendering::ProgramHandle& h)
+{
+    if (rendering::isValid(h))
+    {
+        bgfx::destroy(bgfx::ProgramHandle{h.idx});
+        h = rendering::kInvalidProgram;
+    }
+}
+}  // namespace
+
 Engine::Engine() = default;
 
 void Engine::setClearColor(uint32_t rgba)
@@ -104,14 +120,10 @@ bool Engine::init(const EngineDesc& desc)
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 
     // -- Shader programs --------------------------------------------------
-    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
-    // wrapper); widen to bgfx for the engine-internal storage members.
-    // Step 3 of the bgfx-abstraction extension will migrate the members
-    // themselves so this conversion collapses into the constructor.
-    pbrProg_ = bgfx::ProgramHandle{rendering::loadPbrProgram().idx};
-    shadowProg_ = bgfx::ProgramHandle{rendering::loadShadowProgram().idx};
-    skinnedPbrProg_ = bgfx::ProgramHandle{rendering::loadSkinnedPbrProgram().idx};
-    skinnedShadowProg_ = bgfx::ProgramHandle{rendering::loadSkinnedShadowProgram().idx};
+    pbrProg_ = rendering::loadPbrProgram();
+    shadowProg_ = rendering::loadShadowProgram();
+    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
+    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
 
     // -- Default textures -------------------------------------------------
     resources_.createDefaultTextures();
@@ -174,14 +186,10 @@ void Engine::shutdown()
 
     shadow_.shutdown();
 
-    if (bgfx::isValid(pbrProg_))
-        bgfx::destroy(pbrProg_);
-    if (bgfx::isValid(shadowProg_))
-        bgfx::destroy(shadowProg_);
-    if (bgfx::isValid(skinnedPbrProg_))
-        bgfx::destroy(skinnedPbrProg_);
-    if (bgfx::isValid(skinnedShadowProg_))
-        bgfx::destroy(skinnedShadowProg_);
+    destroyProgram(pbrProg_);
+    destroyProgram(shadowProg_);
+    destroyProgram(skinnedPbrProg_);
+    destroyProgram(skinnedShadowProg_);
 
     resources_.destroyAll();
 
@@ -436,14 +444,10 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     fbH_ = static_cast<uint16_t>(androidWindow_->height());
 
     // -- Shader programs --------------------------------------------------
-    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
-    // wrapper); widen to bgfx for the engine-internal storage members.
-    // Step 3 of the bgfx-abstraction extension will migrate the members
-    // themselves so this conversion collapses into the constructor.
-    pbrProg_ = bgfx::ProgramHandle{rendering::loadPbrProgram().idx};
-    shadowProg_ = bgfx::ProgramHandle{rendering::loadShadowProgram().idx};
-    skinnedPbrProg_ = bgfx::ProgramHandle{rendering::loadSkinnedPbrProgram().idx};
-    skinnedShadowProg_ = bgfx::ProgramHandle{rendering::loadSkinnedShadowProgram().idx};
+    pbrProg_ = rendering::loadPbrProgram();
+    shadowProg_ = rendering::loadShadowProgram();
+    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
+    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
 
     // -- Default textures -------------------------------------------------
     resources_.createDefaultTextures();
@@ -490,14 +494,10 @@ void Engine::shutdown()
 
     shadow_.shutdown();
 
-    if (bgfx::isValid(pbrProg_))
-        bgfx::destroy(pbrProg_);
-    if (bgfx::isValid(shadowProg_))
-        bgfx::destroy(shadowProg_);
-    if (bgfx::isValid(skinnedPbrProg_))
-        bgfx::destroy(skinnedPbrProg_);
-    if (bgfx::isValid(skinnedShadowProg_))
-        bgfx::destroy(skinnedShadowProg_);
+    destroyProgram(pbrProg_);
+    destroyProgram(shadowProg_);
+    destroyProgram(skinnedPbrProg_);
+    destroyProgram(skinnedShadowProg_);
 
     resources_.destroyAll();
 
@@ -684,14 +684,10 @@ bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchIn
     contentScaleY_ = iosWindow_->contentScale();
 
     // -- Shader programs --------------------------------------------------
-    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
-    // wrapper); widen to bgfx for the engine-internal storage members.
-    // Step 3 of the bgfx-abstraction extension will migrate the members
-    // themselves so this conversion collapses into the constructor.
-    pbrProg_ = bgfx::ProgramHandle{rendering::loadPbrProgram().idx};
-    shadowProg_ = bgfx::ProgramHandle{rendering::loadShadowProgram().idx};
-    skinnedPbrProg_ = bgfx::ProgramHandle{rendering::loadSkinnedPbrProgram().idx};
-    skinnedShadowProg_ = bgfx::ProgramHandle{rendering::loadSkinnedShadowProgram().idx};
+    pbrProg_ = rendering::loadPbrProgram();
+    shadowProg_ = rendering::loadShadowProgram();
+    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
+    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
 
     // -- Default textures -------------------------------------------------
     resources_.createDefaultTextures();
@@ -764,14 +760,10 @@ void Engine::shutdown()
 
     shadow_.shutdown();
 
-    if (bgfx::isValid(pbrProg_))
-        bgfx::destroy(pbrProg_);
-    if (bgfx::isValid(shadowProg_))
-        bgfx::destroy(shadowProg_);
-    if (bgfx::isValid(skinnedPbrProg_))
-        bgfx::destroy(skinnedPbrProg_);
-    if (bgfx::isValid(skinnedShadowProg_))
-        bgfx::destroy(skinnedShadowProg_);
+    destroyProgram(pbrProg_);
+    destroyProgram(shadowProg_);
+    destroyProgram(skinnedPbrProg_);
+    destroyProgram(skinnedShadowProg_);
 
     resources_.destroyAll();
 

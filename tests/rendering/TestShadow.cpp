@@ -118,11 +118,11 @@ TEST_CASE("loadShadowProgram: returns BGFX_INVALID_HANDLE in headless mode", "[s
 {
     HeadlessBgfx bgfxCtx;
 
-    bgfx::ProgramHandle program = bgfx::ProgramHandle{engine::rendering::loadShadowProgram().idx};
-    REQUIRE(!bgfx::isValid(program));
+    engine::rendering::ProgramHandle program = engine::rendering::loadShadowProgram();
+    REQUIRE(!engine::rendering::isValid(program));
 
-    if (bgfx::isValid(program))
-        bgfx::destroy(program);
+    if (engine::rendering::isValid(program))
+        bgfx::destroy(bgfx::ProgramHandle{program.idx});
 }
 
 // ---------------------------------------------------------------------------

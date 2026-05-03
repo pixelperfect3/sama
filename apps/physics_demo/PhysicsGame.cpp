@@ -516,8 +516,8 @@ void PhysicsGame::onRender(Engine& engine)
     // Registry pointer was stored during onInit for use in render callbacks.
     if (registry_)
     {
-        drawCallSys_.submitShadowDrawCalls(*registry_, engine.resources(), engine.shadowProgram(),
-                                           0);
+        drawCallSys_.submitShadowDrawCalls(*registry_, engine.resources(),
+                                           bgfx::ProgramHandle{engine.shadowProgram().idx}, 0);
 
         // Opaque pass
         const auto W = engine.fbWidth();
@@ -545,8 +545,8 @@ void PhysicsGame::onRender(Engine& engine)
             frame.prefiltered = ibl_.prefiltered();
             frame.brdfLut = ibl_.brdfLut();
         }
-        drawCallSys_.update(*registry_, engine.resources(), engine.pbrProgram(), engine.uniforms(),
-                            frame);
+        drawCallSys_.update(*registry_, engine.resources(),
+                            bgfx::ProgramHandle{engine.pbrProgram().idx}, engine.uniforms(), frame);
     }
 
     // -- HUD --------------------------------------------------------------
