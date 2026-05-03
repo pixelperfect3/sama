@@ -83,13 +83,16 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - Surface size tracking for framebuffer resize on orientation change (`updateSize()`)
   - Content scale factor from DPI density (160 dpi = 1.0x baseline)
   - Source: `engine/platform/android/AndroidWindow.h/.cpp`
-- [ ] Lifecycle handling (deferred)
-  - Pause: stop rendering, release EGL surface
-  - Resume: re-create surface, resume rendering
-  - `onSaveInstanceState` / `onRestoreInstanceState` for game state preservation
-- [ ] Audio backend (deferred)
-  - AAudio (API 26+) or OpenSL ES (API 24+) for SoLoud
-  - SoLoud already has both backends — just enable the right one in CMake
+- [x] Lifecycle handling
+  - `APP_CMD_PAUSE` / `APP_CMD_RESUME` handled in `Engine::handleAndroidCmd`. On pause: SoLoud is paused via `IAudioEngine::setPauseAll(true)`, gyro polling is disabled (battery), and a `paused_` flag flips `beginFrame()`'s `ALooper_pollAll` from non-blocking to blocking (`-1`) so the OS can suspend the thread. On resume: gyro re-enabled, audio unpaused, polling resumes normal cadence.
+  - `APP_CMD_TERM_WINDOW` clears the cached `ANativeWindow*` so `beginFrame()` skips its bgfx-touching path until `APP_CMD_INIT_WINDOW` rebinds a fresh surface (Vulkan's `VkSurfaceKHR` is tied to the previous `ANativeWindow*`; rendering past `TERM_WINDOW` would crash inside `vkAcquireNextImageKHR`). On `APP_CMD_INIT_WINDOW` after a resume, `bgfx::setPlatformData` + `Renderer::resize` re-bind the new handle without a full bgfx re-init.
+  - **Known limitation:** `onSaveInstanceState` / `onRestoreInstanceState` not implemented — those are Java-only callbacks that NativeActivity does not surface to native code. Games that need cross-launch state should persist their own data via `getExternalFilesDir()` (path passed in via `android_app::activity->externalDataPath`).
+  - Verified on `sama_mid` AVD (Android 13, arm64-v8a): clean PAUSE → LOST_FOCUS → TERM_WINDOW sequence on Home; clean RESUME → INIT_WINDOW → "Window recreated: 1080x2400 — resetting bgfx" → GAINED_FOCUS sequence on re-foreground; rendering and gyro resume without crash.
+- [x] Audio backend
+  - `Engine::initAndroid` constructs a `SoLoudAudioEngine` using SoLoud's miniaudio backend. miniaudio's NULL-context init auto-selects **AAudio** (API 26+, lower latency, modern) and falls back to **OpenSL ES** on older devices. Both are `dlopen()`'d at runtime (`MA_NO_RUNTIME_LINKING` is not defined) so no compile-time link to `libaaudio.so` / `libOpenSLES.so` is needed. AAudio output requires no manifest permission.
+  - Engine now owns `audio_` on Android (mirrors iOS): `engine.audio()` returns an `IAudioEngine&`. `engine_audio` is linked into `engine_core` for `SAMA_ANDROID`. On audio init failure (e.g. emulator without an audio route) we fall back to `NullAudioEngine` so games can call `engine.audio()` unconditionally.
+  - New `IAudioEngine::setPauseAll(bool)` method drives the lifecycle pause/resume — implemented as `SoLoud::Soloud::setPauseAll` for the real engine, no-op for `NullAudioEngine`.
+  - Smoke test: `apps/android_test/AndroidTestGame.cpp` generates a procedural 440Hz/0.3s WAV in `onInit`, loads it through SoLoud, and plays it once at startup; every new touch retriggers the clip. Verified on `sama_mid` AVD — logcat shows `Audio: SoLoud (miniaudio) initialised` and `audio: init-time play handle=16389`.
 
 ---
 

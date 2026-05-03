@@ -1621,3 +1621,28 @@ Three design choices I want to be able to revisit:
 3. *Probe the headers we cleaned, but skip ones with parked transitive leaks.* The CTest `forbid_bgfx_*` guards now cover `ShaderLoader.h`, `UiRenderer.h`, and `SkyboxRenderer.h` (in addition to the pre-existing four). They explicitly **do not** cover `RenderResources.h` or `Engine.h` yet, because both still pull `<bgfx/bgfx.h>` in transitively via `engine/rendering/Mesh.h` (`Mesh` is held by-value in `RenderResources::Slot`). Mesh.h is engine-internal but not yet wrapped per item 1. Adding the probes today would fail loudly and force a same-pass `Mesh.h` refactor — not in scope and not safe to bundle into a "tighten the boundary" change. CMakeLists.txt has commented-out lines for those two probes documenting exactly what needs to happen for them to flip on; a future Mesh.h pImpl pass should uncomment them as the verification step.
 
 For the consumer side: every engine-internal `.cpp` file that still talks to bgfx directly (DrawCallBuildSystem, SpriteBatcher, Engine.cpp's destroy paths, the font headers, EditorApp's local program/texture members) wraps at the call site with `bgfx::Handle{wrapped.idx}`. The conversion is a no-op reinterpret — `RenderPass.cpp` static-asserts `sizeof` and `alignof` parity for every wrapped handle type — so this costs nothing at runtime. The pattern reads slightly verbosely at call sites, but it makes the "this is where we cross from engine-API to bgfx" boundary explicit and grep-able, which I'd rather have than an implicit conversion operator that hides the boundary entirely.
+
+
+**Android audio backend: SoLoud + miniaudio (AAudio with OpenSL fallback)**
+
+Three options for Phase B audio:
+
+- **A. SoLoud + miniaudio** — same `SoLoud::Soloud::MINIAUDIO` init we already use on macOS / iOS, just compiled for Android. miniaudio's NULL-context init auto-selects AAudio on API 26+ and falls back to OpenSL ES on older devices.
+- **B. SoLoud + miniaudio with `MA_ENABLE_ONLY_SPECIFIC_BACKENDS` pinned to OpenSL ES** — wider device support (API 16+) but higher latency (~80ms typical vs. ~20ms on AAudio).
+- **C. SoLoud's native AAudio/OpenSL backends** (no miniaudio) — fewer abstraction layers but a divergent CMake setup (different SoLoud source files compiled per platform) and a divergent runtime path (different code than CoreAudio/iOS).
+
+Picked **A** for three reasons:
+
+1. *Cross-platform consistency.* iOS, macOS desktop, Linux desktop, and now Android all go through the same `SoLoud::Soloud::init(..., MINIAUDIO, ...)` entry point. The behaviour you debug on macOS is the behaviour you ship on Android — same mixer, same voice management, same bus routing. Option C would mean three different SoLoud compile paths to maintain (`MINIAUDIO` on Apple/desktop, `AAUDIO` on Android API 26+, `OPENSL` on API 16-25), and bugs filed against "audio plays at half speed on tier-low devices" would have to be reproduced on a backend the rest of the team doesn't run.
+2. *Auto-fallback was free.* miniaudio's NULL-context `ma_device_init` already walks `MA_HAS_AAUDIO` -> `MA_HAS_OPENSL` in priority order. We don't have to detect API level, query `getprop ro.build.version.sdk`, or wire any conditional — miniaudio handles the negotiation. If a future device exposes only OpenSL ES, the init transparently falls through.
+3. *No extra link libs.* miniaudio's runtime linking (`MA_NO_RUNTIME_LINKING` is *not* defined on Android) `dlopen`'s `libaaudio.so` and `libOpenSLES.so` on first use, so the build is unchanged — no `target_link_libraries(engine_audio PUBLIC aaudio)` per-platform branch. The Apple branch already adds `-framework AVFoundation`; Android needs nothing analogous.
+
+Tradeoffs accepted:
+
+- *Latency*: miniaudio's AAudio path uses a 128-frame `periodSizeInFrames` (set in `soloud_miniaudio.cpp`), which on a 48kHz device is ~2.6 ms per period. Real round-trip latency on AAudio is typically 20-40 ms depending on the stream's `LowLatency` flag. Option C with SoLoud's native `aaudio` backend can configure `AAUDIO_PERFORMANCE_MODE_LOW_LATENCY` directly and get under 20 ms. We don't need that for SFX/music games — but if a future rhythm-game project needs sub-20ms input-to-audio, switching to option C is the escape hatch.
+- *miniaudio source size*: `miniaudio.h` is ~50k lines. It's already in the build for iOS/macOS, so the Android arm64-v8a `.so` only grew by the AAudio + OpenSL platform code (~150 KB). Acceptable.
+- *Permission*: AAudio output requires no manifest permission. Mic input would require `RECORD_AUDIO` — out of scope here, will need a manifest update if/when we add voice chat.
+
+Failure path: `SoLoudAudioEngine::init()` returns false on emulators with no audio route, and `Engine::initAndroid` falls back to `NullAudioEngine`. Games can call `engine.audio()` unconditionally — the API surface is identical, you just hear silence. Mirrors the iOS simulator pattern.
+
+`IAudioEngine::setPauseAll(bool)` was the only interface addition (one virtual method in `IAudioEngine`, one-line implementations in `NullAudioEngine` and `SoLoudAudioEngine` (the latter wraps `SoLoud::Soloud::setPauseAll`)). The lifecycle handlers in `Engine::handleAndroidCmd` call it on `APP_CMD_PAUSE` / `APP_CMD_RESUME` so audio doesn't continue playing while the activity is in the background. iOS's `applicationWillResignActive` does *not* currently pause audio — that's a behavioural divergence I'm punting on, since iOS handles audio session interruption at the OS level (the audio route is yanked when the user receives a phone call) and SoLoud's mixer thread just produces samples that go nowhere. Android doesn't have an equivalent OS-level mute, so the explicit pause is needed there.
