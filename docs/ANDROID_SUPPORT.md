@@ -197,9 +197,13 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - `defaultTiers()` — returns three built-in presets: low (weak mobile), mid (mainstream), high (flagship)
   - Source: `engine/game/ProjectConfig.h/.cpp`
   - Tests: `tests/game/TestTierConfig.cpp` (14 test cases covering defaults, getActiveTier, tierToRenderSettings, JSON parsing, toEngineDesc)
-- [ ] Runtime tier detection (deferred): auto-select tier based on GPU model / available memory
-  - `GL_RENDERER` string matching or Vulkan `VkPhysicalDeviceProperties`
-  - Fallback: default to "mid" if detection fails
+- [x] Runtime tier detection: auto-select tier based on GPU model / available memory
+  - `engine/platform/android/AndroidTierDetect.{h,cpp}` — case-insensitive GPU substring match (Adreno 4-7xx, Mali-T8/G3/G5/G6/G7xx, Immortalis, Xclipse 9xx, PowerVR — full table is the header comment in `AndroidTierDetect.cpp`) plus a RAM heuristic from `/proc/meminfo`'s `MemTotal` field with the same thresholds as iOS (`<3 GB` Low, `3-5 GB` Mid, `>=5 GB` High).
+  - Engine logs the detected tier from `Engine::initAndroid` so the choice is visible in logcat ("Tier detected: <Low|Mid|High|Unknown> (RAM N MB)").
+  - `GameRunner::runAndroid(configPath)` substitutes the detected tier name into `ProjectConfig::activeTier` ONLY when the project did not specify one OR set the new `"activeTier": "auto"` sentinel — explicit `"low"` / `"mid"` / `"high"` / custom values are preserved as-is.
+  - Combination logic (full rationale in the implementation file's header comment): agreeing GPU+RAM signals reinforce; disagreeing signals fall back to Mid (conservative); `RAM=0` trusts the GPU class; no signal at all returns `Unknown` and maps to `"mid"`.
+  - Tests: `tests/platform/TestAndroidTierDetect.cpp` (17 cases / 88 assertions covering substring matching, /proc/meminfo parsing, combination logic boundaries, and string helpers — runs on the macOS host build).
+  - Verified on the `sama_mid` AVD (Pixel 6, API 33): logcat shows `Tier detected: Low (RAM 1965 MB)` because the running emulator only reports ~2 GB to the guest (the AVD is provisioned for 4 GB but the kernel sees less).
 - [x] Asset loader picks tier-appropriate assets
   - `resolveAssetPath(basePath, relativePath, tier)` — checks `<basePath>/<tier>/<relativePath>` first, falls back to `<basePath>/<relativePath>`
   - Pure utility function, no IFileSystem dependency

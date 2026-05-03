@@ -1353,6 +1353,23 @@ The tier system allows developers to define device-tier quality presets (e.g. lo
 
 - **Partial tier JSON supported.** A JSON tier definition can specify only the fields that differ from defaults. This makes it easy to create a custom tier that tweaks one or two settings without repeating the full configuration.
 
+### Android Runtime Tier Auto-Detection (2026-04-30)
+
+`engine/platform/android/AndroidTierDetect.{h,cpp}` plus a one-line wiring change in `Engine::initAndroid` and `GameRunner::runAndroid(configPath)` lets games leave `activeTier` empty (or set the new sentinel `"activeTier": "auto"`) and have the engine pick a tier at process start. Mirrors the iOS `IosTierDetect` API surface (`detect…Tier()`, `…TierLogName()`, `…TierToProjectConfigName()`) so future cross-platform tooling can branch on a single shape.
+
+**Why RAM (`/proc/meminfo` `MemTotal`) + GPU substring rather than alternatives:**
+
+- **Considered:** JNI bridge to `ActivityManager.getMemoryInfo`. Rejected because plumbing a `JNIEnv*` through to the platform layer just to read a number `/proc/meminfo` already prints would add a JNI dependency to a code path that otherwise needs none. Tradeoff: we report total RAM (kernel + reserved) rather than "available to apps", but every public device-tier reference uses total RAM as the bucket boundary so this is the right number anyway.
+- **Considered:** A full PCI-id table for Android GPUs (analogous to iOS `hw.machine` -> chip). Rejected because there is no Apple-style chip→model map for Android — the table would be enormous and stale within months. A case-insensitive substring match against the GPU device name catches whole families (Adreno 7xx, Mali-G7xx, Xclipse 9xx, ...) in 12 entries, and the RAM signal saves us when a brand-new generation ships.
+- **Considered:** Defer entirely (the original Phase E note suggested deferring runtime detection because GPU strings are inconsistent). Reconsidered because a) the iOS branch already does this and games porting cross-platform expect parity, b) the substring approach plus a RAM fallback is robust enough for the v1 default — when the project pins a tier explicitly we don't override it anyway.
+
+**Tradeoffs accepted:**
+
+- The v1 wiring passes an empty GPU name from `Engine::initAndroid` because bgfx exposes `vendorId` / `deviceId` (PCI IDs) but not the human-readable device name pre-init, and we don't want to spin up a separate Vulkan instance just to query `VkPhysicalDeviceProperties.deviceName` when the RAM signal alone is enough on real devices. The GPU heuristic is tested and ready for when a future caller (e.g. a Vulkan-pre-init query path or an in-game settings UI that reads `bgfx::getCaps()` after init) wants to refine the answer.
+- We do not silently override an explicit `activeTier` set in `project.json`. Detection only fills in when the field is empty or set to `"auto"`. This preserves the original Phase E design tenet ("explicit tiers over automatic quality scaling") while still providing a sensible default for games that don't ship per-device tuning.
+- Combination logic when the two signals disagree (e.g. flagship GPU paired with little RAM, or weak GPU in a tablet with lots of RAM) lands on Mid rather than picking either extreme. Ties always go to the safer choice.
+- `Unknown` (no GPU match + parse failure on `/proc/meminfo`) maps to `"mid"` for the same reason iOS uses Mid as its safe-default — `"high"` risks overheating an unidentified low-end device; `"low"` leaves modern hardware visibly under-utilised.
+
 ---
 
 ## Asset Pipeline CLI
