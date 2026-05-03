@@ -92,7 +92,7 @@ Windows/Linux ports are designed but not implemented (see
 - Console panel — engine logs and `EditorLog` output
 - Translate/rotate/scale gizmo with snapping
 - Play mode — runs the active scene with physics; reverts on stop
-- Build menu — `Build > Android > {Low, Mid, High}` invokes `build_apk.sh` for the selected tier with output streamed to the console
+- Build menu — `Build > Android > {Low, Mid, High}` invokes `build_apk.sh` for the selected tier; status bar shows live phase progress (parsed from `[N/7]` markers) and a Cancel button. `Build > Android > Build & Run` (Cmd+R) auto-installs and launches the APK on the connected device after build. `Build > Android > Settings…` configures the default tier, keystore, output path, package ID, and Build & Run preference (persisted to `NSUserDefaults` across editor restarts).
 
 **Build and run:**
 

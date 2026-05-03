@@ -290,14 +290,41 @@ The following issues were noted during Phase F and have since been fixed:
   - Spawns `build_apk.sh` with the selected tier on a detached `std::thread`
   - Build output logged to the Console panel via `EditorLog`
   - Non-blocking: editor remains interactive during build
-- [ ] Build progress indicator (deferred)
-  - Progress bar or spinner in the status bar
-  - Build log streamed to the Console tab in real time
-- [ ] Auto-install option (deferred)
-  - "Build & Run" button: builds APK, installs via `adb`, launches on device
-  - Requires `adb` in PATH and a connected device
-- [ ] Build configuration persistence (deferred)
-  - Remember last-used tier, keystore path, output directory in editor preferences
+- [x] Build progress indicator
+  - Status bar pinned to the bottom of the editor window: spinning
+    `NSProgressIndicator`, phase label parsed from `build_apk.sh`'s
+    `[N/7]` markers (`[1/7] Building native library...`, etc.), and a
+    Cancel button that `SIGTERM`s the running build process.
+  - Idle state shows "Ready" with the spinner hidden; the final status
+    reads "Build succeeded (14.07 MB)" / "Build failed (exit N)" /
+    "Build cancelled" so the result is visible without opening the
+    Console panel.
+  - Build process spawned via `posix_spawn` so the editor can hold the
+    PID for cancel; previously `popen()` had no portable PID handle.
+- [x] Auto-install option ("Build & Run")
+  - `Build > Android > Build & Run` (Cmd+R) invokes
+    `build_apk.sh --tier <persisted> --debug --install`, then
+    `adb shell am start -n <package>/android.app.NativeActivity`
+    against the persisted device serial (or first connected).
+  - Pre-flight `adb devices -l` check shows an alert with install
+    instructions if no device is plugged in / no emulator is running,
+    so the user doesn't waste 2 minutes building before noticing.
+  - Disabled (warning logged) while another build is in flight; uses
+    a single `androidBuildRunning` atomic flag.
+- [x] Build configuration persistence
+  - `Build > Android > Settings…` opens a modal sheet for default tier,
+    keystore path, keystore password env var (recommended over plain
+    text), APK output path, package ID, last device serial, and a
+    "Build & Run after build" toggle.
+  - Persisted to `NSUserDefaults` under keys `android.defaultTier`,
+    `android.keystorePath`, `android.keystorePassEnvVar`,
+    `android.outputApkPath`, `android.packageId`,
+    `android.lastDeviceSerial`, `android.buildAndRun`. Defaults applied
+    on first launch (`tier=mid`, `package=com.sama.game`, output empty
+    = `build/android/Game.apk`).
+  - Settings flow into every build invocation: per-tier menu items,
+    Build & Run, and the cancel-aware build thread all read the
+    persisted snapshot at spawn time.
 
 ---
 

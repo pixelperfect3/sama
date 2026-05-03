@@ -1741,3 +1741,121 @@ If any of these had been true I would have gone with path 2 instead:
 - `engine_tests` desktop: 664 cases / 6574 assertions pass — identical to baseline (no behavioural change to desktop, the Android branch just sprouted the same calls the desktop branch already had).
 - `apps/android_test` on the `sama_mid` AVD (Android 13 / arm64): renders a small "Android ImGui Test" window with frame counter, touch readout, `imguiWantsMouse` display, and a "Press me" button. logcat shows `[imgui] button tapped (count=N)` incrementing on each tap, confirming the click is reaching ImGui's hit-test (`AndroidInputBackend` mouse-synthesis → `IMGUI_MBUT_LEFT` → `ImGui::Button` → callback).
 - APK size: 14.07 MB (was 13.4 MB before — +680 KB for ImGui = dear-imgui core + the bgfx wrapper). The shared object went from ~24.7 MB → 29.1 MB before stripping/compression — most of that is debug-info, the runtime cost is around the +680 KB observed in the APK.
+
+## Editor Build & Run threading (2026-04-30)
+
+Phase G's "Build & Run" feature spans three threads. Spelling out who does
+what, and why the boundaries fall where they do, since the design has a
+real consequence for what the Cancel button can and can't do.
+
+### Threads in play
+
+1. **UI thread** (the Cocoa main thread):
+   - Owns the `NSApplication` run loop, every `NSView`, the Metal layer
+     backing the viewport, and every menu callback.
+   - Reads `EditorApp::Impl::androidBuildRunning` (atomic) to know
+     whether to show the spinner, accept Cancel clicks, or warn on a
+     duplicate build request.
+   - Polls `EditorLog` every frame and pushes new entries into the
+     `CocoaConsoleView`.
+2. **Build thread** (one detached `std::thread` per build):
+   - Spawns `android/build_apk.sh` via `posix_spawn` (NOT `popen` — see
+     below) and reads its stdout line-by-line.
+   - For each line: appends to `EditorLog` (lock-protected, the UI
+     thread reads from the same buffer) AND, if the line matches the
+     `[N/7]` phase marker, calls `CocoaEditorWindow::setBuildStatus(...)`
+     which trampolines onto the main queue via `dispatch_async`.
+   - On exit: `waitpid()`, classifies success/failure/cancellation,
+     emits one final `setBuildStatus` and clears
+     `androidBuildRunning`. Inside the same thread (still after the
+     build script terminated, so the order is fixed): on
+     Build & Run + success, runs `adb shell am start -n <pkg>/<act>` via
+     plain `popen` and streams *its* output to `EditorLog` too.
+3. **(Implicit) adb thread**: just a synchronous `popen` inside the
+   build thread above. We don't spawn another std::thread for adb
+   because (a) it runs after the long build is done, so latency
+   doesn't matter, (b) it serializes naturally with the "build
+   succeeded" status update, (c) one fewer detached thread to reason
+   about.
+
+### Why posix_spawn instead of popen
+
+The first version used `popen()` because it's a one-liner that
+returns a `FILE*`. The Cancel button then needed a way to kill the
+build process — and `popen()` deliberately hides the PID. There's no
+portable way to ask "what process did popen() fork?". Workarounds
+considered:
+
+- **`pgrep` for build_apk.sh** — fragile (multiple builds in flight
+  would conflict), unreliable on macOS where `pgrep` matches against
+  the basename only and shells get re-execed.
+- **Process group + `killpg`** — popen() doesn't put the child in a
+  new process group, so killing the group would kill the editor too.
+- **Wrap popen in a shell `exec ... &` + capture `$!`** — works but
+  duplicates state across the C++ and shell layers, and `apksigner`
+  (Java) doesn't always die cleanly when its parent shell dies.
+
+`posix_spawn` returns the PID directly. We pipe stdout/stderr into a
+fdopen'd `FILE*` so the line-reading loop is unchanged, and the
+Cancel button calls `kill(pid, SIGTERM)`. The build_apk.sh process
+inherits SIGTERM and the next `make`/`aapt2`/`apksigner` invocation
+in its `set -euo pipefail` chain dies, propagating exit. The build
+thread's read loop sees EOF on the pipe, `waitpid()` returns
+`WIFSIGNALED`, and the post-build classifier sees
+`androidBuildCancelRequested=true` and emits "Build cancelled" rather
+than "Build failed (exit N)".
+
+### Why setBuildStatus marshals to the main queue itself
+
+Two equivalent designs:
+
+1. **Caller marshals**: build thread builds a status string, dispatches
+   it to the main queue, which then calls into a UI-only setter.
+2. **Setter marshals** (chosen): build thread calls `setBuildStatus`
+   directly; the implementation checks `[NSThread isMainThread]` and
+   dispatches itself if needed.
+
+Picked path 2 so the build thread doesn't have to know about Cocoa
+queues. The build thread is C++ — it pushes to `EditorLog` (POSIX
+mutex) and calls a `setBuildStatus(const char*, kind)` method that
+might-or-might-not be on the right thread, and the Objective-C side
+handles the marshalling. Symmetric with how `EditorLog::log` is
+thread-safe; symmetric with how `setBuildCancelHandler` is called
+from the build thread (cleanup) and the UI thread (initial wiring)
+without callers caring.
+
+Tradeoff: every `setBuildStatus` call from the UI thread does a
+trivial `[NSThread isMainThread]` branch. Negligible (it's one
+syscall less than `dispatch_get_main_queue`).
+
+### What Cancel can't do
+
+- **Can't undo NDK incremental state.** If the user cancels mid
+  `[1/7] Building native library...`, ninja has already updated some
+  `.o` timestamps and clobbered some headers. The next build
+  re-resolves correctly via mtime checks, but the Cancel button does
+  NOT roll back the build directory — that's by design (rolling back
+  would defeat incremental builds).
+- **Can't fully stop apksigner mid-sign.** apksigner is a JVM
+  process; on `SIGTERM` it usually exits cleanly because we cancel
+  before any APK is committed, but if cancellation happens during
+  the final atomic-rename step in `[7/7] Signing APK...`, the partly
+  written APK may be left in `build/android/`. Mitigation: the next
+  successful build overwrites it. Cleaner mitigation (deferred):
+  build_apk.sh could use `mv -n` + a `.tmp` suffix until the very
+  last step.
+
+### Why a single build flag, not a queue
+
+Considered allowing multiple concurrent builds (e.g. Mid + High in
+parallel). Rejected because:
+
+1. They'd contend on the same `build/android/apk_staging` directory.
+2. Both would emit overlapping `[N/7]` markers into the same console,
+   making the status bar nondeterministic.
+3. The user almost certainly doesn't want both — they want to switch
+   tiers, not build them in parallel. The 90-second build cost is
+   small enough that serializing is fine.
+
+So: one global `androidBuildRunning` atomic. New requests log a
+warning and bail. Future "build all tiers" workflows can revisit.
