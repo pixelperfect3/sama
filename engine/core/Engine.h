@@ -1,6 +1,12 @@
 #pragma once
 
+#if defined(__APPLE__)
+// TargetConditionals is Apple-only — guards the iOS macro defined below.
+// On Android / Linux / Windows this header doesn't exist, so we skip it
+// and the TARGET_OS_IPHONE check naturally evaluates to false (it's only
+// referenced inside the #if defined(__APPLE__) branch).
 #include <TargetConditionals.h>
+#endif
 
 #include <cstdint>
 #include <memory>

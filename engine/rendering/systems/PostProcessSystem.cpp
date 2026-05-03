@@ -1,6 +1,10 @@
 #include "engine/rendering/systems/PostProcessSystem.h"
 
+#if defined(__APPLE__)
+// TargetConditionals is Apple-only — guards the iOS branch below.  Including
+// it unconditionally breaks the Android NDK build (no such header in Bionic).
 #include <TargetConditionals.h>
+#endif
 #include <bgfx/bgfx.h>
 
 #include <cstdio>

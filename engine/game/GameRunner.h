@@ -1,6 +1,10 @@
 #pragma once
 
+#if defined(__APPLE__)
+// TargetConditionals is Apple-only.  Guarded so the Android NDK build (no
+// such header in Bionic) keeps working.
 #include <TargetConditionals.h>
+#endif
 
 #include <cstdint>
 
