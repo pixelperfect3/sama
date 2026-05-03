@@ -32,6 +32,9 @@
 #include "engine/assets/GltfSceneSpawner.h"
 #include "engine/assets/StdFileSystem.h"
 #include "engine/assets/TextureLoader.h"
+#ifdef __ANDROID__
+#include "engine/audio/IAudioEngine.h"
+#endif
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
 #include "engine/game/GameRunner.h"
@@ -67,6 +70,59 @@ using namespace engine::rendering;
 
 namespace
 {
+
+#ifdef __ANDROID__
+// Procedural mono 16-bit PCM WAV with a fade-in/fade-out envelope.  Pulled
+// from apps/audio_demo/main.mm so the Android smoke test doesn't need any
+// asset bundled into the APK to verify the SoLoud + miniaudio AAudio path.
+std::vector<uint8_t> generateToneWav(float frequencyHz, float durationSec,
+                                     float sampleRate = 44100.0f)
+{
+    uint32_t numSamples = static_cast<uint32_t>(sampleRate * durationSec);
+    uint32_t dataSize = numSamples * 2;
+    uint32_t fileSize = 44 + dataSize;
+
+    std::vector<uint8_t> wav(fileSize);
+
+    std::memcpy(&wav[0], "RIFF", 4);
+    uint32_t chunkSize = fileSize - 8;
+    std::memcpy(&wav[4], &chunkSize, 4);
+    std::memcpy(&wav[8], "WAVE", 4);
+    std::memcpy(&wav[12], "fmt ", 4);
+    uint32_t subchunk1Size = 16;
+    std::memcpy(&wav[16], &subchunk1Size, 4);
+    uint16_t audioFormat = 1;
+    std::memcpy(&wav[20], &audioFormat, 2);
+    uint16_t numChannels = 1;
+    std::memcpy(&wav[22], &numChannels, 2);
+    uint32_t sr = static_cast<uint32_t>(sampleRate);
+    std::memcpy(&wav[24], &sr, 4);
+    uint32_t byteRate = sr * 2;
+    std::memcpy(&wav[28], &byteRate, 4);
+    uint16_t blockAlign = 2;
+    std::memcpy(&wav[32], &blockAlign, 2);
+    uint16_t bitsPerSample = 16;
+    std::memcpy(&wav[34], &bitsPerSample, 2);
+    std::memcpy(&wav[36], "data", 4);
+    std::memcpy(&wav[40], &dataSize, 4);
+
+    int16_t* samples = reinterpret_cast<int16_t*>(&wav[44]);
+    for (uint32_t i = 0; i < numSamples; ++i)
+    {
+        float t = static_cast<float>(i) / sampleRate;
+        float value = std::sin(2.0f * 3.14159265f * frequencyHz * t);
+        float envelope = 1.0f;
+        float fadeTime = 0.01f * sampleRate;
+        if (i < static_cast<uint32_t>(fadeTime))
+            envelope = static_cast<float>(i) / fadeTime;
+        if (i > numSamples - static_cast<uint32_t>(fadeTime))
+            envelope = static_cast<float>(numSamples - i) / fadeTime;
+        samples[i] = static_cast<int16_t>(value * envelope * 16000.0f);
+    }
+
+    return wav;
+}
+#endif
 
 // Convert HSV (h in [0,360), s/v in [0,1]) to a packed RGBA uint32_t.
 uint32_t hsvToRgba(float h, float s, float v)
@@ -199,6 +255,29 @@ public:
         registry.emplace<MaterialComponent>(lightEntity_, lightMatId_);
         registry.emplace<VisibleTag>(lightEntity_);
         // Light cube does NOT cast shadow on itself / scene.
+
+#ifdef __ANDROID__
+        // ----------------------------------------------------------------
+        // Audio smoke test — generate a procedural beep, load it into the
+        // engine-owned SoLoud and play it once at init.  Tapping the
+        // screen also plays it (see onUpdate).  Verifies the AAudio /
+        // OpenSL ES backend is wired up.
+        // ----------------------------------------------------------------
+        {
+            auto wav = generateToneWav(440.0f, 0.3f);
+            beepClipId_ = engine.audio().loadClip(wav.data(), wav.size(), /*streaming=*/false);
+            __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                                "audio: loaded beep clip id=%u (size=%zu bytes)", beepClipId_,
+                                wav.size());
+            if (beepClipId_ != engine::audio::INVALID_SOUND)
+            {
+                auto handle = engine.audio().play(beepClipId_, engine::audio::SoundCategory::SFX,
+                                                  /*volume=*/0.5f, /*loop=*/false);
+                __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                                    "audio: init-time play handle=%u", handle);
+            }
+        }
+#endif
     }
 
     void onUpdate(Engine& engine, Registry& registry, float dt) override
@@ -238,6 +317,18 @@ public:
                 dot.age = 0.0f;
                 touchTrail_.push_back(dot);
             }
+#ifdef __ANDROID__
+            // Audio smoke test: any new touch plays the beep clip once.
+            // Confirms SoLoud is still pumping after init AND after the
+            // resume path (since AAudio's stream is rebuilt on app resume
+            // and a successful play() proves the device is open).
+            if (touch.phase == TouchPoint::Phase::Began &&
+                beepClipId_ != engine::audio::INVALID_SOUND)
+            {
+                engine.audio().play(beepClipId_, engine::audio::SoundCategory::SFX,
+                                    /*volume=*/0.5f, /*loop=*/false);
+            }
+#endif
         }
 
         // Age and prune trail dots (fade over 2 seconds)
@@ -653,6 +744,13 @@ private:
     uint32_t groundMeshId_ = 0;
     uint32_t groundMatId_ = 0;
     uint32_t lightMatId_ = 0;
+
+#ifdef __ANDROID__
+    // Audio smoke test — id of a procedurally-generated beep clip loaded
+    // into the engine-owned SoLoud at init time.  Played once at init and
+    // again on every new touch.  See onInit / onUpdate.
+    uint32_t beepClipId_ = engine::audio::INVALID_SOUND;
+#endif
 
     void loadMsdfFont()
     {
