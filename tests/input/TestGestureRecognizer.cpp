@@ -261,6 +261,71 @@ TEST_CASE("GestureRecognizer: ended-phase touches are excluded from pair selecti
     CHECK(gesture.pinchDelta == 0.f);
 }
 
+TEST_CASE("GestureRecognizer: recycled lower id replaces tracked pair without spike",
+          "[input][gesture]")
+{
+    // Real hardware (and the Android InputBackend below it) recycles touch
+    // ids — an OS that has just released id=1 may hand it back out to the
+    // *next* finger that lands.  When that happens while two fingers are
+    // already being tracked, `pickTrackedPair` will reselect the lowest-two
+    // ids, which means the tracked pair changes mid-gesture even though the
+    // physical fingers we were originally following are still on the
+    // screen.  Without a re-anchor on that frame, the recognizer would emit
+    // the entire jump from {old midpoint, old distance} to {new midpoint,
+    // new distance} as a single-frame spike.  This test pins the
+    // re-anchor-on-id-change behaviour.
+    GestureRecognizer rec;
+    InputState state;
+    GestureState gesture;
+
+    // Frame 1: anchor on (2, 3) — the only two touches present.
+    state.touches_ = {touch(2, 100.f, 0.f), touch(3, 200.f, 0.f)};
+    rec.update(state, gesture);
+    REQUIRE(gesture.active);
+    REQUIRE_THAT(gesture.pinchDelta, WithinAbs(0.f, kEps));
+    REQUIRE_THAT(gesture.panDeltaX, WithinAbs(0.f, kEps));
+
+    // Frame 2: same pair (2, 3) move together — verify normal pan delta.
+    state.touches_ = {touch(2, 110.f, 0.f), touch(3, 210.f, 0.f)};
+    rec.update(state, gesture);
+    CHECK(gesture.active);
+    CHECK_THAT(gesture.pinchDelta, WithinAbs(0.f, kEps));
+    CHECK_THAT(gesture.panDeltaX, WithinAbs(10.f, kEps));
+    CHECK_THAT(gesture.panDeltaY, WithinAbs(0.f, kEps));
+
+    // Frame 3: a new finger lands with id=1 (lower than 2 and 3).
+    // The OS recycled the id while 2 and 3 are still active.  Three touches
+    // are present; pickTrackedPair selects the lowest two -> (1, 2).  That
+    // changes the tracked pair, so the recognizer should re-anchor on
+    // (1, 2) with zero deltas this frame even though touches 2 and 3 also
+    // moved by 10px.
+    state.touches_ = {touch(1, 0.f, 0.f), touch(2, 120.f, 0.f), touch(3, 220.f, 0.f)};
+    rec.update(state, gesture);
+    CHECK(gesture.active);
+    CHECK_THAT(gesture.pinchDelta, WithinAbs(0.f, kEps));
+    CHECK_THAT(gesture.panDeltaX, WithinAbs(0.f, kEps));
+    CHECK_THAT(gesture.panDeltaY, WithinAbs(0.f, kEps));
+
+    // Frame 4: ids 1 and 2 keep moving (each +10 in X), id 3 still present
+    // but is no longer one of the two lowest ids so it must not influence
+    // the delta.  The recognizer should now produce a delta against the
+    // (1, 2) anchor established last frame.
+    //
+    //   Anchor (frame 3): touches 1@(0,0), 2@(120,0).
+    //     midpoint = (60, 0), distance = 120.
+    //   This frame:       touches 1@(10,0), 2@(130,0).
+    //     midpoint = (70, 0), distance = 120.
+    //   Expected: panDeltaX = +10, no pinch, no Y pan.
+    //   Touch 3 moves to (300, 0) — would have produced a huge spike if it
+    //   had been selected.  It must be ignored.
+    state.touches_ = {touch(1, 10.f, 0.f), touch(2, 130.f, 0.f), touch(3, 300.f, 0.f)};
+    rec.update(state, gesture);
+    CHECK(gesture.active);
+    CHECK_THAT(gesture.pinchDelta, WithinAbs(0.f, kEps));
+    CHECK_THAT(gesture.panDeltaX, WithinAbs(10.f, kEps));
+    CHECK_THAT(gesture.panDeltaY, WithinAbs(0.f, kEps));
+}
+
 TEST_CASE("GestureRecognizer: reset() clears tracking", "[input][gesture]")
 {
     GestureRecognizer rec;
