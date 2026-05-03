@@ -2,7 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.sama.engine">
 
-    <uses-feature android:name="android.hardware.vulkan" android:required="true"/>
+    <!-- Vulkan 1.1 is the engine's minimum (bgfx + Android API 24+).
+         The canonical Play Store filter pair is:
+           android.hardware.vulkan.level    — feature level (1 = compute,
+                                              maxImageDimension2D >= 8192,
+                                              maxBoundDescriptorSets >= 8, …)
+           android.hardware.vulkan.version  — packed VK API version, here
+                                              0x00401000 = VK_API_VERSION_1_1.
+         The bare `android.hardware.vulkan` name is non-canonical and may be
+         missed by some Play Store device-eligibility filters. -->
+    <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="true"/>
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x00401000" android:required="true"/>
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
 
     <application
