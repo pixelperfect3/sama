@@ -192,8 +192,8 @@ int main()
     // -------------------------------------------------------------------------
     // GPU resources
     // -------------------------------------------------------------------------
-    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{loadShadowProgram().idx};
-    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{loadPbrProgram().idx};
+    engine::rendering::ProgramHandle shadowProg = loadShadowProgram();
+    engine::rendering::ProgramHandle pbrProg = loadPbrProgram();
 
     RenderResources res;
     const uint32_t meshId = res.addMesh(buildMesh(makeCubeMeshData()));
@@ -342,7 +342,7 @@ int main()
         // sets the shadow atlas dimensions (2048×2048) which must not be
         // overridden later in the frame.
         shadow.beginCascade(0, lightView, lightProj);
-        drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
+        drawCallSys.submitShadowDrawCalls(reg, res, bgfx::ProgramHandle{shadowProg.idx}, 0);
 
         // -- Opaque pass (view 9) —  render to backbuffer --------------------
         const auto W = static_cast<uint16_t>(fbW);
@@ -361,7 +361,7 @@ int main()
         const PbrFrameParams frame{
             lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), W, H, 0.1f, 200.f,
         };
-        drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
+        drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, renderer.uniforms(), frame);
 
         // -- HUD (debug text overlay) -----------------------------------------
         // Do NOT set setViewRect(0, ...) here — that would override the shadow
@@ -399,10 +399,10 @@ int main()
     // -------------------------------------------------------------------------
     hud.shutdown();
     shadow.shutdown();
-    if (bgfx::isValid(shadowProg))
-        bgfx::destroy(shadowProg);
-    if (bgfx::isValid(pbrProg))
-        bgfx::destroy(pbrProg);
+    if (engine::rendering::isValid(shadowProg))
+        bgfx::destroy(bgfx::ProgramHandle{shadowProg.idx});
+    if (engine::rendering::isValid(pbrProg))
+        bgfx::destroy(bgfx::ProgramHandle{pbrProg.idx});
     res.destroyAll();
 
     renderer.endFrame();  // flush pending destroy commands
