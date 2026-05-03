@@ -24,7 +24,7 @@ TEST_CASE("screenshot: UI sprites", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle spriteProgram = engine::rendering::loadSpriteProgram();
+    bgfx::ProgramHandle spriteProgram = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
 
     // Set up the UI view target
     engine::rendering::RenderPass(engine::rendering::kViewUi)

@@ -361,7 +361,9 @@ bool SlugFont::loadFromFile(const char* ttfPath, float pixelSize)
         u_slugParams_ = bgfx::createUniform("u_slugParams", bgfx::UniformType::Vec4);
         u_slugCurvesDim_ = bgfx::createUniform("u_slugCurvesDim", bgfx::UniformType::Vec4);
 
-        program_ = engine::rendering::loadSlugProgram();
+        // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+        // wrapper); widen to bgfx for the engine-internal storage member.
+        program_ = bgfx::ProgramHandle{engine::rendering::loadSlugProgram().idx};
     }
 
     loaded_ = true;

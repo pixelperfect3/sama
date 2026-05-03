@@ -19,6 +19,15 @@ namespace engine::rendering
 namespace
 {
 
+// Boundary helper — every loadXxxProgram() builds a bgfx::ProgramHandle and
+// then returns it as the public engine::rendering::ProgramHandle wrapper.
+// Layout is asserted bit-identical in RenderPass.cpp so this is a no-op
+// reinterpret of the underlying uint16_t.
+inline ProgramHandle wrap(bgfx::ProgramHandle h)
+{
+    return {h.idx};
+}
+
 bgfx::ShaderHandle loadShaderFromAsset(const char* path)
 {
     AAssetManager* am = engine::platform::getAssetManager();
@@ -63,61 +72,65 @@ bgfx::ProgramHandle loadProgramFromAssets(const char* vsPath, const char* fsPath
 
 }  // anonymous namespace
 
-bgfx::ProgramHandle loadSpriteProgram()
+ProgramHandle loadSpriteProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_sprite.bin");
+    return wrap(
+        loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_sprite.bin"));
 }
 
-bgfx::ProgramHandle loadRoundedRectProgram()
+ProgramHandle loadRoundedRectProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_rounded_rect.bin",
-                                 "shaders/spirv/fs_rounded_rect.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_rounded_rect.bin",
+                                      "shaders/spirv/fs_rounded_rect.bin"));
 }
 
-bgfx::ProgramHandle loadPbrProgram()
+ProgramHandle loadPbrProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_pbr.bin", "shaders/spirv/fs_pbr.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_pbr.bin", "shaders/spirv/fs_pbr.bin"));
 }
 
-bgfx::ProgramHandle loadUnlitProgram()
+ProgramHandle loadUnlitProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_unlit.bin", "shaders/spirv/fs_unlit.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_unlit.bin", "shaders/spirv/fs_unlit.bin"));
 }
 
-bgfx::ProgramHandle loadShadowProgram()
+ProgramHandle loadShadowProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_shadow.bin", "shaders/spirv/fs_shadow.bin");
+    return wrap(
+        loadProgramFromAssets("shaders/spirv/vs_shadow.bin", "shaders/spirv/fs_shadow.bin"));
 }
 
-bgfx::ProgramHandle loadSkinnedPbrProgram()
+ProgramHandle loadSkinnedPbrProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_pbr_skinned.bin", "shaders/spirv/fs_pbr.bin");
+    return wrap(
+        loadProgramFromAssets("shaders/spirv/vs_pbr_skinned.bin", "shaders/spirv/fs_pbr.bin"));
 }
 
-bgfx::ProgramHandle loadSkinnedShadowProgram()
+ProgramHandle loadSkinnedShadowProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_shadow_skinned.bin",
-                                 "shaders/spirv/fs_shadow.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_shadow_skinned.bin",
+                                      "shaders/spirv/fs_shadow.bin"));
 }
 
-bgfx::ProgramHandle loadGizmoProgram()
+ProgramHandle loadGizmoProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_gizmo.bin", "shaders/spirv/fs_gizmo.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_gizmo.bin", "shaders/spirv/fs_gizmo.bin"));
 }
 
-bgfx::ProgramHandle loadMsdfProgram()
+ProgramHandle loadMsdfProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_msdf.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_msdf.bin"));
 }
 
-bgfx::ProgramHandle loadSkyboxProgram()
+ProgramHandle loadSkyboxProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_skybox.bin", "shaders/spirv/fs_skybox.bin");
+    return wrap(
+        loadProgramFromAssets("shaders/spirv/vs_skybox.bin", "shaders/spirv/fs_skybox.bin"));
 }
 
-bgfx::ProgramHandle loadSlugProgram()
+ProgramHandle loadSlugProgram()
 {
-    return loadProgramFromAssets("shaders/spirv/vs_slug.bin", "shaders/spirv/fs_slug.bin");
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_slug.bin", "shaders/spirv/fs_slug.bin"));
 }
 
 bgfx::ProgramHandle loadBloomThresholdProgram()
@@ -325,249 +338,258 @@ static const bgfx::EmbeddedShader kRoundedRectShaders[] = {
     BGFX_EMBEDDED_SHADER_END(),
 };
 
+// Boundary helper — every loadXxxProgram() builds a bgfx::ProgramHandle and
+// then returns it as the public engine::rendering::ProgramHandle wrapper.
+// Layout is asserted bit-identical in RenderPass.cpp so this is a no-op
+// reinterpret of the underlying uint16_t.
+inline ProgramHandle wrap(bgfx::ProgramHandle h)
+{
+    return {h.idx};
+}
+
 }  // anonymous namespace
 
-bgfx::ProgramHandle loadUnlitProgram()
+ProgramHandle loadUnlitProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     // The Noop renderer (headless unit tests) cannot run real shaders.
-    // Return an invalid handle — callers guard with bgfx::isValid().
+    // Return an invalid handle — callers guard with isValid(ProgramHandle).
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kUnlitShaders, renderer, "vs_unlit");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kUnlitShaders, renderer, "fs_unlit");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
     // destroyShaders=true: bgfx takes ownership of vsh/fsh handles.
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadPbrProgram()
+ProgramHandle loadPbrProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     // The Noop renderer (headless unit tests) cannot run real shaders.
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kPbrShaders, renderer, "vs_pbr");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kPbrShaders, renderer, "fs_pbr");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadSpriteProgram()
+ProgramHandle loadSpriteProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     // The Noop renderer (headless unit tests) cannot run real shaders.
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kSpriteShaders, renderer, "vs_sprite");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSpriteShaders, renderer, "fs_sprite");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadMsdfProgram()
+ProgramHandle loadMsdfProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     // The Noop renderer (headless unit tests) cannot run real shaders.
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kMsdfShaders, renderer, "vs_sprite");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kMsdfShaders, renderer, "fs_msdf");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadShadowProgram()
+ProgramHandle loadShadowProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     // The Noop renderer (headless unit tests) cannot run real shaders.
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kShadowShaders, renderer, "vs_shadow");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kShadowShaders, renderer, "fs_shadow");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadSkinnedPbrProgram()
+ProgramHandle loadSkinnedPbrProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh =
         bgfx::createEmbeddedShader(kSkinnedPbrShaders, renderer, "vs_pbr_skinned");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSkinnedPbrShaders, renderer, "fs_pbr");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadSkinnedShadowProgram()
+ProgramHandle loadSkinnedShadowProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh =
         bgfx::createEmbeddedShader(kSkinnedShadowShaders, renderer, "vs_shadow_skinned");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh =
         bgfx::createEmbeddedShader(kSkinnedShadowShaders, renderer, "fs_shadow");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadGizmoProgram()
+ProgramHandle loadGizmoProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kGizmoShaders, renderer, "vs_gizmo");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kGizmoShaders, renderer, "fs_gizmo");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadSlugProgram()
+ProgramHandle loadSlugProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kSlugShaders, renderer, "vs_slug");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSlugShaders, renderer, "fs_slug");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadSkyboxProgram()
+ProgramHandle loadSkyboxProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kSkyboxShaders, renderer, "vs_skybox");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kSkyboxShaders, renderer, "fs_skybox");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
-bgfx::ProgramHandle loadRoundedRectProgram()
+ProgramHandle loadRoundedRectProgram()
 {
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
 
     if (renderer == bgfx::RendererType::Noop)
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle vsh =
         bgfx::createEmbeddedShader(kRoundedRectShaders, renderer, "vs_rounded_rect");
     if (!bgfx::isValid(vsh))
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
 
     bgfx::ShaderHandle fsh =
         bgfx::createEmbeddedShader(kRoundedRectShaders, renderer, "fs_rounded_rect");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);
-        return BGFX_INVALID_HANDLE;
+        return kInvalidProgram;
     }
 
-    return bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true);
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
 }
 
 }  // namespace engine::rendering

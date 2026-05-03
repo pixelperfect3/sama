@@ -278,7 +278,7 @@ TEST_CASE("DrawCallBuildSystem: smoke test with headless renderer", "[mesh]")
 
     // The Noop renderer returns an invalid program handle — DrawCallBuildSystem
     // must handle that gracefully (early-out without crash).
-    bgfx::ProgramHandle program = engine::rendering::loadUnlitProgram();
+    bgfx::ProgramHandle program = bgfx::ProgramHandle{engine::rendering::loadUnlitProgram().idx};
 
     bgfxCtx.renderer.beginFrame();
 

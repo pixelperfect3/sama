@@ -135,7 +135,7 @@ TEST_CASE("loadPbrProgram: returns BGFX_INVALID_HANDLE in headless mode", "[pbr]
 
     // The Noop renderer cannot compile embedded shaders; the loader must handle
     // this gracefully and return an invalid handle rather than crashing.
-    bgfx::ProgramHandle program = engine::rendering::loadPbrProgram();
+    bgfx::ProgramHandle program = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
     REQUIRE(!bgfx::isValid(program));
 
     if (bgfx::isValid(program))
@@ -176,7 +176,7 @@ TEST_CASE("DrawCallBuildSystem: PBR overload smoke test with headless renderer",
     engine::rendering::ShaderUniforms uniforms{};
     uniforms.init();
 
-    bgfx::ProgramHandle program = engine::rendering::loadPbrProgram();
+    bgfx::ProgramHandle program = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
 
     bgfxCtx.renderer.beginFrame();
 

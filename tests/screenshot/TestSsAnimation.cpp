@@ -61,10 +61,10 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle shadowProg = loadShadowProgram();
-    bgfx::ProgramHandle pbrProg = loadPbrProgram();
-    bgfx::ProgramHandle skinnedShadowProg = loadSkinnedShadowProgram();
-    bgfx::ProgramHandle skinnedPbrProg = loadSkinnedPbrProgram();
+    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{loadShadowProgram().idx};
+    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{loadPbrProgram().idx};
+    bgfx::ProgramHandle skinnedShadowProg = bgfx::ProgramHandle{loadSkinnedShadowProgram().idx};
+    bgfx::ProgramHandle skinnedPbrProg = bgfx::ProgramHandle{loadSkinnedPbrProgram().idx};
 
     // -----------------------------------------------------------------------
     // Synchronously load Fox.glb.

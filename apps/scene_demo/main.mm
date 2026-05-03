@@ -192,8 +192,8 @@ int main()
     // -------------------------------------------------------------------------
     // GPU resources
     // -------------------------------------------------------------------------
-    bgfx::ProgramHandle shadowProg = loadShadowProgram();
-    bgfx::ProgramHandle pbrProg = loadPbrProgram();
+    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{loadShadowProgram().idx};
+    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{loadPbrProgram().idx};
 
     RenderResources res;
     const uint32_t meshId = res.addMesh(buildMesh(makeCubeMeshData()));

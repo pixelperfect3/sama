@@ -44,8 +44,8 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle shadowProg = loadShadowProgram();
-    bgfx::ProgramHandle pbrProg = loadPbrProgram();
+    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{loadShadowProgram().idx};
+    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{loadPbrProgram().idx};
 
     // -----------------------------------------------------------------------
     // Load the helmet GLB synchronously.

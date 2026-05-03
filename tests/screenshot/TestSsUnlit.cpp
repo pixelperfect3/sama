@@ -16,7 +16,7 @@ TEST_CASE("screenshot: unlit flat-color cube", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle prog = engine::rendering::loadUnlitProgram();
+    bgfx::ProgramHandle prog = bgfx::ProgramHandle{engine::rendering::loadUnlitProgram().idx};
     engine::rendering::RenderResources res;
     uint32_t meshId =
         res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));

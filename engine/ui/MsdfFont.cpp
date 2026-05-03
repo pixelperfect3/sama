@@ -235,7 +235,9 @@ bool MsdfFont::loadFromMemory(const void* jsonData, std::size_t jsonSize, const 
     // -- 4) Create shader + uniforms --------------------------------------
     if (bgfx::getRendererType() != bgfx::RendererType::Noop)
     {
-        program_ = engine::rendering::loadMsdfProgram();
+        // ShaderLoader returns the bgfx-free engine::rendering::ProgramHandle
+        // wrapper; widen back to bgfx for the engine-internal storage member.
+        program_ = bgfx::ProgramHandle{engine::rendering::loadMsdfProgram().idx};
         s_texture_ = bgfx::createUniform("s_texture", bgfx::UniformType::Sampler);
         u_msdfParams_ = bgfx::createUniform("u_msdfParams", bgfx::UniformType::Vec4);
     }

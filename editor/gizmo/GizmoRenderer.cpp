@@ -31,7 +31,9 @@ void GizmoRenderer::init()
         .end();
 
     // Use the gizmo shader program (position + vertex color passthrough).
-    program_ = engine::rendering::loadGizmoProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage member.
+    program_ = bgfx::ProgramHandle{engine::rendering::loadGizmoProgram().idx};
 
     initialized_ = true;
 }

@@ -114,14 +114,16 @@ static uint32_t utf8Next(const char** p)
 
 void UiRenderer::init()
 {
-    program_ = engine::rendering::loadSpriteProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage members.
+    program_ = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
     layout_ = engine::rendering::spriteLayout();
 
     // Rounded-rect path: own program + own vertex layout. The layout is
     // the sprite layout plus an extra TEXCOORD1 vec4 carrying (halfW,
     // halfH, cornerRadius, _pad). All 4 vertices of one rect share the
     // same value.
-    roundedProgram_ = engine::rendering::loadRoundedRectProgram();
+    roundedProgram_ = bgfx::ProgramHandle{engine::rendering::loadRoundedRectProgram().idx};
     roundedLayout_.begin()
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)

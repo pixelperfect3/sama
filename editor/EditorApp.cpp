@@ -1143,9 +1143,11 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     startupSamples.push_back({"uniforms", startupNow()});
 
     // -- Shader programs ------------------------------------------------------
-    impl_->pbrProgram = loadPbrProgram();
-    impl_->skinnedPbrProgram = loadSkinnedPbrProgram();
-    impl_->shadowProgram = loadShadowProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the editor-internal storage members.
+    impl_->pbrProgram = bgfx::ProgramHandle{loadPbrProgram().idx};
+    impl_->skinnedPbrProgram = bgfx::ProgramHandle{loadSkinnedPbrProgram().idx};
+    impl_->shadowProgram = bgfx::ProgramHandle{loadShadowProgram().idx};
     startupSamples.push_back({"shader programs (PBR + skinned + shadow)", startupNow()});
 
     // -- Default textures -----------------------------------------------------

@@ -104,10 +104,14 @@ bool Engine::init(const EngineDesc& desc)
     bgfx::setDebug(BGFX_DEBUG_TEXT);
 
     // -- Shader programs --------------------------------------------------
-    pbrProg_ = rendering::loadPbrProgram();
-    shadowProg_ = rendering::loadShadowProgram();
-    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
-    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage members.
+    // Step 3 of the bgfx-abstraction extension will migrate the members
+    // themselves so this conversion collapses into the constructor.
+    pbrProg_ = bgfx::ProgramHandle{rendering::loadPbrProgram().idx};
+    shadowProg_ = bgfx::ProgramHandle{rendering::loadShadowProgram().idx};
+    skinnedPbrProg_ = bgfx::ProgramHandle{rendering::loadSkinnedPbrProgram().idx};
+    skinnedShadowProg_ = bgfx::ProgramHandle{rendering::loadSkinnedShadowProgram().idx};
 
     // -- Default textures -------------------------------------------------
     resources_.createDefaultTextures();
@@ -432,10 +436,14 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     fbH_ = static_cast<uint16_t>(androidWindow_->height());
 
     // -- Shader programs --------------------------------------------------
-    pbrProg_ = rendering::loadPbrProgram();
-    shadowProg_ = rendering::loadShadowProgram();
-    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
-    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage members.
+    // Step 3 of the bgfx-abstraction extension will migrate the members
+    // themselves so this conversion collapses into the constructor.
+    pbrProg_ = bgfx::ProgramHandle{rendering::loadPbrProgram().idx};
+    shadowProg_ = bgfx::ProgramHandle{rendering::loadShadowProgram().idx};
+    skinnedPbrProg_ = bgfx::ProgramHandle{rendering::loadSkinnedPbrProgram().idx};
+    skinnedShadowProg_ = bgfx::ProgramHandle{rendering::loadSkinnedShadowProgram().idx};
 
     // -- Default textures -------------------------------------------------
     resources_.createDefaultTextures();
@@ -676,10 +684,14 @@ bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchIn
     contentScaleY_ = iosWindow_->contentScale();
 
     // -- Shader programs --------------------------------------------------
-    pbrProg_ = rendering::loadPbrProgram();
-    shadowProg_ = rendering::loadShadowProgram();
-    skinnedPbrProg_ = rendering::loadSkinnedPbrProgram();
-    skinnedShadowProg_ = rendering::loadSkinnedShadowProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage members.
+    // Step 3 of the bgfx-abstraction extension will migrate the members
+    // themselves so this conversion collapses into the constructor.
+    pbrProg_ = bgfx::ProgramHandle{rendering::loadPbrProgram().idx};
+    shadowProg_ = bgfx::ProgramHandle{rendering::loadShadowProgram().idx};
+    skinnedPbrProg_ = bgfx::ProgramHandle{rendering::loadSkinnedPbrProgram().idx};
+    skinnedShadowProg_ = bgfx::ProgramHandle{rendering::loadSkinnedShadowProgram().idx};
 
     // -- Default textures -------------------------------------------------
     resources_.createDefaultTextures();

@@ -34,7 +34,9 @@ void SkyboxRenderer::init()
 
     vbh_ = bgfx::createVertexBuffer(bgfx::makeRef(kFullscreenTri, sizeof(kFullscreenTri)), layout);
     s_skybox_ = bgfx::createUniform("s_skybox", bgfx::UniformType::Sampler);
-    program_ = loadSkyboxProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage member.
+    program_ = bgfx::ProgramHandle{loadSkyboxProgram().idx};
 }
 
 void SkyboxRenderer::shutdown()
@@ -65,8 +67,8 @@ void SkyboxRenderer::render(bgfx::ViewId viewId, bgfx::TextureHandle cubemap)
     // disabled so the skybox sits at the far plane (gl_Position.z=w in the
     // VS) without polluting the depth buffer. No culling needed since the
     // triangle is in clip space and always front-facing.
-    const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                           BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_MSAA;
+    const uint64_t state =
+        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_MSAA;
 
     bgfx::setTexture(0, s_skybox_, cubemap);
     bgfx::setVertexBuffer(0, vbh_);

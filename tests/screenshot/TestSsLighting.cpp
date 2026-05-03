@@ -21,7 +21,7 @@ TEST_CASE("screenshot: clustered lights scene", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle prog = engine::rendering::loadPbrProgram();
+    bgfx::ProgramHandle prog = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
     engine::rendering::RenderResources res;
     uint32_t meshId =
         res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));

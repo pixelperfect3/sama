@@ -308,7 +308,9 @@ bool BitmapFont::loadFromFile(const char* fntPath, const char* atlasPath)
                                    bgfx::TextureFormat::RGBA8,
                                    BGFX_TEXTURE_NONE | BGFX_SAMPLER_POINT, mem);
 
-    program_ = engine::rendering::loadSpriteProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage member.
+    program_ = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
     ownsProgram_ = true;
     if (lineHeight_ <= 0.f)
         lineHeight_ = nominalSize_;
@@ -369,7 +371,9 @@ bool BitmapFont::createDebugFont()
     // invalid handle — that's fine, the renderer will early-out before
     // binding resources. Glyph metrics still resolve correctly so tests
     // and measurement work.
-    program_ = engine::rendering::loadSpriteProgram();
+    // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
+    // wrapper); widen to bgfx for the engine-internal storage member.
+    program_ = bgfx::ProgramHandle{engine::rendering::loadSpriteProgram().idx};
     ownsProgram_ = true;
 
     return true;

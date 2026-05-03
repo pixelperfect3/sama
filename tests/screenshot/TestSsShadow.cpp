@@ -25,8 +25,8 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle shadowProg = engine::rendering::loadShadowProgram();
-    bgfx::ProgramHandle pbrProg = engine::rendering::loadPbrProgram();
+    bgfx::ProgramHandle shadowProg = bgfx::ProgramHandle{engine::rendering::loadShadowProgram().idx};
+    bgfx::ProgramHandle pbrProg = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
 
     engine::rendering::RenderResources res;
     res.setWhiteTexture(fx.whiteTex());
