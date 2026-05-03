@@ -1164,6 +1164,7 @@ add_executable(engine_tests
     tests/ui/TestBitmapFont.cpp
     tests/ui/TestMsdfFont.cpp
     tests/ui/TestSlugFont.cpp
+    tests/ui/TestVirtualJoystickRenderer.cpp
     tests/tools/TestAssetProcessor.cpp
     tests/platform/TestAndroidKeyMap.cpp
     tests/platform/TestAndroidInput.cpp
@@ -1445,6 +1446,7 @@ add_library(engine_ui STATIC
     engine/ui/Measure.cpp
     engine/ui/MsdfFont.cpp
     engine/ui/SlugFont.cpp
+    engine/ui/VirtualJoystickRenderer.cpp
     engine/ui/widgets/UiPanel.cpp
     engine/ui/widgets/UiImage.cpp
     engine/ui/widgets/UiText.cpp
