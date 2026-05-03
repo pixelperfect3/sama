@@ -673,12 +673,14 @@ int main()
 
         // Shadow pass
         eng.shadow().beginCascade(0, lightView, lightProj);
-        drawCallSys.submitShadowDrawCalls(reg, eng.resources(), eng.shadowProgram(), 0);
+        drawCallSys.submitShadowDrawCalls(reg, eng.resources(),
+                                          bgfx::ProgramHandle{eng.shadowProgram().idx}, 0);
         const engine::math::Mat4* shadowBones = animSys.boneBuffer();
         if (shadowBones)
         {
-            drawCallSys.submitSkinnedShadowDrawCalls(reg, eng.resources(),
-                                                     eng.skinnedShadowProgram(), 0, shadowBones);
+            drawCallSys.submitSkinnedShadowDrawCalls(
+                reg, eng.resources(), bgfx::ProgramHandle{eng.skinnedShadowProgram().idx}, 0,
+                shadowBones);
         }
 
         // Opaque pass
@@ -707,13 +709,15 @@ int main()
             frame.brdfLut = ibl.brdfLut();
         }
 
-        drawCallSys.update(reg, eng.resources(), eng.pbrProgram(), eng.uniforms(), frame);
+        drawCallSys.update(reg, eng.resources(), bgfx::ProgramHandle{eng.pbrProgram().idx},
+                           eng.uniforms(), frame);
 
         const engine::math::Mat4* boneBuffer = animSys.boneBuffer();
         if (boneBuffer)
         {
-            drawCallSys.updateSkinned(reg, eng.resources(), eng.skinnedPbrProgram(), eng.uniforms(),
-                                      frame, boneBuffer);
+            drawCallSys.updateSkinned(reg, eng.resources(),
+                                      bgfx::ProgramHandle{eng.skinnedPbrProgram().idx},
+                                      eng.uniforms(), frame, boneBuffer);
         }
 
         // -- Gather animation state for HUD -----------------------------------
