@@ -153,7 +153,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - `manifest.json` listing all processed assets with type, source, output, format, dimensions
   - `AssetEntry` struct tracks type, source/output paths, format, width/height, original dimensions
 - [x] 17 tests covering the asset tool pipeline
-- **Known limitation:** ASTC encoding is stubbed — `astc-codec` (third_party) is decode-only. Textures are currently copied to the output directory with a TODO logged for each texture that would be ASTC-compressed. Full ASTC encoding requires the `astcenc` CLI tool.
+- [x] **ASTC encoding** via ARM's `astcenc` library (FetchContent at configure time). Architecture: `tools/asset_tool/AstcEncoder.cpp` wraps `astcenc_compress_image`, built into the separate `engine_astcenc_bridge` object library and linked only into `sama_asset_tool` (the CLI binary). `engine_asset_tool` (the lib used by `engine_tests`) instead links `AstcEncoderStub.cpp`, which exposes a function-pointer registration so the real encoder self-registers via static-init when the bridge is linked. This split avoids astc-codec symbol collisions with bgfx's bundled (decode-only) `astc-codec` inside the test binary. Verified end-to-end by `ios/smoke_asset_tool.sh`: produces real ASTC bytes at low/mid/high tiers (8x8 / 6x6 / 4x4) and validates the KTX `glInternalFormat` against ARM's reference format codes (`0x000093b7`, `0x000093b4`, `0x000093b0`).
 - [ ] Mesh processing (optional) — LOD generation, vertex cache optimization (deferred)
 - [ ] Audio transcoding — WAV to Opus (deferred)
 
