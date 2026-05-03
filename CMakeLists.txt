@@ -1299,6 +1299,20 @@ sama_forbid_bgfx_in_target(forbid_bgfx_HandleTypes_h
     engine_rendering engine/rendering/HandleTypes.h)
 sama_forbid_bgfx_in_target(forbid_bgfx_FrameStats_h
     engine_rendering engine/rendering/FrameStats.h)
+sama_forbid_bgfx_in_target(forbid_bgfx_ShaderLoader_h
+    engine_rendering engine/rendering/ShaderLoader.h)
+sama_forbid_bgfx_in_target(forbid_bgfx_UiRenderer_h
+    engine_ui engine/ui/UiRenderer.h)
+sama_forbid_bgfx_in_target(forbid_bgfx_SkyboxRenderer_h
+    engine_rendering engine/rendering/SkyboxRenderer.h)
+# NOTE: RenderResources.h and Engine.h are intentionally NOT probed yet.
+# Both still pull <bgfx/bgfx.h> in transitively via engine/rendering/Mesh.h
+# (which is engine-internal and explicitly out of scope for this pass).
+# Once Mesh.h gets its own pImpl/forward-decl pass, add the probes:
+#   sama_forbid_bgfx_in_target(forbid_bgfx_RenderResources_h
+#       engine_rendering engine/rendering/RenderResources.h)
+#   sama_forbid_bgfx_in_target(forbid_bgfx_Engine_h
+#       engine_core engine/core/Engine.h)
 
 endif()  # SAMA_BUILD_TESTS (engine_tests + engine_screenshot_tests)
 
