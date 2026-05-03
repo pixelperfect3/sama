@@ -372,7 +372,7 @@ The `MyGame` class is identical in both cases -- 100% shared code.
 
 First successful render: **Pixel 9, Vulkan backend, 2251x1080 resolution.**
 
-The `android_test` app runs at 60fps with the full stack verified: **Vulkan + SPIRV shaders + UiRenderer + BitmapFont text rendering + gyroscope + touch input.** This is not just a clear-screen test — real shader programs load from APK assets and render text overlays via the engine's UiRenderer system.
+The `android_test` app runs at 60fps with the full stack verified: **Vulkan + SPIRV shaders + PBR (lit DamagedHelmet) + cast shadows + UiRenderer + BitmapFont text rendering + gyroscope + touch input.** Shader programs load from APK assets via `AndroidFileSystem`; the rendering path is the same Engine API that desktop demos use.
 
 ### Shader Compilation Pipeline
 
@@ -433,13 +433,19 @@ adb emu kill
 
 **Emulator limitations:** Vulkan 1.1 only (via MoltenVK), limited extensions, no fragment shading rate. The MoltenVK backend supports BGRA8 (unlike real Mali hardware), so the RGBA8 surface format issue is not reproduced on emulators. Use real hardware to validate GPU-specific behavior.
 
-### Known Limitations (Current State)
+### Current State
 
-- [ ] **Port PBR rendering to Android.** UiRenderer and BitmapFont text rendering work via SPIRV shaders, but the full PBR pipeline (shadows, IBL, SSAO) has not been ported. *Why:* Games beyond the test app need lit 3D rendering. Requires compiling all PBR shaders to SPIRV in `compile_shaders.sh --all` and verifying on Pixel 9.
-- [ ] **Re-enable post-processing on Android.** `Engine::beginFrame()` calls `renderer_.beginFrameDirect()` which bypasses the post-process framebuffer setup. No bloom, FXAA, or tone mapping. *Why:* Cinematic look requires post-processing; currently disabled because shader stubs returned `BGFX_INVALID_HANDLE`. With SPIRV pipeline in place, can be re-enabled.
-- [ ] **Re-enable SSAO on Android.** `SsaoSystem` returns early on Android because the shader handle is invalid. *Why:* Same as post-processing; gated on full PBR shader port.
-- [ ] **ImGui support on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false. *Why:* No debug overlay or in-game tools on device. Requires bgfx imgui wrapper to compile for Android (currently desktop-only) and SPIRV versions of `vs_ocornut_imgui`/`fs_ocornut_imgui`.
+**Working on Android (verified):**
+- **PBR + shadows.** `ShaderLoader.cpp` has a full `#ifdef __ANDROID__` branch implementing every shader-loader function (`loadPbrProgram`, `loadShadowProgram`, `loadSkinnedPbrProgram`, `loadSkinnedShadowProgram`, `loadGizmoProgram`, `loadMsdfProgram`, `loadSkyboxProgram`, `loadSlugProgram`, `loadSpriteProgram`, `loadRoundedRectProgram`, `loadUnlitProgram`) by loading SPIRV `.bin` files from APK assets via `AndroidFileSystem`. `android_test` renders the lit DamagedHelmet with cast shadows on Pixel 9.
+- **Post-process shaders available.** `loadBloomThresholdProgram`, `loadBloomDownsampleProgram`, `loadBloomUpsampleProgram`, `loadTonemapProgram`, `loadFxaaProgram` are all implemented in the Android branch. `compile_shaders.sh --all` emits the SPIRV. Apps opt in to the post-process pipeline the same way as desktop demos: by calling `renderer().beginFrame()` + `renderer().postProcess().submit()` instead of using the Engine's default `beginFrameDirect()` path. `android_test` doesn't opt in (kept the simpler direct path) but nothing engine-side prevents it.
+- **SSAO available.** `SsaoSystem.cpp` calls `loadSsaoProgram()` on Android (which is implemented in the Android branch of `ShaderLoader.cpp`). It only returns early if the handle is invalid — same fallback as desktop's Noop renderer.
+- **IBL.** `IblResources.cpp` is platform-agnostic; the same code path works on Android as desktop.
+
+### Remaining Limitations
+
+- [ ] **ImGui support on Android.** The engine skips ImGui initialization entirely on Android; `imguiWantsMouse()` always returns false (`Engine.cpp` line 608). *Why:* No debug overlay or in-game tools on device. Requires bgfx imgui wrapper to compile for Android (currently desktop-only) and SPIRV versions of `vs_ocornut_imgui`/`fs_ocornut_imgui`.
 - [ ] **Pre-init Vulkan surface format query for robustness.** `Renderer::init()` hardcodes `formatColor = RGBA8` on Android. RGBA8 is mandatory per the Android CDD so this works on all real devices, but a future device or rendering target could need different. *Why:* Defensive against future hardware. Implementation: create temporary VkInstance + surface in `Renderer::init()` before `bgfx::init()`, call `vkGetPhysicalDeviceSurfaceFormatsKHR`, pick the first supported format from a priority list (RGBA8 → BGRA8 → R10G10B10A2 → ...), tear down, pass to bgfx.
+- [ ] **Sample app demonstrating opt-in post-processing on Android.** `android_test` uses the simple direct path. A reference scene proving bloom/tonemap/FXAA/SSAO work end-to-end on real hardware would catch any per-shader regressions and serve as the pattern game devs copy.
 
 ### Bugs Fixed During Hardware Bring-up
 
