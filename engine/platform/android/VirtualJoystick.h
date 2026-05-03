@@ -6,11 +6,16 @@ namespace engine::platform
 {
 
 // Virtual on-screen joystick for mobile touch input.
-// Renders a semi-transparent circle on the left side of the screen.
 // Touch inside the circle produces a normalized direction vector.
 //
-// TODO: Implement rendering via UiRenderer and touch hit-testing with
-// multi-touch. For now, only the positional logic is implemented.
+// Rendering: see `engine/ui/VirtualJoystickRenderer.h` —
+// `engine::ui::renderVirtualJoystick(joy, drawList, screenW, screenH)` draws
+// the base disk + optional dead-zone ring + stick disk into a UiDrawList.
+//
+// TODO: multi-touch hit-testing — `update()` currently takes a single
+// touchX/touchY pair, so callers must pre-select which touch (if any) drives
+// the joystick. A future revision could scan `InputState::touches()`
+// directly and lock onto the first touch that lands inside the base radius.
 
 struct VirtualJoystickConfig
 {
