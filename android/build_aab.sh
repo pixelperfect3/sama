@@ -19,6 +19,18 @@
 #   --app-name <name>           Application name (default: "Sama Game")
 #   --package <id>              Package ID (default: com.sama.game)
 #   --skip-armeabi              Skip armeabi-v7a build (arm64-v8a only)
+#   --asset-pack <name>:<dir>   Add an install-time asset pack module. The
+#                               source directory is copied into the pack at
+#                               assets/<name>/. Repeatable. Pack name must be
+#                               a valid split id (alphanumeric + underscore),
+#                               must not be 'base', and the source dir must
+#                               exist. Per-pack uncompressed size is capped at
+#                               1.5 GB by Play Store; the script enforces this
+#                               and errors out before invoking bundletool.
+#                               Note: only install-time packs are supported.
+#                               Fast-follow / on-demand packs require Play
+#                               Core's AssetPackManager (Java) which is not
+#                               wired up — see ANDROID_SUPPORT.md Phase H.
 #
 # Environment variables:
 #   ANDROID_NDK      — path to the Android NDK
@@ -43,6 +55,10 @@ APP_NAME="Sama Game"
 PACKAGE_ID="com.sama.game"
 SKIP_ARMEABI=false
 
+# Parallel arrays of asset pack names and source dirs.
+ASSET_PACK_NAMES=()
+ASSET_PACK_DIRS=()
+
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
 while [[ $# -gt 0 ]]; do
@@ -59,8 +75,24 @@ while [[ $# -gt 0 ]]; do
         --app-name)          APP_NAME="$2";          shift 2 ;;
         --package)           PACKAGE_ID="$2";        shift 2 ;;
         --skip-armeabi)      SKIP_ARMEABI=true;      shift ;;
+        --asset-pack)
+            # Format: name:source-dir. The colon separates the pack name (a
+            # valid split id) from a path. The path itself may contain
+            # colons on macOS volumes named with one, so we split on the
+            # FIRST colon only.
+            PACK_SPEC="$2"
+            if [[ "$PACK_SPEC" != *:* ]]; then
+                echo "ERROR: --asset-pack expects 'name:source-dir', got '${PACK_SPEC}'"
+                exit 1
+            fi
+            PACK_NAME="${PACK_SPEC%%:*}"
+            PACK_DIR="${PACK_SPEC#*:}"
+            ASSET_PACK_NAMES+=("$PACK_NAME")
+            ASSET_PACK_DIRS+=("$PACK_DIR")
+            shift 2
+            ;;
         -h|--help)
-            head -27 "$0" | tail -26
+            head -39 "$0" | tail -38
             exit 0
             ;;
         *)
@@ -88,6 +120,67 @@ ANDROID_SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ "$TIER" != "low" && "$TIER" != "mid" && "$TIER" != "high" ]]; then
     echo "ERROR: Invalid tier '${TIER}'. Must be one of: low, mid, high"
     exit 1
+fi
+
+# ── Validate asset packs ────────────────────────────────────────────────────
+#
+# Play Store rules (as of 2026):
+#   - Per-pack uncompressed size limit: 1.5 GB
+#   - Total install-time delivery (base + all install-time packs): 4 GB
+# We enforce the per-pack limit strictly and warn on the total. The split
+# id rules come from the AAPT2 manifest validator: alphanumeric + '_',
+# must start with a letter or underscore, must not collide with 'base'.
+
+PER_PACK_BYTES_LIMIT=$((1610612736))   # 1.5 GiB
+TOTAL_PACK_BYTES_WARN=$((4294967296))  # 4 GiB
+TOTAL_PACK_BYTES=0
+
+for i in "${!ASSET_PACK_NAMES[@]}"; do
+    PACK_NAME="${ASSET_PACK_NAMES[$i]}"
+    PACK_DIR="${ASSET_PACK_DIRS[$i]}"
+
+    if [ -z "$PACK_NAME" ]; then
+        echo "ERROR: --asset-pack name is empty (spec '${PACK_NAME}:${PACK_DIR}')"
+        exit 1
+    fi
+    if [ "$PACK_NAME" = "base" ]; then
+        echo "ERROR: --asset-pack name 'base' is reserved for the base module."
+        exit 1
+    fi
+    if ! [[ "$PACK_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "ERROR: --asset-pack name '${PACK_NAME}' is not a valid split id."
+        echo "  Allowed: letters, digits, underscore; must start with a letter or underscore."
+        exit 1
+    fi
+    # Detect duplicate pack names (would clobber each other in the AAB).
+    for j in "${!ASSET_PACK_NAMES[@]}"; do
+        if [ "$j" -lt "$i" ] && [ "${ASSET_PACK_NAMES[$j]}" = "$PACK_NAME" ]; then
+            echo "ERROR: --asset-pack name '${PACK_NAME}' is specified more than once."
+            exit 1
+        fi
+    done
+    if [ ! -d "$PACK_DIR" ]; then
+        echo "ERROR: --asset-pack source dir '${PACK_DIR}' (pack '${PACK_NAME}') does not exist."
+        exit 1
+    fi
+
+    # Size check — uncompressed bytes on disk. macOS `du` lacks GNU's
+    # --bytes; -k gives KiB which we multiply.
+    PACK_KB=$(du -sk "$PACK_DIR" 2>/dev/null | cut -f1)
+    PACK_BYTES=$((PACK_KB * 1024))
+    if [ "$PACK_BYTES" -gt "$PER_PACK_BYTES_LIMIT" ]; then
+        echo "ERROR: asset pack '${PACK_NAME}' is ${PACK_BYTES} bytes (~$((PACK_BYTES / 1024 / 1024)) MiB)."
+        echo "  Play Store limit per pack is 1.5 GiB (${PER_PACK_BYTES_LIMIT} bytes)."
+        echo "  Split this pack across multiple --asset-pack arguments."
+        exit 1
+    fi
+    TOTAL_PACK_BYTES=$((TOTAL_PACK_BYTES + PACK_BYTES))
+done
+
+if [ "$TOTAL_PACK_BYTES" -gt "$TOTAL_PACK_BYTES_WARN" ]; then
+    echo "WARNING: total asset-pack size is $((TOTAL_PACK_BYTES / 1024 / 1024)) MiB,"
+    echo "  which exceeds Play Store's 4 GiB cap on install-time delivery (base + packs)."
+    echo "  The build will continue, but the upload will be rejected by Play Console."
 fi
 
 # ── Validate dependencies ───────────────────────────────────────────────────
@@ -197,6 +290,13 @@ if [ -n "$KEYSTORE" ]; then
 else
     echo "  Keystore:    (unsigned — sign before uploading to Play Store)"
 fi
+if [ "${#ASSET_PACK_NAMES[@]}" -gt 0 ]; then
+    echo "  Asset packs: ${#ASSET_PACK_NAMES[@]} install-time pack(s)"
+    for i in "${!ASSET_PACK_NAMES[@]}"; do
+        PACK_KB=$(du -sk "${ASSET_PACK_DIRS[$i]}" 2>/dev/null | cut -f1)
+        echo "    - ${ASSET_PACK_NAMES[$i]}  (${ASSET_PACK_DIRS[$i]}, $((PACK_KB / 1024)) MiB)"
+    done
+fi
 echo ""
 
 # ── Step 1: Build native libraries for all ABIs ────────────────────────────
@@ -295,14 +395,100 @@ BASE_ZIP="${PROJECT_ROOT}/build/android/base.zip"
 rm -f "$BASE_ZIP"
 (cd "${STAGING_DIR}/base" && zip -r -q "$BASE_ZIP" .)
 
+# ── Step 4b: Stage and zip install-time asset pack modules ─────────────────
+#
+# Each asset pack is its own bundle module with the structure:
+#
+#   <pack_name>/
+#     manifest/AndroidManifest.xml   (declares dist:type="asset-pack" +
+#                                     dist:install-time delivery)
+#     assets/<pack_name>/...         (the actual asset files)
+#
+# At install time on the device, Play Store delivers all install-time
+# packs alongside the base APK and merges them so the assets appear at
+# the same /data/app/.../base.apk!/assets/<pack_name>/ paths the runtime
+# already reads via AAssetManager. No engine code change needed — the
+# AndroidFileSystem path resolution is unchanged.
+#
+# Pack manifests must be aapt2-linked into proto format the same way the
+# base manifest is, otherwise bundletool rejects them with an "expected
+# proto-format manifest" error.
+
+PACK_ZIPS=()
+PACK_APKS=()
+PACK_PROTO_DIRS=()
+if [ "${#ASSET_PACK_NAMES[@]}" -gt 0 ]; then
+    echo "[4b/6] Staging ${#ASSET_PACK_NAMES[@]} asset pack module(s)..."
+    for i in "${!ASSET_PACK_NAMES[@]}"; do
+        PACK_NAME="${ASSET_PACK_NAMES[$i]}"
+        PACK_DIR="${ASSET_PACK_DIRS[$i]}"
+        PACK_STAGE="${STAGING_DIR}/${PACK_NAME}"
+
+        echo "  - ${PACK_NAME}: copying assets..."
+        rm -rf "$PACK_STAGE"
+        mkdir -p "${PACK_STAGE}/manifest" "${PACK_STAGE}/assets/${PACK_NAME}"
+        # Copy the source dir contents into assets/<pack_name>/.
+        # Preserve directory structure but strip the source path itself.
+        cp -R "$PACK_DIR"/. "${PACK_STAGE}/assets/${PACK_NAME}/"
+
+        # Write the pack manifest. The dist namespace + asset-pack module
+        # type + install-time delivery are what tell bundletool (and the
+        # Play Store) this is an install-time asset pack.
+        PACK_MANIFEST="${PACK_STAGE}/manifest/AndroidManifest.xml"
+        cat > "$PACK_MANIFEST" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:dist="http://schemas.android.com/apk/distribution"
+          package="${PACKAGE_ID}"
+          split="${PACK_NAME}">
+    <dist:module dist:type="asset-pack">
+        <dist:fusing dist:include="true"/>
+        <dist:delivery>
+            <dist:install-time/>
+        </dist:delivery>
+    </dist:module>
+</manifest>
+EOF
+
+        # aapt2-link the pack manifest into proto format.
+        PACK_APK="${PROJECT_ROOT}/build/android/aab_${PACK_NAME}.apk"
+        PACK_PROTO_DIR="${PROJECT_ROOT}/build/android/aab_${PACK_NAME}_proto"
+        rm -rf "$PACK_PROTO_DIR"
+        mkdir -p "$PACK_PROTO_DIR"
+        "$AAPT2" link -o "$PACK_APK" \
+            --manifest "$PACK_MANIFEST" \
+            -I "$ANDROID_JAR" \
+            --proto-format
+        unzip -q -o "$PACK_APK" -d "$PACK_PROTO_DIR"
+        if [ -f "$PACK_PROTO_DIR/AndroidManifest.xml" ]; then
+            cp "$PACK_PROTO_DIR/AndroidManifest.xml" "$PACK_MANIFEST"
+        fi
+
+        # Zip the pack module.
+        PACK_ZIP="${PROJECT_ROOT}/build/android/${PACK_NAME}.zip"
+        rm -f "$PACK_ZIP"
+        (cd "$PACK_STAGE" && zip -r -q "$PACK_ZIP" .)
+
+        PACK_ZIPS+=("$PACK_ZIP")
+        PACK_APKS+=("$PACK_APK")
+        PACK_PROTO_DIRS+=("$PACK_PROTO_DIR")
+    done
+fi
+
 # ── Step 5: Build AAB with bundletool ──────────────────────────────────────
 
 echo "[5/6] Building AAB with bundletool..."
 mkdir -p "$(dirname "$OUTPUT")"
 rm -f "$OUTPUT"
 
+# Comma-separated list of all module zips (base + asset packs).
+MODULES_ARG="$BASE_ZIP"
+for PACK_ZIP in "${PACK_ZIPS[@]}"; do
+    MODULES_ARG="${MODULES_ARG},${PACK_ZIP}"
+done
+
 bundletool build-bundle \
-    --modules="$BASE_ZIP" \
+    --modules="$MODULES_ARG" \
     --output="$OUTPUT"
 
 # ── Step 6: Sign the AAB (if keystore provided) ────────────────────────────
@@ -356,6 +542,9 @@ fi
 
 rm -rf "$STAGING_DIR" "$PROTO_DIR"
 rm -f "$BASE_APK" "$BASE_ZIP"
+for PACK_APK in "${PACK_APKS[@]}"; do rm -f "$PACK_APK"; done
+for PACK_PROTO_DIR in "${PACK_PROTO_DIRS[@]}"; do rm -rf "$PACK_PROTO_DIR"; done
+for PACK_ZIP in "${PACK_ZIPS[@]}"; do rm -f "$PACK_ZIP"; done
 
 echo ""
 echo "=== AAB built successfully ==="
