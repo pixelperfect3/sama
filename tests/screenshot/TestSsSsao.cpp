@@ -23,7 +23,7 @@ TEST_CASE("screenshot: SSAO scene", "[screenshot]")
     engine::rendering::ShaderUniforms uniforms;
     uniforms.init();
 
-    bgfx::ProgramHandle prog = bgfx::ProgramHandle{engine::rendering::loadPbrProgram().idx};
+    engine::rendering::ProgramHandle prog = engine::rendering::loadPbrProgram();
     engine::rendering::RenderResources res;
     uint32_t meshId =
         res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));
@@ -58,7 +58,7 @@ TEST_CASE("screenshot: SSAO scene", "[screenshot]")
         bgfx::setVertexBuffer(1, mesh.surfaceVbh);
         bgfx::setIndexBuffer(mesh.ibh);
         bgfx::setState(BGFX_STATE_DEFAULT);
-        bgfx::submit(engine::rendering::kViewOpaque, prog);
+        bgfx::submit(engine::rendering::kViewOpaque, bgfx::ProgramHandle{prog.idx});
     }
 
     // Flat ground cube (scale wide and thin)
@@ -74,13 +74,13 @@ TEST_CASE("screenshot: SSAO scene", "[screenshot]")
         bgfx::setVertexBuffer(1, mesh.surfaceVbh);
         bgfx::setIndexBuffer(mesh.ibh);
         bgfx::setState(BGFX_STATE_DEFAULT);
-        bgfx::submit(engine::rendering::kViewOpaque, prog);
+        bgfx::submit(engine::rendering::kViewOpaque, bgfx::ProgramHandle{prog.idx});
     }
 
     auto pixels = fx.captureFrame();
 
-    if (bgfx::isValid(prog))
-        bgfx::destroy(prog);
+    if (engine::rendering::isValid(prog))
+        bgfx::destroy(bgfx::ProgramHandle{prog.idx});
     res.destroyAll();
     uniforms.destroy();
 
