@@ -3425,6 +3425,14 @@ void EditorApp::run()
                     if (tier != "low" && tier != "mid" && tier != "high")
                         tier = "mid";
 
+                    // Honour the "Build & Run after build" persisted toggle
+                    // so per-tier menu items also auto-install + launch when
+                    // the user has enabled the preference in Settings. The
+                    // explicit Build & Run menu item is unchanged (always
+                    // forces andRun=true regardless of the toggle).
+                    if (settings.buildAndRun)
+                        andRun = true;
+
                     // For Build & Run, sanity-check adb up-front so we
                     // don't spend ~2 minutes building before noticing no
                     // device is connected. The actual launch still

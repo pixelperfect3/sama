@@ -324,7 +324,10 @@ The following issues were noted during Phase F and have since been fixed:
     = `build/android/Game.apk`).
   - Settings flow into every build invocation: per-tier menu items,
     Build & Run, and the cancel-aware build thread all read the
-    persisted snapshot at spawn time.
+    persisted snapshot at spawn time. When the "Build & Run after
+    build" toggle is on, the per-tier menu items also auto-install +
+    launch on success — so the user can pick `Build > Android > Mid`
+    and have it behave like Build & Run without using Cmd+R.
 
 ---
 
