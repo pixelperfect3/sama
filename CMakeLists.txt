@@ -1322,6 +1322,7 @@ endif()  # SAMA_BUILD_TESTS (engine_tests + engine_screenshot_tests)
 add_library(engine_input STATIC
     engine/input/ActionMap.cpp
     engine/input/ActionMapJson.cpp
+    engine/input/GestureRecognizer.cpp
     engine/input/InputState.cpp
     engine/input/InputSystem.cpp
 )
