@@ -41,6 +41,7 @@
 #include "engine/game/IGame.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
+#include "engine/platform/android/VirtualJoystick.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/FrameStats.h"
 #include "engine/rendering/IblResources.h"
@@ -55,6 +56,7 @@
 #include "engine/ui/MsdfFont.h"
 #include "engine/ui/UiDrawList.h"
 #include "engine/ui/UiRenderer.h"
+#include "engine/ui/VirtualJoystickRenderer.h"
 #ifdef __ANDROID__
 #include <android/asset_manager.h>
 
@@ -185,6 +187,18 @@ public:
         loadMsdfFont();
 
         // ----------------------------------------------------------------
+        // Virtual joystick — lower-left corner.  Drives nothing in this
+        // demo (the camera is fixed) but renders so we can visually verify
+        // the overlay on the AVD.
+        // ----------------------------------------------------------------
+        engine::platform::VirtualJoystickConfig joyCfg;
+        joyCfg.centerX = 0.15f;
+        joyCfg.centerY = 0.85f;
+        joyCfg.radiusScreen = 0.08f;
+        joyCfg.deadZone = 0.15f;
+        joystick_.setConfig(joyCfg);
+
+        // ----------------------------------------------------------------
         // Asset system: thread pool + platform filesystem + AssetManager.
         // Android reads from APK assets via AAssetManager; desktop reads
         // from the working directory.
@@ -287,6 +301,34 @@ public:
         const auto& input = engine.inputState();
         const float fbW = static_cast<float>(engine.fbWidth());
         const float fbH = static_cast<float>(engine.fbHeight());
+
+        // --- Virtual joystick (touch on Android, left-click drag on desktop) ---
+        // Driven from the first active touch on Android, or the mouse when
+        // running the desktop preview build.  We don't *consume* the input —
+        // existing touch/mouse handlers below still fire — the joystick is
+        // purely a visual + state output for now.
+        {
+            float touchX = 0.f;
+            float touchY = 0.f;
+            bool touchActive = false;
+            if (!input.touches().empty())
+            {
+                const auto& t = input.touches().front();
+                if (t.phase != TouchPoint::Phase::Ended)
+                {
+                    touchX = t.x;
+                    touchY = t.y;
+                    touchActive = true;
+                }
+            }
+            else if (input.isMouseButtonHeld(MouseButton::Left))
+            {
+                touchX = static_cast<float>(input.mouseX());
+                touchY = static_cast<float>(input.mouseY());
+                touchActive = true;
+            }
+            joystick_.update(touchX, touchY, touchActive, fbW, fbH);
+        }
 
         // --- Touch / mouse input ---
         // On Android: real touch events. On desktop: mouse emulates first touch.
@@ -639,6 +681,12 @@ public:
             y += lineH;
             snprintf(buf, sizeof(buf), "Hue: %.0f  Brightness: %.2f", hue_, brightness_);
             drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            const auto jdir = joystick_.direction();
+            snprintf(buf, sizeof(buf), "Joystick: dir=(%.2f, %.2f) %s", jdir.x, jdir.y,
+                     joystick_.isTouched() ? "[touched]" : "");
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
             y += lineH * 1.5f;
 
             // Controls
@@ -704,6 +752,13 @@ public:
                                    &font_, 12.f);
             }
 
+            // Virtual joystick overlay — submit AFTER all other UI so the
+            // stick reads on top of any text/panels, but BEFORE the renderer
+            // submits the draw list.
+            engine::ui::renderVirtualJoystick(joystick_, drawList_,
+                                              static_cast<uint16_t>(engine.fbWidth()),
+                                              static_cast<uint16_t>(engine.fbHeight()));
+
             // Render UI on view 48 (kViewGameUi)
             uiRenderer_.render(drawList_, 48, engine.fbWidth(), engine.fbHeight());
         }
@@ -729,6 +784,11 @@ private:
     engine::ui::BitmapFont font_;
     engine::ui::MsdfFont msdfFont_;
     engine::ui::UiDrawList drawList_;
+
+    // On-screen virtual joystick overlay (visible on both Android and desktop
+    // preview).  Driven by the first active touch on Android; by left-click
+    // drag on desktop.
+    engine::platform::VirtualJoystick joystick_;
 
     // PBR scene — DamagedHelmet on a ground plane, lit by an orbiting light.
     engine::scene::TransformSystem transformSys_;

@@ -1733,7 +1733,13 @@ endif()  # SAMA_IOS
 
 # --- android_test app (desktop, for verifying the test game compiles) ---
 if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
-    add_executable(android_test apps/android_test/AndroidTestGame.cpp)
+    add_executable(android_test
+        apps/android_test/AndroidTestGame.cpp
+        # VirtualJoystick is part of the platform/android layer but its .cpp
+        # is pure C++ (no Android headers). Link it directly so the desktop
+        # build of android_test can drive + render the on-screen joystick.
+        engine/platform/android/VirtualJoystick.cpp
+    )
     target_include_directories(android_test PRIVATE ${SAMA_ROOT_DIR})
     target_link_libraries(android_test PRIVATE
         engine_core
