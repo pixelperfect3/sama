@@ -1171,6 +1171,7 @@ add_executable(engine_tests
     tests/platform/TestVirtualJoystick.cpp
     tests/platform/TestAndroidTierDetect.cpp
     tests/input/TestGestureRecognizer.cpp
+    tests/editor/TestBuildPhaseParser.cpp
     engine/platform/android/AndroidKeyMap.cpp
     engine/platform/android/VirtualJoystick.cpp
     engine/platform/android/AndroidTierDetect.cpp

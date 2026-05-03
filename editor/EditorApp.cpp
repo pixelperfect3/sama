@@ -22,6 +22,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <thread>
 
+#include "editor/BuildPhaseParser.h"
 #include "editor/EditorLog.h"
 #include "editor/EditorState.h"
 #include "editor/gizmo/GizmoRenderer.h"
@@ -1161,35 +1162,16 @@ SpawnedProcess spawnBuildProcess(const std::vector<std::string>& argv,
 
 // Parse a build_apk.sh stdout line and return a short status-bar message.
 // Returns empty string if the line is not a known phase marker. The
-// build script's phase markers look like:
-//   [0/7] Compiling shaders to SPIRV for Android...
-//   [1/7] Building native library...
-//   ...
-//   [7/7] Signing APK...
+// structured grammar lives in editor/BuildPhaseParser.h so it can be unit
+// tested without dragging the rest of EditorApp into the test binary; this
+// thin wrapper preserves the original return contract (non-empty = show in
+// status bar, empty = ignore) for the existing call site below.
 std::string buildPhaseFromLine(const std::string& line)
 {
-    if (line.size() < 6)
+    auto parsed = engine::editor::parseBuildPhase(line);
+    if (!parsed)
         return {};
-    if (line[0] != '[')
-        return {};
-    // Look for a ']' followed by a space.
-    size_t close = line.find(']');
-    if (close == std::string::npos || close + 2 > line.size())
-        return {};
-    // Must be of the form "[N/M]" where N and M are digits.
-    bool valid = true;
-    for (size_t i = 1; i < close; ++i)
-    {
-        char c = line[i];
-        if (!(c >= '0' && c <= '9') && c != '/')
-        {
-            valid = false;
-            break;
-        }
-    }
-    if (!valid)
-        return {};
-    return line;  // The whole line is short and informative.
+    return line;  // Whole line is short and informative.
 }
 
 }  // namespace
