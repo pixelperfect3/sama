@@ -111,10 +111,15 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - Produces normalized direction vector `[-1,1]` with dead zone remapping and radius clamping
   - 1.5x activation radius for forgiving touch targeting
   - Source: `engine/platform/android/VirtualJoystick.h/.cpp`
-  - TODO: rendering via UiRenderer (positional logic implemented, visual overlay pending)
-- [ ] Multi-touch gestures (deferred)
-  - Pinch-to-zoom → scroll delta (for camera zoom)
-  - Two-finger pan → right-drag equivalent (for camera orbit)
+  - Visual overlay: `engine::ui::renderVirtualJoystick(joy, drawList, screenW, screenH, cfg)` in `engine/ui/VirtualJoystickRenderer.h`. Free function so `VirtualJoystick` stays UI-free; renders the base disk, optional dead-zone ring, and stick disk into any `UiDrawList` using the existing rounded-rect SDF (no new UiDrawList primitives). Wired into `apps/android_test/AndroidTestGame.cpp` as a smoke test — verified on `sama_mid` AVD (1080x2400, Pixel 6, API 33): overlay appears in the lower-left corner and the white stick disk follows finger drag within the base disk.
+- [x] Multi-touch gestures
+  - `engine::input::GestureRecognizer` (cross-platform, in `engine/input/`) reads `InputState::touches()` each frame and emits per-frame pinch (distance delta) + two-finger pan (midpoint delta) for the lowest two stable touch IDs.
+  - Pinch-to-zoom: `gesture.pinchDelta` in pixels per frame — positive = fingers spreading.
+  - Two-finger pan: `gesture.panDeltaX/Y` in pixels per frame.
+  - Re-anchors without spike when one tracked finger lifts and another lands (touch-id swap), and treats `Phase::Ended` touches as gone for selection.
+  - Cross-platform — same recognizer works on iOS once the iOS touch backend is wired (future task).
+  - Source: `engine/input/GestureRecognizer.{h,cpp}`
+  - Tests: `tests/input/TestGestureRecognizer.cpp` (12 cases / 62 assertions)
 - [x] Keyboard support (for devices with physical keyboards or Bluetooth)
   - Full `AKEYCODE_*` to `engine::input::Key` mapping: A-Z, 0-9, F1-F12, Numpad 0-9, modifiers, punctuation, navigation
   - `AKEYCODE_BACK` mapped to `Key::Escape` for menu/back behavior
