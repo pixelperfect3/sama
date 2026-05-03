@@ -10,6 +10,16 @@
 #include "engine/rendering/ShaderLoader.h"
 #include "engine/rendering/ViewIds.h"
 
+// SAMA_HAS_IMGUI: 1 when ImGui is available on this platform, 0 otherwise.
+// Desktop and Android build the bgfx imgui wrapper (engine_debug target);
+// iOS does not yet (follow-up work).  Adding iOS later is a one-condition
+// flip here — no need to touch every #if guard scattered around this file.
+#if !ENGINE_IS_IOS
+#define SAMA_HAS_IMGUI 1
+#else
+#define SAMA_HAS_IMGUI 0
+#endif
+
 #if !defined(__ANDROID__) && !ENGINE_IS_IOS
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -24,6 +34,7 @@
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
 #include <bgfx/platform.h>
+#include <imgui.h>  // bgfx examples/common/imgui wrapper (also pulls dear-imgui)
 
 #include "engine/audio/NullAudioEngine.h"
 #include "engine/audio/SoLoudAudioEngine.h"
@@ -539,6 +550,20 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     inputBackend_ = std::make_unique<input::AndroidInputBackend>();
     inputSys_ = std::make_unique<input::InputSystem>(*inputBackend_);
 
+    // -- ImGui ------------------------------------------------------------
+    // The bgfx imgui wrapper (in engine_debug) ships SPIRV bytecode for
+    // its vs/fs_ocornut_imgui shaders embedded via BGFX_EMBEDDED_SHADER,
+    // so no separate shader compile / APK bundling step is needed on
+    // Android — imguiCreate() picks the SPIRV variant at runtime based on
+    // bgfx::getRendererType().  Touch events are synthesized as primary
+    // mouse-button presses by AndroidInputBackend, so ImGui windows can be
+    // poked with a finger tap with no further wiring.
+    imguiCreate(16.f);
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
+    }
+
     // -- Gyroscope --------------------------------------------------------
     ALooper* looper = ALooper_forThread();
     if (looper && androidGyro_->init(looper))
@@ -594,6 +619,10 @@ void Engine::shutdown()
 {
     if (!initialized_)
         return;
+
+    // ImGui first, while bgfx is still up — imguiDestroy() releases bgfx
+    // textures, programs, and uniforms held by the wrapper's static context.
+    imguiDestroy();
 
     shadow_.shutdown();
 
@@ -708,6 +737,22 @@ bool Engine::beginFrame(float& outDt)
     // in identically to desktop.
     renderer_.beginFrameDirect();
 
+    // -- ImGui begin frame ------------------------------------------------
+    // Map the synthesized primary touch (AndroidInputBackend turns the first
+    // pointer into mouseX/Y + Left mouse button) into the ImGui IO so a
+    // single-finger tap counts as a left click on ImGui widgets.  Multi-
+    // touch / gestures are not forwarded — ImGui on mobile is meant for
+    // dev / debug overlays, not as a primary UI layer.
+    {
+        const int32_t mx = static_cast<int32_t>(inputState_.mouseX());
+        const int32_t my = static_cast<int32_t>(inputState_.mouseY());
+        uint8_t imguiButtons = 0;
+        if (inputState_.isMouseButtonHeld(input::MouseButton::Left))
+            imguiButtons |= IMGUI_MBUT_LEFT;
+        imguiBeginFrame(mx, my, imguiButtons, /*scroll=*/0, fbW_, fbH_, /*inputChar=*/-1,
+                        rendering::kViewImGui);
+    }
+
     // -- View 0 clear / rect / touch --------------------------------------
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor_, 1.0f, 0);
     bgfx::setViewRect(0, 0, 0, fbW_, fbH_);
@@ -718,6 +763,8 @@ bool Engine::beginFrame(float& outDt)
 
 void Engine::endFrame()
 {
+    imguiEndFrame();
+
     if (frameArena_)
         frameArena_->reset();
 
@@ -726,8 +773,11 @@ void Engine::endFrame()
 
 bool Engine::imguiWantsMouse() const
 {
-    // ImGui is not available on Android.
-    return false;
+    // Mirror the desktop check.  ImGui::MouseOverArea() (defined inline in
+    // the bgfx wrapper's imgui.h) is true when any ImGui window/widget is
+    // hovered or active, so games can gate their own input handlers on
+    // !imguiWantsMouse() to avoid double-handling taps.
+    return ImGui::GetIO().WantCaptureMouse;
 }
 
 #else  // ENGINE_IS_IOS
