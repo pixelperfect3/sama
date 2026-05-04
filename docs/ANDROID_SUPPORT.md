@@ -135,7 +135,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase D — Asset Pipeline CLI (DONE)
+## Phase D — Asset Pipeline CLI (MOSTLY DONE — 2 items deferred)
 
 **Effort:** Medium | **Dependencies:** None (can run in parallel with A)
 
@@ -159,8 +159,11 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - `AssetEntry` struct tracks type, source/output paths, format, width/height, original dimensions
 - [x] 17 tests covering the asset tool pipeline
 - [x] **ASTC encoding** via ARM's `astcenc` library (FetchContent at configure time). Architecture: `tools/asset_tool/AstcEncoder.cpp` wraps `astcenc_compress_image`, built into the separate `engine_astcenc_bridge` object library and linked only into `sama_asset_tool` (the CLI binary). `engine_asset_tool` (the lib used by `engine_tests`) instead links `AstcEncoderStub.cpp`, which exposes a function-pointer registration so the real encoder self-registers via static-init when the bridge is linked. This split avoids astc-codec symbol collisions with bgfx's bundled (decode-only) `astc-codec` inside the test binary. Verified end-to-end by `ios/smoke_asset_tool.sh`: produces real ASTC bytes at low/mid/high tiers (8x8 / 6x6 / 4x4) and validates the KTX `glInternalFormat` against ARM's reference format codes (`0x000093b7`, `0x000093b4`, `0x000093b0`).
-- [ ] Mesh processing (optional) — LOD generation, vertex cache optimization (deferred)
-- [ ] Audio transcoding — WAV to Opus (deferred)
+
+### Deferred (Phase D)
+
+- [ ] Mesh processing — LOD generation, vertex cache optimization. Today the pipeline ships meshes through unchanged.
+- [ ] Audio transcoding — WAV to Opus. Today the pipeline copies audio sources unchanged. Both items are tracked in **Remaining Limitations** above.
 
 ---
 
@@ -494,6 +497,8 @@ First successful render: **Pixel 9, Vulkan backend, 2251x1080 resolution.**
 
 The `android_test` app runs at 60fps with the full stack verified: **Vulkan + SPIRV shaders + PBR (lit DamagedHelmet) + cast shadows + UiRenderer + BitmapFont text rendering + gyroscope + touch input.** Shader programs load from APK assets via `AndroidFileSystem`; the rendering path is the same Engine API that desktop demos use.
 
+Ongoing emulator coverage on the `sama_mid` AVD (Pixel 6, API 33, 1080x2400) catches regressions during Phase B–H bring-up: SoLoud + miniaudio init (`Audio: SoLoud (miniaudio) initialised`), lifecycle pause/resume on Home + re-foreground, runtime tier detection (`Tier detected: Low (RAM 1965 MB)` — the AVD only surfaces ~2 GB to the guest), virtual joystick overlay drag, GestureRecognizer pinch/pan demo, and the ImGui smoke window with tap-driven button. The editor's `Build > Android > Settings…` dialog and Build & Run (Cmd+R) flow are exercised against the same AVD.
+
 ### Shader Compilation Pipeline
 
 SPIRV shaders are pre-compiled on the host machine and bundled into the APK:
@@ -560,11 +565,23 @@ adb emu kill
 - **Post-process shaders available.** `loadBloomThresholdProgram`, `loadBloomDownsampleProgram`, `loadBloomUpsampleProgram`, `loadTonemapProgram`, `loadFxaaProgram` are all implemented in the Android branch. `compile_shaders.sh --all` emits the SPIRV. Apps opt in to the post-process pipeline the same way as desktop demos: by calling `renderer().beginFrame()` + `renderer().postProcess().submit()` instead of using the Engine's default `beginFrameDirect()` path. `android_test` doesn't opt in (kept the simpler direct path) but nothing engine-side prevents it.
 - **SSAO available.** `SsaoSystem.cpp` calls `loadSsaoProgram()` on Android (which is implemented in the Android branch of `ShaderLoader.cpp`). It only returns early if the handle is invalid — same fallback as desktop's Noop renderer.
 - **IBL.** `IblResources.cpp` is platform-agnostic; the same code path works on Android as desktop.
+- **Audio (Phase B).** `Engine::initAndroid` constructs `SoLoudAudioEngine` with the miniaudio backend (auto-AAudio API 26+, OpenSL ES fallback). `engine.audio()` returns an `IAudioEngine&` mirroring iOS. Falls back to `NullAudioEngine` if the device has no audio route. Verified on `sama_mid` AVD: `Audio: SoLoud (miniaudio) initialised` in logcat.
+- **Lifecycle pause/resume (Phase B).** `Engine::handleAndroidCmd` services `APP_CMD_PAUSE`/`RESUME` (audio paused via `IAudioEngine::setPauseAll`, gyro disabled, `ALooper_pollAll` flips to blocking) and `APP_CMD_TERM_WINDOW`/`INIT_WINDOW` (clears + re-binds `ANativeWindow*` so Vulkan doesn't crash inside `vkAcquireNextImageKHR`). Verified on `sama_mid` AVD: clean Home → re-foreground cycle without crash.
+- **Multi-touch + gestures (Phase C).** `engine::input::GestureRecognizer` (cross-platform, `engine/input/`) emits per-frame pinch / two-finger pan from `InputState::touches()`, with re-anchor on touch-id swap. Wired into `apps/android_test/AndroidTestGame.cpp` as a smoke test.
+- **Virtual joystick overlay (Phase C).** `engine::ui::renderVirtualJoystick(joy, drawList, screenW, screenH, cfg)` in `engine/ui/VirtualJoystickRenderer.h` draws the base disk, optional dead-zone ring, and stick disk into any `UiDrawList`. Verified on `sama_mid` AVD (1080x2400, Pixel 6, API 33).
+- **ImGui on Android.** Engine wires `imguiCreate` / `imguiBeginFrame` / `imguiEndFrame` into the Android branch of `Engine.cpp`; touch events synthesise primary-mouse so dear-imgui widgets respond to taps. `Engine::imguiWantsMouse()` works the same as desktop, so games can gate touch handlers with `if (!engine.imguiWantsMouse()) { ... }`. SPIRV bytecode is embedded in the bgfx wrapper (no extra shader bundling). See "ImGui on Android (working)" below for details.
+- **Runtime tier detection (Phase E).** `engine/platform/android/AndroidTierDetect.{h,cpp}::detectAndroidTier()` combines GPU substring matching (Adreno / Mali / Immortalis / Xclipse / PowerVR) with a `/proc/meminfo` `MemTotal` heuristic (`<3 GB` Low, `3-5 GB` Mid, `≥5 GB` High). `GameRunner::runAndroid` substitutes the detected tier into `ProjectConfig::activeTier` when the project sets `"activeTier": "auto"` (or leaves it empty); explicit tier names are preserved. Verified on `sama_mid` AVD: logcat shows `Tier detected: Low (RAM 1965 MB)` because the AVD only surfaces ~2 GB to the guest.
+- **Install-time asset packs + Play Console metadata (Phase H).** `android/build_aab.sh --asset-pack name:source-dir` (repeatable) stages each pack as a bundle module with `dist:type="asset-pack"` + `<dist:install-time/>`, validated for split-id correctness, per-pack ≤ 1.5 GiB and total ≤ 4 GiB Play Store limits. `--metadata` writes `output-metadata.json` (versionCode/versionName parsed from `AndroidManifest.xml`) for the Play Developer API and Fastlane `supply`. Pack assets land at `assets/<name>/` post-install — no engine code change required.
 
 ### Remaining Limitations
 
 - [ ] **Pre-init Vulkan surface format query for robustness.** `Renderer::init()` hardcodes `formatColor = RGBA8` on Android. RGBA8 is mandatory per the Android CDD so this works on all real devices, but a future device or rendering target could need different. *Why:* Defensive against future hardware. Implementation: create temporary VkInstance + surface in `Renderer::init()` before `bgfx::init()`, call `vkGetPhysicalDeviceSurfaceFormatsKHR`, pick the first supported format from a priority list (RGBA8 → BGRA8 → R10G10B10A2 → ...), tear down, pass to bgfx.
 - [ ] **Sample app demonstrating opt-in post-processing on Android.** `android_test` uses the simple direct path. A reference scene proving bloom/tonemap/FXAA/SSAO work end-to-end on real hardware would catch any per-shader regressions and serve as the pattern game devs copy.
+- [ ] **`onSaveInstanceState` / `onRestoreInstanceState` not surfaced by NativeActivity.** Documented limitation; games that need cross-launch state should persist their own data via `android_app::activity->externalDataPath` (which maps to `getExternalFilesDir()`).
+- [ ] **Mesh LOD generation and audio transcoding (WAV → Opus).** Phase D nice-to-haves; deferred. Today the asset pipeline runs textures + shaders only.
+- [ ] **Fast-follow / on-demand asset packs.** Only **install-time** packs are supported. Dynamic delivery requires a JNI bridge to Google Play Core's `AssetPackManager`, which would mean shipping a Kotlin/Java half of the application. See "Known limitation: dynamic asset pack delivery" under Phase H for the full path.
+- [ ] **`ProjectConfig::loadFromFile` on Android uses raw `fopen()`.** It cannot read APK assets, so `apps/android_test/project.json` (the Phase E gap-fill template) is bundled but not loaded at runtime. The empty-`activeTier` → auto-detect fallback works regardless. Wiring `runAndroid(app, configPath)` through `AndroidFileSystem` and calling `ProjectConfig::loadFromString` is the follow-up.
+- [ ] **iOS ImGui not wired yet.** Engine still skips ImGui on iOS. The path is: plumb iOS touch input similarly to Android, verify `engine_debug` cross-compiles for iOS, confirm Metal `vs_ocornut_imgui_mtl` bytecode is present (it is). Future task — out of scope for the Android round.
 
 ### ImGui on Android (working)
 
@@ -603,7 +620,7 @@ iOS imgui wiring is still pending (separate follow-up; would need iOS-side touch
 
 - **ASTC texture compression.** ASTC is universally supported on all Vulkan-capable Android devices. It offers better quality-per-bit than ETC2 and supports all block sizes from 4x4 (highest quality) to 12x12 (smallest size). The `astcenc` encoder is already in third_party.
 
-- **Tier system over automatic quality scaling.** Auto-detecting the right quality level at runtime is unreliable (GPU model strings are inconsistent, available memory varies with background apps). Explicit tiers let developers test each configuration and guarantee performance. Runtime detection can be added later as a hint for the default tier selection.
+- **Tier system over automatic quality scaling, with opt-in runtime detection.** Auto-detecting the right quality level at runtime is unreliable (GPU model strings are inconsistent, available memory varies with background apps). Explicit tiers let developers test each configuration and guarantee performance. As of Phase E, runtime detection is wired in as an opt-in hint: a project can set `"activeTier": "auto"` (or leave it empty) and `GameRunner::runAndroid` will substitute the result of `AndroidTierDetect::detectAndroidTier()` before constructing `EngineDesc`. Explicit tier names in `project.json` always win, so games that have validated a specific tier on every target device can keep their pinned configuration.
 
 - **No hot-reload on Android.** Desktop development uses the editor for rapid iteration. Android builds are for testing and release. Hot-reload would require a TCP bridge and asset streaming protocol — high complexity, low value when the editor already provides instant feedback.
 
