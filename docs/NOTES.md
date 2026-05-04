@@ -1988,14 +1988,15 @@ The probe `dlopen`s `libvulkan.so` and resolves every Vulkan symbol via
 **Compile-time link-time linking (rejected):**
 - Pros: simpler code (no dlopen / dlsym dance, no PFN_ typedefs to chase
   through Vulkan headers, no two-phase function-pointer load).
-- Cons: the binary will not load on any device that does not ship
-  libvulkan — AOSP allows this in principle, the Vulkan feature is
-  marked optional in the manifest only as `level=1`, and a hypothetical
-  future device that drops Vulkan support would `dlopen`-fail silently
-  during library load instead of giving us a chance to log + fall back
-  cleanly. We would be coupling "the engine can launch" to "Vulkan
-  is present" for a defensive query that we explicitly want to be
-  *softer* than the bgfx hard requirement.
+- Cons: the binary's link-load step would fail on any device that does
+  not ship libvulkan.  Today the manifest pins
+  `android.hardware.vulkan.{level,version}` to `required="true"` so the
+  Play Store filters such devices out, but tying the engine's
+  *library load* to a Vulkan symbol still couples a defensive query
+  (which we explicitly want to be *softer* than the bgfx hard
+  requirement) to the dynamic linker resolving symbols at startup —
+  any future loosening of the manifest filter would turn that into a
+  silent app-launch crash instead of a clean fallback log line.
 - Cons: the probe failure path (`dlopen` returns null) becomes
   unrecoverable — there is no point at which the loader can ask "is
   libvulkan here?" and choose a different code path. With
@@ -2073,7 +2074,7 @@ falls back to RGBA8 instead.
 ### Verification
 
 - `cmake --build build --target engine_tests` clean on macOS host.
-- `build/engine_tests` 682 / 6647 (baseline 682 / 6638 + 8 new format
+- `build/engine_tests` 682 / 6638 (baseline 674 / 6629 + 8 new format
   probe cases / 9 assertions).
 - `./android/build_android.sh arm64-v8a Debug` clean — engine_rendering
   builds with the new probe, sama_android shared library links.
