@@ -1126,6 +1126,7 @@ add_executable(engine_tests
     tests/rendering/TestPostProcess.cpp
     tests/rendering/TestSsao.cpp
     tests/rendering/TestFrameStats.cpp
+    tests/rendering/TestAndroidVulkanFormatProbe.cpp
     tests/assets/TestAssetHandle.cpp
     tests/assets/TestAssetManager.cpp
     tests/assets/TestStdFileSystem.cpp
