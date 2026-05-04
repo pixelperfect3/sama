@@ -49,8 +49,11 @@
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
+#include "engine/rendering/RenderSettings.h"
+#include "engine/rendering/Renderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/rendering/systems/PostProcessSystem.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
 #include "engine/ui/BitmapFont.h"
@@ -272,6 +275,34 @@ public:
         registry.emplace<VisibleTag>(lightEntity_);
         // Light cube does NOT cast shadow on itself / scene.
 
+        // ----------------------------------------------------------------
+        // HDR-bright emitter — small white-hot cube floating above the
+        // helmet.  Its emissiveScale is intentionally well above the bloom
+        // threshold (default 1.0) so the post-process pass produces a
+        // clearly visible halo when toggled on.  When the post-process
+        // path is OFF, this still renders as a white cube but without any
+        // bloom — that's the visual delta the regression catches.
+        // ----------------------------------------------------------------
+        Material brightMat;
+        brightMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};
+        brightMat.emissiveScale = 15.0f;  // way past bloom threshold
+        brightMat.roughness = 1.0f;
+        brightEmitterMatId_ = engine.resources().addMaterial(brightMat);
+
+        brightEmitterEntity_ = registry.createEntity();
+        TransformComponent bec;
+        bec.position = {1.5f, 1.4f, 0.0f};  // upper-right of helmet centre
+        bec.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        bec.scale = {0.25f, 0.25f, 0.25f};
+        bec.flags = 1;
+        registry.emplace<TransformComponent>(brightEmitterEntity_, bec);
+        registry.emplace<WorldTransformComponent>(brightEmitterEntity_);
+        registry.emplace<MeshComponent>(brightEmitterEntity_, groundMeshId_);  // reuse cube
+        registry.emplace<MaterialComponent>(brightEmitterEntity_, brightEmitterMatId_);
+        registry.emplace<VisibleTag>(brightEmitterEntity_);
+        // No ShadowVisibleTag — emitters shouldn't darken themselves with
+        // their own shadow; matches the orbiting-light cube convention.
+
 #ifdef __ANDROID__
         // ----------------------------------------------------------------
         // Audio smoke test — generate a procedural beep, load it into the
@@ -347,6 +378,30 @@ public:
             dot.hue = hue_;
             dot.age = 0.0f;
             touchTrail_.push_back(dot);
+        }
+
+        // Post-process toggle hit-test — top 15% of screen, right 30%.
+        // A Began-phase touch in this rectangle (or a Began left-click on
+        // desktop) flips postProcessEnabled_, switching the per-frame render
+        // path between Engine::beginFrameDirect (default) and
+        // renderer().beginFrame() + postProcess().submit().
+        auto inToggleRect = [&](float px, float py) -> bool
+        { return px >= fbW * 0.70f && py <= fbH * 0.15f; };
+        for (const auto& touch : input.touches())
+        {
+            if (touch.phase == TouchPoint::Phase::Began && inToggleRect(touch.x, touch.y))
+            {
+                postProcessEnabled_ = !postProcessEnabled_;
+#ifdef __ANDROID__
+                __android_log_print(ANDROID_LOG_INFO, "SamaEngine", "post-process toggled: %s",
+                                    postProcessEnabled_ ? "ON" : "OFF");
+#endif
+            }
+        }
+        if (input.isMouseButtonPressed(MouseButton::Left) &&
+            inToggleRect(static_cast<float>(input.mouseX()), static_cast<float>(input.mouseY())))
+        {
+            postProcessEnabled_ = !postProcessEnabled_;
         }
 
         // Multi-touch: each touch gets a dot
@@ -454,7 +509,7 @@ public:
                 registry.view<TransformComponent, MeshComponent>().each(
                     [&](EntityID e, TransformComponent& tc, const MeshComponent&)
                     {
-                        if (e == groundEntity_ || e == lightEntity_)
+                        if (e == groundEntity_ || e == lightEntity_ || e == brightEmitterEntity_)
                             return;
                         tc.position.y += 0.8f;
                         tc.flags |= 1;
@@ -463,19 +518,23 @@ public:
                         // multiplier each frame without compounding.
                         helmetEntities_.push_back({e, tc.scale});
                     });
-                // Defensive: never let the light cube or the ground become
-                // a shadow caster.
+                // Defensive: never let the light cube, ground, or bright
+                // emitter become a shadow caster.
                 if (registry.has<ShadowVisibleTag>(lightEntity_))
                     registry.remove<ShadowVisibleTag>(lightEntity_);
                 if (registry.has<ShadowVisibleTag>(groundEntity_))
                     registry.remove<ShadowVisibleTag>(groundEntity_);
+                if (registry.has<ShadowVisibleTag>(brightEmitterEntity_))
+                    registry.remove<ShadowVisibleTag>(brightEmitterEntity_);
 
                 // Tweak roughness slightly so the helmet looks less mirror-like.
+                // Skip ground + bright emitter so we don't clobber their materials.
                 registry.view<MaterialComponent>().each(
                     [&](EntityID, MaterialComponent& mc)
                     {
                         auto* mat = engine.resources().getMaterialMut(mc.material);
-                        if (mat && mc.material != groundMatId_)
+                        if (mat && mc.material != groundMatId_ &&
+                            mc.material != brightEmitterMatId_)
                             mat->roughness = 0.55f;
                     });
             }
@@ -572,6 +631,19 @@ public:
         // Opaque PBR pass.
         const auto W = engine.fbWidth();
         const auto H = engine.fbHeight();
+
+        // Opt-in post-process path. Re-binds kViewOpaque/Transparent to the
+        // HDR scene framebuffer so the bloom + tonemap + FXAA chain has
+        // something to read.  Must be called BEFORE the kViewOpaque
+        // RenderPass setup so the framebuffer binding wins over the
+        // backbuffer binding installed by Engine::beginFrame's
+        // beginFrameDirect call.  See docs/ANDROID_SUPPORT.md, the
+        // "Post-process shaders available" entry, for the rationale.
+        if (postProcessEnabled_)
+        {
+            engine.renderer().beginFrame();
+        }
+
         RenderPass(kViewOpaque)
             .rect(0, 0, W, H)
             .clearColorAndDepth(bgColor)
@@ -643,6 +715,27 @@ public:
         drawCallSys_.update(registry, engine.resources(),
                             bgfx::ProgramHandle{engine.pbrProgram().idx}, engine.uniforms(), frame);
 
+        // Post-process submit: bloom + tonemap + FXAA passes consume the HDR
+        // scene framebuffer that beginFrame() bound above and write the final
+        // LDR result to the backbuffer.  Threshold/intensity are pushed off
+        // their defaults because the PBR shader does inline Reinhard tonemap
+        // (post-tonemap brightness is squashed into [0,1] so the default 1.0
+        // threshold would fire on nothing).  These values produce a clearly
+        // visible halo around the bright emitter — the visual signal that
+        // proves the chain executed end-to-end.
+        if (postProcessEnabled_)
+        {
+            engine::rendering::PostProcessSettings settings;
+            settings.bloom.enabled = true;
+            settings.bloom.threshold = 0.5f;
+            settings.bloom.intensity = 0.6f;
+            settings.bloom.downsampleSteps = 5;
+            settings.fxaaEnabled = true;
+            settings.ssao.enabled = false;  // requires depth prepass; not wired here
+            engine.renderer().postProcess().submit(settings, engine.uniforms(),
+                                                   engine::rendering::kViewPostProcessBase);
+        }
+
         // --- Text overlay via UiRenderer ---
         {
             using engine::ui::UiDrawList;
@@ -672,6 +765,16 @@ public:
 
             snprintf(buf, sizeof(buf), "Screen: %ux%u", engine.fbWidth(), engine.fbHeight());
             drawList_.drawText({leftMargin, y}, buf, white, &font_, fontSize);
+            y += lineH;
+
+            // Post-process status — tap upper-right corner to toggle.
+            // ON  = renderer().beginFrame() + postProcess().submit() — bloom
+            //       around the bright emitter, ACES tonemap, FXAA.
+            // OFF = beginFrameDirect path (Engine default, no post chain).
+            snprintf(buf, sizeof(buf), "Post: %s   (tap upper-right to toggle)",
+                     postProcessEnabled_ ? "ON " : "OFF");
+            drawList_.drawText({leftMargin, y}, buf, postProcessEnabled_ ? green : white, &font_,
+                               fontSize);
             y += lineH * 1.5f;
 
             // Mouse / touch
@@ -740,11 +843,11 @@ public:
             // Gesture HUD — visible feedback for the recogniser even when
             // the helmet scale / camera change is too subtle to see at a
             // glance.  `[ACTIVE]` flips on as soon as two fingers land.
-            snprintf(buf, sizeof(buf), "Pinch: %.2fx  Pan: yaw=%.0f° pitch=%.0f° %s",
-                     gestureScale_, glm::degrees(cameraYaw_), glm::degrees(cameraPitch_),
+            snprintf(buf, sizeof(buf), "Pinch: %.2fx  Pan: yaw=%.0f° pitch=%.0f° %s", gestureScale_,
+                     glm::degrees(cameraYaw_), glm::degrees(cameraPitch_),
                      gestureState_.active ? "[ACTIVE]" : "");
-            drawList_.drawText({leftMargin, y}, buf,
-                               gestureState_.active ? green : gray, &font_, fontSize);
+            drawList_.drawText({leftMargin, y}, buf, gestureState_.active ? green : gray, &font_,
+                               fontSize);
             y += lineH;
             snprintf(buf, sizeof(buf), "  delta: pinch=%+.1f pan=(%+.1f, %+.1f)",
                      gestureState_.pinchDelta, gestureState_.panDeltaX, gestureState_.panDeltaY);
@@ -907,15 +1010,23 @@ private:
         glm::vec3 baseScale{1.f};
     };
     std::vector<HelmetTransform> helmetEntities_;
-    float gestureScale_ = 1.0f;     // Pinch result, clamped to [0.5, 4.0].
-    float cameraYaw_ = 0.0f;        // Pan-X result, radians around Y.
-    float cameraPitch_ = 0.42f;     // Pan-Y result, radians (default ≈24°).
+    float gestureScale_ = 1.0f;  // Pinch result, clamped to [0.5, 4.0].
+    float cameraYaw_ = 0.0f;     // Pan-X result, radians around Y.
+    float cameraPitch_ = 0.42f;  // Pan-Y result, radians (default ≈24°).
 
     EntityID groundEntity_ = INVALID_ENTITY;
     EntityID lightEntity_ = INVALID_ENTITY;
+    EntityID brightEmitterEntity_ = INVALID_ENTITY;
     uint32_t groundMeshId_ = 0;
     uint32_t groundMatId_ = 0;
     uint32_t lightMatId_ = 0;
+    uint32_t brightEmitterMatId_ = 0;
+
+    // Post-process opt-in toggle.  Default OFF — Engine::beginFrame on
+    // Android calls beginFrameDirect, matching every desktop demo.  Tapping
+    // the upper-right corner flips this; ON wires renderer().beginFrame() +
+    // postProcess().submit() so the bloom + tonemap + FXAA chain runs.
+    bool postProcessEnabled_ = false;
 
 #ifdef __ANDROID__
     // Audio smoke test — id of a procedurally-generated beep clip loaded
