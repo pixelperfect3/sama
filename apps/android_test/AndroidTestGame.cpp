@@ -398,11 +398,18 @@ public:
 #endif
             }
         }
+#ifndef __ANDROID__
+        // Desktop-only: AndroidInput synthesises mouse events from touches,
+        // so checking isMouseButtonPressed here too would double-toggle on
+        // every Android tap (the Began touch in the loop above already
+        // fired).  On desktop there are no touches, so this is the only
+        // path that hits.
         if (input.isMouseButtonPressed(MouseButton::Left) &&
             inToggleRect(static_cast<float>(input.mouseX()), static_cast<float>(input.mouseY())))
         {
             postProcessEnabled_ = !postProcessEnabled_;
         }
+#endif
 
         // Multi-touch: each touch gets a dot
         for (const auto& touch : input.touches())
