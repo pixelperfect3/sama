@@ -959,6 +959,7 @@ target_compile_definitions(engine_physics PUBLIC
 # Wraps bgfx init/shutdown/frame and the platform window backend.
 set(_ENGINE_RENDERING_SOURCES
     engine/rendering/Renderer.cpp
+    engine/rendering/AndroidVulkanFormatProbe.cpp
     engine/rendering/RenderPass.cpp
     engine/rendering/FrameStats.cpp
     engine/rendering/GpuFeatures.cpp
