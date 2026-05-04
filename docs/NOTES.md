@@ -1955,3 +1955,140 @@ Considered. Rejected because:
   bundletool nor the Android SDK is installed in the dev environment.
   The reviewer agent should run it before merging.
 
+---
+
+## Pre-init Vulkan surface format probe — dlopen libvulkan, not link-time (2026-04-30)
+
+Phase A of the Android roadmap shipped with `Renderer::init()` hardcoding
+`init.resolution.formatColor = bgfx::TextureFormat::RGBA8` for Android.
+RGBA8 is mandatory on every Vulkan-capable Android device per the CDD, so
+the hardcoded path works on all real hardware today. The downside was
+defensive: a future device, an HDR rendering target, or a driver quirk
+that demands a different swapchain format would silently fall back to
+OpenGL ES (because bgfx's `getCaps()->formats[]` only populates *during*
+`bgfx::init`, after the swapchain has already been built with whatever
+`formatColor` we passed). We replaced the hardcode with a pre-init
+Vulkan surface-format probe in `engine/rendering/AndroidVulkanFormatProbe.{h,cpp}`.
+
+### Decision
+
+Add a free function `engine::rendering::probeAndroidSwapchainFormat(window)`
+that runs BEFORE `bgfx::init`. It creates a temporary `VkInstance` +
+`VkSurfaceKHR`, calls `vkGetPhysicalDeviceSurfaceFormatsKHR`, walks a
+fixed priority list (RGBA8 → BGRA8 → RGB10A2 → fallback RGBA8), tears
+down the temporaries, and returns a `bgfx::TextureFormat::Enum` that
+`Renderer::init` passes straight to `init.resolution.formatColor`.
+
+### Why dlopen libvulkan, not link-time
+
+The probe `dlopen`s `libvulkan.so` and resolves every Vulkan symbol via
+`vkGetInstanceProcAddr`, rather than linking the engine against
+`-lvulkan` at compile time. The tradeoff:
+
+**Compile-time link-time linking (rejected):**
+- Pros: simpler code (no dlopen / dlsym dance, no PFN_ typedefs to chase
+  through Vulkan headers, no two-phase function-pointer load).
+- Cons: the binary will not load on any device that does not ship
+  libvulkan — AOSP allows this in principle, the Vulkan feature is
+  marked optional in the manifest only as `level=1`, and a hypothetical
+  future device that drops Vulkan support would `dlopen`-fail silently
+  during library load instead of giving us a chance to log + fall back
+  cleanly. We would be coupling "the engine can launch" to "Vulkan
+  is present" for a defensive query that we explicitly want to be
+  *softer* than the bgfx hard requirement.
+- Cons: the probe failure path (`dlopen` returns null) becomes
+  unrecoverable — there is no point at which the loader can ask "is
+  libvulkan here?" and choose a different code path. With
+  dlopen-at-runtime, the failure path is one `if (!l.lib) { return
+  RGBA8; }` line.
+
+**Runtime dlopen (chosen):**
+- Pros: probe failure is just another fallback path that returns the
+  CDD-mandated RGBA8 default. Strictly safer than the hardcoded path:
+  same default, plus correct detection when possible.
+- Pros: no new entry in the engine_rendering library list — `libvulkan.so`
+  is already present in the Android sysroot, and we never reference
+  Vulkan symbols at link time. The .cpp file does include
+  `<vulkan/vulkan.h>` (under `VK_NO_PROTOTYPES`) for the type and enum
+  definitions, but the linker never sees a Vulkan symbol because every
+  call site uses a `PFN_*` function pointer.
+- Pros: matches the SoLoud miniaudio pattern already in use on Android
+  (AAudio + OpenSL ES are both `dlopen`ed by miniaudio's NULL-context
+  init). Operators are already used to "the audio backend that's
+  actually loaded depends on what's on the device" via `adb logcat` —
+  the format probe follows the same convention with
+  `VulkanFormatProbe: N surface formats reported, picked <format>`.
+- Cons: more code (~100 lines of loader + function-pointer plumbing).
+  Acceptable; it's all in one self-contained translation unit.
+- Cons: the dlopen handle leaks if the probe is called many times in a
+  row. Mitigated by the `VulkanLoader` RAII wrapper (`dlclose` in dtor)
+  + the fact that the probe runs exactly once per process (during
+  `Renderer::init`).
+
+### Why the priority list and not "first format reported"
+
+`vkGetPhysicalDeviceSurfaceFormatsKHR` returns a list ordered by the
+driver's preference, which is not always what we want. A driver could
+list a 10-bit HDR format first if its hardware natively prefers it, or
+an sRGB format first if the surface was created in an sRGB-aware
+context — both would silently change the engine's render path and
+catch the rest of the engine off-guard (the PBR shader does inline
+Reinhard tonemap in 8-bit linear, so a 10-bit swapchain would re-tone
+the result).
+
+The fixed priority list (RGBA8 → BGRA8 → RGB10A2 → RGBA8 fallback)
+guarantees that:
+1. We always pick the format the rest of the engine was tested with
+   first (RGBA8).
+2. If a driver does *only* support BGRA8 (some emulators / desktop
+   drivers), we land there cleanly.
+3. If a future opt-in HDR pipeline lands, we can extend the priority
+   list to prefer the 10-bit format when an HDR flag is set, without
+   needing a second probe.
+4. We never silently land in an unexpected colour space.
+
+### Why VK_FORMAT_A2B10G10R10_UNORM_PACK32 is not in the list
+
+bgfx's `RGB10A2` enum is the `VK_FORMAT_A2R10G10B10_UNORM_PACK32`
+layout (alpha + red + green + blue). The Vulkan spec also has
+`VK_FORMAT_A2B10G10R10_UNORM_PACK32` (alpha + blue + green + red).
+The two are *not* interchangeable — picking the BGR-order format and
+calling it `RGB10A2` would give us a swapchain whose channels are
+swapped in the wrong direction, so the final image would render with
+red and blue swapped. The probe deliberately drops this format and
+falls back to RGBA8 instead.
+
+### What we are NOT doing
+
+- Not changing the desktop or iOS format paths. Both already use a
+  format that bgfx's `getCaps()` validates after `bgfx::init`, and
+  neither has the "swapchain creation fails silently and falls back to
+  GLES" trap that drove this fix on Android.
+- Not picking a different physical device than bgfx will pick. The
+  probe uses `devices[0]` from `vkEnumeratePhysicalDevices`. bgfx may
+  pick a different device for the real init, but format support is
+  consistent across devices on the same Android driver, so the first
+  device's answer is good enough for the defensive query.
+
+### Verification
+
+- `cmake --build build --target engine_tests` clean on macOS host.
+- `build/engine_tests` 682 / 6647 (baseline 682 / 6638 + 8 new format
+  probe cases / 9 assertions).
+- `./android/build_android.sh arm64-v8a Debug` clean — engine_rendering
+  builds with the new probe, sama_android shared library links.
+- `./android/build_apk.sh --tier mid --debug` produces a 14 MB APK.
+- `sama_mid` AVD smoke test (Pixel 6, API 33, 1080x2400):
+  `adb logcat` shows `VulkanFormatProbe: 5 surface formats reported,
+  picked RGBA8` followed by `Vulkan swapchain format: RGBA8` and the
+  app continues into `bgfx renderer: Vulkan` + shader loading without
+  crash. PID stays alive, no FATAL / signal / crash entries from
+  com.sama.game. Critical regression check passed.
+- The probe's full Vulkan path is not host-testable (needs the loader
+  + a real ANativeWindow), so the test suite covers the
+  `selectBestSwapchainFormat` priority-list walker as a free function:
+  RGBA8-only, BGRA8-only, RGBA8+BGRA8 (priority-order regardless of
+  input order), A2R10G10B10-only, A2B10G10R10-only (drops to RGBA8 —
+  documents why), no-priority-match formats, empty list, RGBA8 +
+  10-bit (RGBA8 still wins).
+

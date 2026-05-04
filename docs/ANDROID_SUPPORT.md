@@ -62,6 +62,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
   - `bgfx::Init::type = bgfx::RendererType::Vulkan`
   - bgfx's `PlatformData` needs `nativeWindowHandle` from `ANativeWindow`
   - bgfx creates `VkSurfaceKHR` via `vkCreateAndroidSurfaceKHR` internally
+  - Swapchain `formatColor` is now picked dynamically by a pre-init Vulkan surface-format probe (`engine/rendering/AndroidVulkanFormatProbe.{h,cpp}`) — `dlopen`s libvulkan, walks `vkGetPhysicalDeviceSurfaceFormatsKHR` results against an `RGBA8 -> BGRA8 -> RGB10A2` priority list, falls back to RGBA8 (the Android CDD baseline) on any failure.  See "Vulkan Surface Format" below for the full write-up.
 - [x] Build smoke test: verified rendering on physical hardware (Pixel 9, Vulkan, 2251x1080)
 
 ---
@@ -523,9 +524,9 @@ bgfx previously hardcoded `NUM_SWAPCHAIN_IMAGE=4` in its Vulkan backend. The Pix
 
 bgfx defaults `Resolution::formatColor` to `TextureFormat::BGRA8` (`VK_FORMAT_B8G8R8A8_UNORM`). On Android, Mali and Adreno GPUs typically only expose `VK_FORMAT_R8G8B8A8_UNORM` (RGBA8) as a Vulkan surface format. BGRA8 is optional on mobile per the Vulkan spec. If the requested format doesn't match a supported surface format, bgfx's swapchain creation fails silently and it falls back to OpenGL ES.
 
-**Fix:** `Renderer::init()` sets `init.resolution.formatColor = bgfx::TextureFormat::RGBA8` on Android. RGBA8 is mandatory for all Vulkan-capable Android devices per the Android CDD.
+**Fix:** `Renderer::init()` calls `engine::rendering::probeAndroidSwapchainFormat(window)` (`engine/rendering/AndroidVulkanFormatProbe.{h,cpp}`) BEFORE `bgfx::init` runs. The probe `dlopen`s `libvulkan.so`, creates a temporary `VkInstance` + `VkSurfaceKHR`, calls `vkGetPhysicalDeviceSurfaceFormatsKHR`, and walks a fixed priority list (`RGBA8 -> BGRA8 -> RGB10A2 -> RGBA8 fallback`) to pick the best `bgfx::TextureFormat`. On any failure (Vulkan loader missing, surface creation fails, no supported formats), the probe returns `RGBA8` — the Android CDD-mandated baseline that every Vulkan device must support — so the function is strictly safer than the historical hardcoded path. The picked format is logged to logcat (`VulkanFormatProbe: N surface formats reported, picked <format>` and `Vulkan swapchain format: <format>`) so operators can confirm the right branch executed on a given device. The pure priority-list selector is host-testable in `tests/rendering/TestAndroidVulkanFormatProbe.cpp` (`[android][vulkan][format_probe]`, 8 cases).
 
-**Why not auto-detect?** bgfx's `getCaps()->formats[]` with `BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER` reports which formats the surface supports, but this data is populated *during* `bgfx::init()` — after the swapchain is already created with `formatColor`. There is no pre-init query API. A pre-init Vulkan surface query (creating a temporary VkInstance) would work but is unnecessarily complex given that RGBA8 is universally supported on Android. If a future device requires a different format, the fix would be to add a pre-init Vulkan surface format query in `Renderer::init()`.
+**Why dynamic loading?** The probe `dlopen`s `libvulkan.so` rather than linking against it. A hypothetical future device that drops Vulkan support still loads the binary cleanly — the `dlopen` just fails and the probe returns the safe RGBA8 default. See `docs/NOTES.md` for the dynamic-loading vs link-time tradeoff write-up.
 
 ### Emulator Testing
 
@@ -575,7 +576,6 @@ adb emu kill
 
 ### Remaining Limitations
 
-- [ ] **Pre-init Vulkan surface format query for robustness.** `Renderer::init()` hardcodes `formatColor = RGBA8` on Android. RGBA8 is mandatory per the Android CDD so this works on all real devices, but a future device or rendering target could need different. *Why:* Defensive against future hardware. Implementation: create temporary VkInstance + surface in `Renderer::init()` before `bgfx::init()`, call `vkGetPhysicalDeviceSurfaceFormatsKHR`, pick the first supported format from a priority list (RGBA8 → BGRA8 → R10G10B10A2 → ...), tear down, pass to bgfx.
 - [ ] **Sample app demonstrating opt-in post-processing on Android.** `android_test` uses the simple direct path. A reference scene proving bloom/tonemap/FXAA/SSAO work end-to-end on real hardware would catch any per-shader regressions and serve as the pattern game devs copy.
 - [ ] **`onSaveInstanceState` / `onRestoreInstanceState` not surfaced by NativeActivity.** Documented limitation; games that need cross-launch state should persist their own data via `android_app::activity->externalDataPath` (which maps to `getExternalFilesDir()`).
 - [ ] **Mesh LOD generation and audio transcoding (WAV → Opus).** Phase D nice-to-haves; deferred. Today the asset pipeline runs textures + shaders only.
