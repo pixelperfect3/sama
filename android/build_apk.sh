@@ -293,6 +293,15 @@ if [ -d "${PROJECT_ROOT}/assets/fonts" ]; then
     echo "  Copied MSDF font assets (JSON + PNG)"
 fi
 
+# Copy the per-app project.json so games can ship a ProjectConfig template
+# alongside their APK. The android_test app's project.json demonstrates
+# Phase E's "activeTier": "auto" sentinel; future runAndroid wiring through
+# AndroidFileSystem will load this file at runtime.
+if [ -f "${PROJECT_ROOT}/apps/android_test/project.json" ]; then
+    cp "${PROJECT_ROOT}/apps/android_test/project.json" "${ASSETS_OUTPUT}/project.json"
+    echo "  Copied project.json"
+fi
+
 # ── Step 3: Create APK staging directory ────────────────────────────────────
 
 echo "[3/7] Staging APK contents..."
