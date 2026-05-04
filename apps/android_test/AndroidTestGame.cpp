@@ -39,6 +39,7 @@
 #include "engine/ecs/Registry.h"
 #include "engine/game/GameRunner.h"
 #include "engine/game/IGame.h"
+#include "engine/input/GestureRecognizer.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
 #include "engine/platform/android/VirtualJoystick.h"
@@ -457,6 +458,10 @@ public:
                             return;
                         tc.position.y += 0.8f;
                         tc.flags |= 1;
+                        // Snapshot the spawn-time scale so the pinch
+                        // demo can apply gestureScale_ as a uniform
+                        // multiplier each frame without compounding.
+                        helmetEntities_.push_back({e, tc.scale});
                     });
                 // Defensive: never let the light cube or the ground become
                 // a shadow caster.
@@ -476,14 +481,56 @@ public:
             }
         }
 
+        // ----------------------------------------------------------------
+        // Two-finger gestures: pinch scales the helmet, pan orbits the
+        // camera.  We update *every* frame (including no-touch frames) so
+        // GestureRecognizer can see the touch list shrink to zero and
+        // drop tracking; calling it conditionally would let a stale
+        // tracking pair silently persist across a finger-lift.
+        // ----------------------------------------------------------------
+        gestureRecognizer_.update(input, gestureState_);
+        if (gestureState_.active)
+        {
+            // 1px of pinch ≈ 0.2% scale change.  Keeps a typical 200px
+            // pinch (~3cm on a 6" phone) at a comfortable ~1.4× without
+            // demanding a full hand-spread for a 2× zoom.
+            gestureScale_ *= (1.0f + gestureState_.pinchDelta * 0.002f);
+            gestureScale_ = std::clamp(gestureScale_, 0.5f, 4.0f);
+
+            // 360° of yaw per ~600px of pan-X (≈ a thumb-swipe across a
+            // 6" phone).  Pitch is half-strength + clamped so the camera
+            // stays above the horizon (otherwise lookAt's up vector
+            // becomes degenerate).
+            cameraYaw_ += gestureState_.panDeltaX * (2.0f * 3.14159265f / 600.0f);
+            cameraPitch_ -= gestureState_.panDeltaY * (3.14159265f / 600.0f);
+            cameraPitch_ = std::clamp(cameraPitch_, 0.05f, 1.45f);
+        }
+
+        // Apply gestureScale_ to every spawned helmet entity.  We rebuild
+        // the scale from the snapshot (rather than multiplying in-place)
+        // so the result tracks gestureScale_ exactly — no drift from
+        // accumulated float error after thousands of frames.
+        for (const auto& he : helmetEntities_)
+        {
+            if (auto* tc = registry.get<TransformComponent>(he.entity))
+            {
+                tc->scale = he.baseScale * gestureScale_;
+                tc->flags |= 1;
+            }
+        }
+
         transformSys_.update(registry);
 
-        // Camera pulled way back so the entire scene — helmet, ground,
-        // light indicator cube, and the helmet's cast shadow — all fit
-        // comfortably in frame.
+        // Camera orbits at a fixed 14m radius around the helmet centre.
+        // The default yaw=0, pitch=0.42 reproduces the original
+        // (0, 5, 13) viewpoint so visual regression diffs against the
+        // pre-gesture demo are minimal when the user hasn't panned yet.
         const float aspect = (fbH > 0.f) ? (fbW / fbH) : 1.0f;
-        const glm::vec3 camPos{0.0f, 5.0f, 13.0f};
+        const float kCamRadius = 14.0f;
         const glm::vec3 camTarget{0.0f, 0.0f, 0.0f};
+        const glm::vec3 camPos{kCamRadius * std::cos(cameraPitch_) * std::sin(cameraYaw_),
+                               kCamRadius * std::sin(cameraPitch_),
+                               kCamRadius * std::cos(cameraPitch_) * std::cos(cameraYaw_)};
         const glm::mat4 viewMat = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
@@ -688,6 +735,20 @@ public:
             snprintf(buf, sizeof(buf), "Joystick: dir=(%.2f, %.2f) %s", jdir.x, jdir.y,
                      joystick_.isTouched() ? "[touched]" : "");
             drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            // Gesture HUD — visible feedback for the recogniser even when
+            // the helmet scale / camera change is too subtle to see at a
+            // glance.  `[ACTIVE]` flips on as soon as two fingers land.
+            snprintf(buf, sizeof(buf), "Pinch: %.2fx  Pan: yaw=%.0f° pitch=%.0f° %s",
+                     gestureScale_, glm::degrees(cameraYaw_), glm::degrees(cameraPitch_),
+                     gestureState_.active ? "[ACTIVE]" : "");
+            drawList_.drawText({leftMargin, y}, buf,
+                               gestureState_.active ? green : gray, &font_, fontSize);
+            y += lineH;
+            snprintf(buf, sizeof(buf), "  delta: pinch=%+.1f pan=(%+.1f, %+.1f)",
+                     gestureState_.pinchDelta, gestureState_.panDeltaX, gestureState_.panDeltaY);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
             y += lineH * 1.5f;
 
             // Controls
@@ -697,6 +758,9 @@ public:
                                fontSize);
             y += lineH;
             drawList_.drawText({leftMargin, y}, "Drag: draw colored trail", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Pinch: scale helmet | Pan: orbit camera", gray,
+                               &font_, fontSize);
             y += lineH;
             drawList_.drawText({leftMargin, y}, "Gyro tilt: adjust brightness + hue", gray, &font_,
                                fontSize);
@@ -831,6 +895,22 @@ private:
     engine::rendering::IblResources ibl_;
     engine::assets::AssetHandle<engine::assets::GltfAsset> helmetHandle_{};
     bool helmetSpawned_ = false;
+
+    // Gesture demo — pinch scales the spawned helmet, pan orbits the
+    // camera around it.  We snapshot each helmet entity's *base* scale at
+    // spawn time so applying gestureScale_ each frame doesn't compound.
+    engine::input::GestureRecognizer gestureRecognizer_;
+    engine::input::GestureState gestureState_{};
+    struct HelmetTransform
+    {
+        EntityID entity = INVALID_ENTITY;
+        glm::vec3 baseScale{1.f};
+    };
+    std::vector<HelmetTransform> helmetEntities_;
+    float gestureScale_ = 1.0f;     // Pinch result, clamped to [0.5, 4.0].
+    float cameraYaw_ = 0.0f;        // Pan-X result, radians around Y.
+    float cameraPitch_ = 0.42f;     // Pan-Y result, radians (default ≈24°).
+
     EntityID groundEntity_ = INVALID_ENTITY;
     EntityID lightEntity_ = INVALID_ENTITY;
     uint32_t groundMeshId_ = 0;
