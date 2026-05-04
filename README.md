@@ -17,7 +17,7 @@ Built on bgfx (Metal / Vulkan), Jolt Physics, and SoLoud.
 | macOS | Metal | ✅ Primary development platform |
 | iOS Simulator | Metal | ✅ PBR + shadows + audio + touch + gyro + tier detection |
 | iOS Device | Metal | ⚠️ Builds; not yet tested on hardware (no IPA pipeline) |
-| Android | Vulkan | ✅ PBR + shadows + post-processing + ASTC + audio (verified Pixel 9) |
+| Android | Vulkan | ✅ PBR + shadows + post-processing + ASTC + audio + ImGui + AAB asset packs (verified Pixel 9) |
 | Linux / Windows | OpenGL / DX | Untested — bgfx supports them; CMake doesn't gate them yet |
 
 The same `IGame` runs on every supported platform with no `#ifdef` in game code.
@@ -109,7 +109,7 @@ build/sama_editor
 ## Tests
 
 ```bash
-build/engine_tests              # 644 cases / 6493 assertions
+build/engine_tests              # 674 cases / 6629 assertions
 build/engine_screenshot_tests   # 22 cases — visual regression
 build/engine_screenshot_tests --update-goldens   # regenerate reference images
 ```
