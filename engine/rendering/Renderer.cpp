@@ -4,12 +4,16 @@
 #include <bgfx/platform.h>
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <android/native_window.h>
 #endif
 
 #include <cstdio>
 
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
+#ifdef __ANDROID__
+#include "engine/rendering/AndroidVulkanFormatProbe.h"
+#endif
 
 namespace engine::rendering
 {
@@ -53,7 +57,17 @@ bool Renderer::init(const RendererDesc& desc)
     // Android Vulkan surfaces typically support RGBA8, not BGRA8 (the bgfx default).
     // Mali GPUs report VK_FORMAT_R8G8B8A8_UNORM; using BGRA8 causes swapchain creation
     // to fail and bgfx silently falls back to OpenGL ES.
-    init.resolution.formatColor = bgfx::TextureFormat::RGBA8;
+    //
+    // We probe the Vulkan device for its supported swapchain formats BEFORE
+    // bgfx::init runs, so a future device or HDR rendering target that needs
+    // a different format (e.g. RGB10A2) gets the right swapchain.  RGBA8 is
+    // mandatory per the Android CDD so the probe always returns something
+    // usable; on any failure path it falls back to RGBA8 anyway.
+    // See engine/rendering/AndroidVulkanFormatProbe.h.
+    init.resolution.formatColor =
+        probeAndroidSwapchainFormat(static_cast<ANativeWindow*>(desc.nativeWindowHandle));
+    __android_log_print(ANDROID_LOG_INFO, "SamaEngine", "Vulkan swapchain format: %s",
+                        bgfxSwapchainFormatName(init.resolution.formatColor));
 #ifdef SAMA_ANDROID_DEBUG_LAYERS
     // Enable Vulkan validation layer (requires libVkLayer_khronos_validation.so
     // packaged in the APK at lib/<abi>/).  bgfx auto-loads VK_LAYER_KHRONOS_validation
