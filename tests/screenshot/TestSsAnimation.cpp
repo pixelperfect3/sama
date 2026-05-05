@@ -179,7 +179,7 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
                                  0.05f, 50.f);
 
     RenderPass(kViewOpaque)
-        .framebuffer(fx.captureFb())
+        .framebuffer(fx.sceneFb())
         .rect(0, 0, fx.width(), fx.height())
         .clearColorAndDepth(0x1A1A2EFF)
         .transform(view, proj);
@@ -201,6 +201,8 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, uniforms, frame);
     drawCallSys.updateSkinned(reg, res, bgfx::ProgramHandle{skinnedPbrProg.idx}, uniforms, frame,
                               bones);
+
+    fx.runTonemap(engine::rendering::kViewPostProcessBase);
 
     auto pixels = fx.captureFrame();
 

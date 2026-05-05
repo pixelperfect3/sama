@@ -22,6 +22,8 @@
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
 
+#include "engine/rendering/RenderSettings.h"
+
 namespace engine::screenshot
 {
 
@@ -122,14 +124,19 @@ BgfxContext::~BgfxContext()
 
 ScreenshotFixture::ScreenshotFixture()
 {
-    // RGBA8 render target + D24 depth.
-    // BGRA8 is not universally supported as an RT on Metal/bgfx.
+    // PostProcessSystem owns the HDR scene fb (RGBA16F) and the tonemap /
+    // bloom / FXAA shader programs.  Lit tests bind sceneFb() (returned from
+    // postProcess_.resources().sceneFb()) as the opaque-pass target; tests
+    // call runTonemap() to convert to LDR before captureFrame().
+    postProcess_.init(kWidth, kHeight);
+    uniforms_.init();
+
+    // ----- LDR capture framebuffer (RGBA8 + D24) -----
+    // Final readback surface and direct target for UI / unlit tests.
     rtTex_ = bgfx::createTexture2D(kWidth, kHeight, false, 1, bgfx::TextureFormat::RGBA8,
                                    BGFX_TEXTURE_RT);
-
     depthTex_ =
         bgfx::createTexture2D(kWidth, kHeight, false, 1, bgfx::TextureFormat::D24, BGFX_TEXTURE_RT);
-
     bgfx::TextureHandle attachments[2] = {rtTex_, depthTex_};
     captureFb_ = bgfx::createFrameBuffer(2, attachments, false);
 
@@ -165,6 +172,7 @@ ScreenshotFixture::~ScreenshotFixture()
         bgfx::destroy(neutralNormalTex_);
     if (bgfx::isValid(whiteTex_))
         bgfx::destroy(whiteTex_);
+
     if (bgfx::isValid(blitTex_))
         bgfx::destroy(blitTex_);
     if (bgfx::isValid(captureFb_))
@@ -173,11 +181,34 @@ ScreenshotFixture::~ScreenshotFixture()
         bgfx::destroy(depthTex_);
     if (bgfx::isValid(rtTex_))
         bgfx::destroy(rtTex_);
+
+    uniforms_.destroy();
+    postProcess_.shutdown();
+}
+
+engine::rendering::FrameBufferHandle ScreenshotFixture::sceneFb() const
+{
+    return {postProcess_.resources().sceneFb().idx};
+}
+
+void ScreenshotFixture::runTonemap(engine::rendering::ViewId viewId)
+{
+    // Bloom / SSAO / FXAA all off — collapses to a single tonemap pass that
+    // reads the HDR scene fb and writes captureFb_ via PostProcessSystem's
+    // finalTarget override.  ACES tonemap + sRGB gamma exactly match the
+    // runtime path in Renderer::endFrame.
+    engine::rendering::PostProcessSettings settings;
+    settings.bloom.enabled = false;
+    settings.ssao.enabled = false;
+    settings.fxaaEnabled = false;
+    settings.toneMapper = engine::rendering::ToneMapper::ACES;
+
+    postProcess_.submit(settings, uniforms_, static_cast<bgfx::ViewId>(viewId), captureFb_);
 }
 
 std::vector<uint8_t> ScreenshotFixture::captureFrame()
 {
-    // Blit RT to readback texture (view 200 — well above pipeline's 0-47).
+    // Blit RT to readback texture (view 200 — well above pipeline's 0-51).
     bgfx::blit(200, blitTex_, 0, 0, rtTex_, 0, 0, kWidth, kHeight);
 
     // Schedule readback.  bgfx fills rgba after readbackFrame pump cycles.

@@ -129,7 +129,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
                                  0.05f, 50.f);
 
     RenderPass(kViewOpaque)
-        .framebuffer(fx.captureFb())
+        .framebuffer(fx.sceneFb())
         .rect(0, 0, fx.width(), fx.height())
         .clearColorAndDepth(0x1A1A2EFF)
         .transform(view, proj);
@@ -153,6 +153,8 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     // -----------------------------------------------------------------------
     // Capture, compare, cleanup
     // -----------------------------------------------------------------------
+
+    fx.runTonemap(engine::rendering::kViewPostProcessBase);
 
     auto pixels = fx.captureFrame();
 

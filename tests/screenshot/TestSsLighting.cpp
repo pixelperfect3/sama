@@ -33,7 +33,7 @@ TEST_CASE("screenshot: clustered lights scene", "[screenshot]")
                                  0.1f, 100.0f);
 
     engine::rendering::RenderPass(engine::rendering::kViewOpaque)
-        .framebuffer(fx.captureFb())
+        .framebuffer(fx.sceneFb())
         .rect(0, 0, fx.width(), fx.height())
         .clearColorAndDepth(0x101010ff)
         .transform(view, proj);
@@ -63,6 +63,8 @@ TEST_CASE("screenshot: clustered lights scene", "[screenshot]")
     bgfx::setIndexBuffer(mesh.ibh);
     bgfx::setState(BGFX_STATE_DEFAULT);
     bgfx::submit(engine::rendering::kViewOpaque, bgfx::ProgramHandle{prog.idx});
+
+    fx.runTonemap(engine::rendering::kViewPostProcessBase);
 
     auto pixels = fx.captureFrame();
 

@@ -75,7 +75,7 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
     // -----------------------------------------------------------------------
 
     engine::rendering::RenderPass(engine::rendering::kViewOpaque)
-        .framebuffer(fx.captureFb())
+        .framebuffer(fx.sceneFb())
         .rect(0, 0, fx.width(), fx.height())
         .clearColorAndDepth(0x404040ff)
         .transform(view, proj);
@@ -131,6 +131,8 @@ TEST_CASE("screenshot: shadow cubes scene", "[screenshot]")
         bgfx::setState(BGFX_STATE_DEFAULT);
         bgfx::submit(engine::rendering::kViewOpaque, bgfx::ProgramHandle{pbrProg.idx});
     }
+
+    fx.runTonemap(engine::rendering::kViewPostProcessBase);
 
     auto pixels = fx.captureFrame();
 

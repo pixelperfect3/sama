@@ -108,7 +108,7 @@ TEST_CASE("screenshot: IK two-bone solver", "[screenshot]")
                                  0.1f, 50.0f);
 
     engine::rendering::RenderPass(engine::rendering::kViewOpaque)
-        .framebuffer(fx.captureFb())
+        .framebuffer(fx.sceneFb())
         .rect(0, 0, fx.width(), fx.height())
         .clearColorAndDepth(0x202030ff)
         .transform(view, proj);
@@ -154,6 +154,8 @@ TEST_CASE("screenshot: IK two-bone solver", "[screenshot]")
     // Target position — yellow wireframe-ish (smaller cube)
     float matTarget[8] = {0.9f, 0.9f, 0.1f, 0.3f, 0.0f, 0.0f, 0.0f, 0.0f};
     drawCube(targetPos, 0.15f, matTarget);
+
+    fx.runTonemap(engine::rendering::kViewPostProcessBase);
 
     auto pixels = fx.captureFrame();
 
