@@ -14,8 +14,8 @@ void main()
 {
     vec3 dir = normalize(v_worldPos);
     vec4 sky = textureCube(s_skybox, dir);
-    // The IBL cubemap stores linear HDR; tonemap with a simple Reinhard so
-    // the editor scene exposure matches the rest of the PBR pipeline output.
-    vec3 mapped = sky.rgb / (sky.rgb + vec3(1.0, 1.0, 1.0));
-    gl_FragColor = vec4(mapped, 1.0);
+    // The IBL cubemap stores linear HDR; output it directly.
+    // Tonemap + sRGB gamma are owned by PostProcessSystem so any inline
+    // Reinhard here would double-correct (washed-out / overbright sky).
+    gl_FragColor = vec4(sky.rgb, 1.0);
 }

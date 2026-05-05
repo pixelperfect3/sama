@@ -472,7 +472,7 @@ int main()
         transformSys.update(reg);
 
         // -- Render -------------------------------------------------------
-        eng.renderer().beginFrameDirect();
+        eng.renderer().beginFrame();
 
         viewMat = cam.view();
         camPos = cam.position();

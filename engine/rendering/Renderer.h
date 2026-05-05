@@ -23,20 +23,32 @@ class Renderer
 public:
     bool init(const RendererDesc& desc);
 
-    // Routes kViewOpaque/Transparent to the HDR scene framebuffer for the
-    // full post-process chain (tonemap, bloom, FXAA).  Call this when shaders
-    // output linear HDR colour and the PostProcessSystem handles tonemapping.
+    // Routes kViewOpaque/Transparent to the HDR scene framebuffer.  endFrame()
+    // automatically submits the post-process chain (tonemap is mandatory; bloom,
+    // SSAO, FXAA are gated by the active RenderSettings).  Call this every frame
+    // — the legacy "direct to backbuffer" path was removed when the inline
+    // Reinhard tonemap was stripped from fs_pbr.sc (see NOTES.md "Phase 7
+    // unified post-process pipeline").
     void beginFrame();
 
-    // Routes kViewOpaque directly to the backbuffer — no post-processing.
-    // Use when the fragment shader handles tonemapping inline (e.g. a demo
-    // with the Phase-3 Reinhard placeholder in fs_pbr.sc).
-    void beginFrameDirect();
-
-    void endFrame();  // calls bgfx::frame()
+    void endFrame();  // submits post-process if not headless, then bgfx::frame()
     void shutdown();
     void resize(uint32_t w, uint32_t h);
     bool isHeadless() const;
+
+    // Render settings used by the auto post-process submit in endFrame().
+    // Defaults match a low-overhead "tonemap + gamma only" configuration:
+    // ACES tonemap on, bloom off, SSAO off, FXAA off.  Game code that wants
+    // bloom/FXAA/SSAO sets this once during init.
+    void setRenderSettings(const RenderSettings& settings)
+    {
+        renderSettings_ = settings;
+    }
+
+    [[nodiscard]] const RenderSettings& renderSettings() const
+    {
+        return renderSettings_;
+    }
 
     // Access the shared uniform handles (created once during init).
     // Needed by callers that submit draw calls or post-process passes.
@@ -46,7 +58,7 @@ public:
     }
 
     // Access the post-process system (e.g. to retrieve sceneFb for the
-    // opaque and transparent passes, or to call submit() at end of frame).
+    // opaque and transparent passes).
     PostProcessSystem& postProcess()
     {
         return postProcess_;
@@ -64,18 +76,23 @@ public:
 
 private:
     // Label the engine's built-in views (Shadow 0..7, Depth Prepass, Opaque,
-    // Transparent, UI 3D, ImGui) via bgfx::setViewName so they show up in
-    // perf overlays and GPU debuggers (RenderDoc, AGI, Instruments).  Called
-    // once from init() after bgfx::init succeeds.  kViewGameUi (48) and
+    // Transparent, ImGui, UI) via bgfx::setViewName so they show up in perf
+    // overlays and GPU debuggers (RenderDoc, AGI, Instruments).  Called once
+    // from init() after bgfx::init succeeds.  kViewGameUi (48) and
     // kViewDebugHud (49) are owned by the game / DebugHud respectively;
     // post-process sub-pass views are labelled by PostProcessSystem.
     void setupDefaultViewNames();
+
+    // Default settings — cheapest valid post-process: ACES tonemap on, every
+    // bloom/SSAO/FXAA pass off.  Cheap enough to run unconditionally.
+    static RenderSettings makeDefaultSettings();
 
     bool initialized_ = false;
     bool headless_ = false;
 
     ShaderUniforms uniforms_;
     PostProcessSystem postProcess_;
+    RenderSettings renderSettings_ = makeDefaultSettings();
 };
 
 }  // namespace engine::rendering

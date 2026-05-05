@@ -222,7 +222,8 @@ void PostProcessSystem::resize(uint16_t w, uint16_t h)
 // ---------------------------------------------------------------------------
 
 bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
-                                       const ShaderUniforms& uniforms, bgfx::ViewId firstViewId)
+                                       const ShaderUniforms& uniforms, bgfx::ViewId firstViewId,
+                                       bgfx::FrameBufferHandle finalTarget)
 {
     bgfx::ViewId viewId = firstViewId;
     const uint16_t w = resources_.width();
@@ -332,20 +333,28 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
     // ------------------------------------------------------------------
     {
         const bool needFxaa = settings.fxaaEnabled;
-        bgfx::FrameBufferHandle tonemapTarget =
-            needFxaa ? resources_.ldrFb() : bgfx::FrameBufferHandle{bgfx::kInvalidHandle};
+        // FXAA always reads from ldrFb; without FXAA, the tonemap pass is the
+        // last write so it targets `finalTarget` (the backbuffer when callers
+        // accept the default invalid handle, or a capture FB for tests).
+        bgfx::FrameBufferHandle tonemapTarget = needFxaa ? resources_.ldrFb() : finalTarget;
 
         bgfx::setTexture(0, uniforms.s_hdrColor, resources_.hdrColor());
 
         if (settings.bloom.enabled && steps > 0)
         {
-            bgfx::setUniform(uniforms.u_bloomParams, bloomParamsData);
+            // The bloom upsample chain already baked u_bloomParams.y
+            // (intensity) into bloomLevel[0].  Set the tonemap intensity to
+            // 1 so fs_tonemap's `bloom * u_bloomParams.y` doesn't apply it
+            // a second time.
+            const float tonemapBloomParams[4] = {settings.bloom.threshold, 1.0f, 0.0f, 0.0f};
+            bgfx::setUniform(uniforms.u_bloomParams, tonemapBloomParams);
             bgfx::setTexture(1, uniforms.s_bloomTex, resources_.bloomLevel(0));
         }
         else
         {
-            // Point the bloom sampler at hdrColor with intensity=0 so the
-            // shader's bloom contribution is zero (threshold pass was skipped).
+            // Bloom disabled — point the bloom sampler at hdrColor (we still
+            // need a real texture in slot 1) and zero the intensity so
+            // fs_tonemap's `bloom * u_bloomParams.y` drops out cleanly.
             float zeroBloom[4] = {settings.bloom.threshold, 0.0f, 0.0f, 0.0f};
             bgfx::setUniform(uniforms.u_bloomParams, zeroBloom);
             bgfx::setTexture(1, uniforms.s_bloomTex, resources_.hdrColor());
@@ -375,9 +384,11 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
         bgfx::setUniform(uniforms.u_texelSize, texelSizeData);
         bgfx::setTexture(0, uniforms.s_ldrColor, resources_.ldrColor());
 
-        // Final pass always targets the backbuffer.
+        // FXAA is the final pass — write to `finalTarget` (backbuffer when
+        // callers leave it as the default invalid handle, or a screenshot
+        // capture FB when tests need to read pixels back).
         bgfx::setViewName(viewId, "FXAA");
-        bgfx::setViewFrameBuffer(viewId, BGFX_INVALID_HANDLE);
+        bgfx::setViewFrameBuffer(viewId, finalTarget);
         bgfx::setViewRect(viewId, 0, 0, w, h);
         bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
         bgfx::setVertexBuffer(0, fsTriVb_);

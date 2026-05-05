@@ -81,11 +81,10 @@ FrameStats sampleFrameStats()
         const float passGpuMs = ticksToMs(v.gpuTimeEnd - v.gpuTimeBegin, gpuFreq);
 
         // Heuristic: when a view's framebuffer is reconfigured mid-frame
-        // (e.g. Renderer::beginFrameDirect swapping kViewOpaque between
-        // scene-FB and backbuffer) bgfx's begin/end timestamps come from
-        // inconsistent contexts and produce nonsense readings.  Negative
-        // or absurdly-large values are flagged invalid so consumers can
-        // skip them rather than printing garbage.
+        // bgfx's begin/end timestamps come from inconsistent contexts and
+        // produce nonsense readings.  Negative or absurdly-large values are
+        // flagged invalid so consumers can skip them rather than printing
+        // garbage.
         // TODO: tunable threshold — 100ms was the empirical cutoff observed
         // in sample_game's perf overlay before this API existed.
         const bool gpuValid = passGpuMs >= 0.0f && passGpuMs < 100.0f;

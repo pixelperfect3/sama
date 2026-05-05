@@ -728,13 +728,14 @@ bool Engine::beginFrame(float& outDt)
         androidGyro_->update(inputState_);
     }
 
-    // -- Renderer begin (direct-to-backbuffer) ----------------------------
-    // Matches all desktop demos: Engine sets up a direct-render frame and any
-    // app that wants post-processing calls renderer().beginFrame() +
-    // renderer().postProcess().submit() itself. Post-process shaders are
-    // available on Android (see android/compile_shaders.sh) so apps can opt
-    // in identically to desktop.
-    renderer_.beginFrameDirect();
+    // -- Renderer begin (HDR scene fb + auto post-process) ---------------
+    // Matches every desktop demo.  fs_pbr.sc writes linear HDR; Renderer::
+    // endFrame() submits the tonemap pass that converts to sRGB-gamma LDR
+    // for the backbuffer.  Bloom / SSAO / FXAA stay off by default — apps
+    // opt in via renderer().setRenderSettings() during init.  Pre-Phase 7
+    // builds called beginFrameDirect() and the inline Reinhard tonemap in
+    // fs_pbr.sc handled gamma; that path is gone (see NOTES.md).
+    renderer_.beginFrame();
 
     // -- ImGui begin frame ------------------------------------------------
     // Map the synthesized primary touch (AndroidInputBackend turns the first
@@ -1003,8 +1004,9 @@ bool Engine::beginFrame(float& outDt)
         iosGyro_->update(inputState_);
     }
 
-    // -- Renderer begin (direct-to-backbuffer) ----------------------------
-    renderer_.beginFrameDirect();
+    // -- Renderer begin (HDR scene fb + auto post-process) ---------------
+    // See the Android branch above for details — same contract on iOS.
+    renderer_.beginFrame();
 
     // -- View 0 clear / rect / touch --------------------------------------
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor_, 1.0f, 0);

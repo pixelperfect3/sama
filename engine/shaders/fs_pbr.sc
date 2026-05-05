@@ -336,17 +336,10 @@ void main()
     vec3 emissive = texture2D(s_emissive, v_texcoord0).rgb * emissiveScale;
 
     // -----------------------------------------------------------------------
-    // Combine, tonemap, and gamma-correct.
-    // Inline Reinhard tonemap — Phase 7 will replace this with a full
-    // post-process pass (ACES or Uncharted2 from RenderSettings).
+    // Output linear HDR.  Tonemap + gamma are owned by PostProcessSystem's
+    // tonemap pass (fs_tonemap.sc, ACES) so the shader cannot double-correct.
     // -----------------------------------------------------------------------
     vec3 color = ambient + Lo + emissive;
-
-    // Reinhard
-    color = color / (color + vec3_splat(1.0));
-
-    // Gamma correction (sRGB, gamma = 2.2)
-    color = pow(color, vec3_splat(1.0 / 2.2));
 
     // Opacity = material opacity * albedo texture alpha.
     // u_material[1].z carries the material opacity (albedo.w).

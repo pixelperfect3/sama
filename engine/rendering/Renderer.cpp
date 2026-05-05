@@ -173,16 +173,6 @@ void Renderer::beginFrame()
     RenderPass(kViewShadowBase).touch();
 }
 
-void Renderer::beginFrameDirect()
-{
-    if (!initialized_)
-        return;
-
-    // kViewOpaque writes directly to the backbuffer — bypass post-processing.
-    RenderPass(kViewOpaque).framebuffer();
-    RenderPass(kViewShadowBase).touch();
-}
-
 void Renderer::endFrame()
 {
     if (!initialized_)
@@ -190,7 +180,28 @@ void Renderer::endFrame()
         return;
     }
 
+    // Auto-submit the post-process chain.  The PBR shader (fs_pbr.sc) writes
+    // linear HDR; the tonemap pass converts to sRGB-gamma LDR for the
+    // backbuffer.  Skip in headless mode (Noop renderer has no shaders).
+    if (!headless_)
+    {
+        postProcess_.submit(renderSettings_.postProcess, uniforms_);
+    }
+
     bgfx::frame();
+}
+
+RenderSettings Renderer::makeDefaultSettings()
+{
+    // Cheapest valid post-process: tonemap + sRGB gamma only.  Bloom, SSAO,
+    // and FXAA each cost extra view IDs and shader work, so they are off by
+    // default — game code opts in via setRenderSettings() during init.
+    RenderSettings settings;
+    settings.postProcess.bloom.enabled = false;
+    settings.postProcess.ssao.enabled = false;
+    settings.postProcess.fxaaEnabled = false;
+    settings.postProcess.toneMapper = ToneMapper::ACES;
+    return settings;
 }
 
 void Renderer::shutdown()

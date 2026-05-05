@@ -329,15 +329,14 @@ int main()
         cam.update(inputState, applyMouse, dt);
 
         // -- Begin frame ------------------------------------------------------
-        // beginFrameDirect() routes kViewOpaque to the backbuffer and calls
-        // bgfx::touch(0).  The inline Reinhard in fs_pbr.sc handles tonemapping;
-        // Phase 7 will remove it and switch to renderer.beginFrame() +
-        // postProcess.submit() for the full post-process chain.
-        renderer.beginFrameDirect();
+        // beginFrame() routes kViewOpaque to the HDR scene framebuffer and
+        // touches view 0; Renderer::endFrame() submits the tonemap pass that
+        // converts to sRGB-gamma LDR for the backbuffer.
+        renderer.beginFrame();
 
         // -- Shadow pass (view 0) ---------------------------------------------
-        // Must be called after beginFrameDirect() so that bgfx::touch(0) in
-        // beginFrameDirect() doesn't override beginCascade's view rect.
+        // Must be called after beginFrame() so that bgfx::touch(0) in
+        // beginFrame() doesn't override beginCascade's view rect.
         // bgfx view state is "last write wins" — beginCascade's setViewRect
         // sets the shadow atlas dimensions (2048×2048) which must not be
         // overridden later in the frame.

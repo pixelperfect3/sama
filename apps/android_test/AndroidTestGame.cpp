@@ -382,9 +382,9 @@ public:
 
         // Post-process toggle hit-test — top 15% of screen, right 30%.
         // A Began-phase touch in this rectangle (or a Began left-click on
-        // desktop) flips postProcessEnabled_, switching the per-frame render
-        // path between Engine::beginFrameDirect (default) and
-        // renderer().beginFrame() + postProcess().submit().
+        // desktop) flips postProcessEnabled_, which gates the bloom + FXAA
+        // passes in Renderer::endFrame's auto post-process submit.  The
+        // tonemap pass always runs (fs_pbr.sc outputs linear HDR).
         auto inToggleRect = [&](float px, float py) -> bool
         { return px >= fbW * 0.70f && py <= fbH * 0.15f; };
         for (const auto& touch : input.touches())
@@ -639,16 +639,19 @@ public:
         const auto W = engine.fbWidth();
         const auto H = engine.fbHeight();
 
-        // Opt-in post-process path. Re-binds kViewOpaque/Transparent to the
-        // HDR scene framebuffer so the bloom + tonemap + FXAA chain has
-        // something to read.  Must be called BEFORE the kViewOpaque
-        // RenderPass setup so the framebuffer binding wins over the
-        // backbuffer binding installed by Engine::beginFrame's
-        // beginFrameDirect call.  See docs/ANDROID_SUPPORT.md, the
-        // "Post-process shaders available" entry, for the rationale.
-        if (postProcessEnabled_)
+        // Opt the bloom + FXAA passes in or out via RenderSettings — the
+        // Renderer's auto post-process submit (in endFrame) reads this and
+        // gates the extra passes accordingly.  The tonemap pass always runs
+        // because fs_pbr.sc outputs linear HDR.
         {
-            engine.renderer().beginFrame();
+            engine::rendering::RenderSettings rs = engine.renderer().renderSettings();
+            rs.postProcess.bloom.enabled = postProcessEnabled_;
+            rs.postProcess.bloom.threshold = 0.5f;
+            rs.postProcess.bloom.intensity = 0.6f;
+            rs.postProcess.bloom.downsampleSteps = 5;
+            rs.postProcess.fxaaEnabled = postProcessEnabled_;
+            rs.postProcess.ssao.enabled = false;  // requires depth prepass
+            engine.renderer().setRenderSettings(rs);
         }
 
         RenderPass(kViewOpaque)
@@ -722,26 +725,11 @@ public:
         drawCallSys_.update(registry, engine.resources(),
                             bgfx::ProgramHandle{engine.pbrProgram().idx}, engine.uniforms(), frame);
 
-        // Post-process submit: bloom + tonemap + FXAA passes consume the HDR
-        // scene framebuffer that beginFrame() bound above and write the final
-        // LDR result to the backbuffer.  Threshold/intensity are pushed off
-        // their defaults because the PBR shader does inline Reinhard tonemap
-        // (post-tonemap brightness is squashed into [0,1] so the default 1.0
-        // threshold would fire on nothing).  These values produce a clearly
-        // visible halo around the bright emitter — the visual signal that
-        // proves the chain executed end-to-end.
-        if (postProcessEnabled_)
-        {
-            engine::rendering::PostProcessSettings settings;
-            settings.bloom.enabled = true;
-            settings.bloom.threshold = 0.5f;
-            settings.bloom.intensity = 0.6f;
-            settings.bloom.downsampleSteps = 5;
-            settings.fxaaEnabled = true;
-            settings.ssao.enabled = false;  // requires depth prepass; not wired here
-            engine.renderer().postProcess().submit(settings, engine.uniforms(),
-                                                   engine::rendering::kViewPostProcessBase);
-        }
+        // Post-process is auto-submitted by Renderer::endFrame using the
+        // RenderSettings we set above (bloom + FXAA gated by the toggle,
+        // tonemap always on).  The bright emissive cube at (1.5, 1.4, 0)
+        // produces a clearly visible halo when bloom is on — the visual
+        // signal that proves the chain executed end-to-end.
 
         // --- Text overlay via UiRenderer ---
         {
@@ -775,9 +763,10 @@ public:
             y += lineH;
 
             // Post-process status — tap upper-right corner to toggle.
-            // ON  = renderer().beginFrame() + postProcess().submit() — bloom
-            //       around the bright emitter, ACES tonemap, FXAA.
-            // OFF = beginFrameDirect path (Engine default, no post chain).
+            // Tonemap always runs (fs_pbr.sc outputs linear HDR); the toggle
+            // gates the optional bloom + FXAA passes.
+            // ON  = bloom around the bright emitter + FXAA edge smoothing.
+            // OFF = tonemap + sRGB gamma only (cheap mobile default).
             snprintf(buf, sizeof(buf), "Post: %s   (tap upper-right to toggle)",
                      postProcessEnabled_ ? "ON " : "OFF");
             drawList_.drawText({leftMargin, y}, buf, postProcessEnabled_ ? green : white, &font_,
@@ -1029,10 +1018,11 @@ private:
     uint32_t lightMatId_ = 0;
     uint32_t brightEmitterMatId_ = 0;
 
-    // Post-process opt-in toggle.  Default OFF — Engine::beginFrame on
-    // Android calls beginFrameDirect, matching every desktop demo.  Tapping
-    // the upper-right corner flips this; ON wires renderer().beginFrame() +
-    // postProcess().submit() so the bloom + tonemap + FXAA chain runs.
+    // Post-process opt-in toggle.  Default OFF — tonemap always runs (see
+    // Renderer::endFrame), so OFF still produces correct sRGB output; the
+    // toggle gates the optional bloom + FXAA passes that the bright emissive
+    // cube relies on as a visual signal.  Tapping the upper-right corner
+    // flips this and feeds the value into RenderSettings each frame.
     bool postProcessEnabled_ = false;
 
 #ifdef __ANDROID__

@@ -254,7 +254,7 @@ int main()
 
         // -- Render -----------------------------------------------------------
         double frameStart = glfwGetTime();
-        eng.renderer().beginFrameDirect();
+        eng.renderer().beginFrame();
 
         // Shadow pass
         eng.shadow().beginCascade(0, lightView, lightProj);

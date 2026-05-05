@@ -59,9 +59,15 @@ public:
     // firstViewId is typically kViewPostProcessBase.
     // SSAO (if settings.ssao.enabled) runs on firstViewId; bloom and tonemap
     // follow on subsequent view IDs.
+    // finalTarget overrides the backbuffer as the destination for the last
+    // pass (tonemap when FXAA is off, FXAA when enabled).  Pass an invalid
+    // handle (the default) to write to the active swapchain backbuffer; pass
+    // a real framebuffer to capture the output (used by screenshot tests).
     // Returns the next available view ID after all submitted passes.
     bgfx::ViewId submit(const PostProcessSettings& settings, const ShaderUniforms& uniforms,
-                        bgfx::ViewId firstViewId = kViewPostProcessBase);
+                        bgfx::ViewId firstViewId = kViewPostProcessBase,
+                        bgfx::FrameBufferHandle finalTarget = bgfx::FrameBufferHandle{
+                            bgfx::kInvalidHandle});
 
     // Read-only access to the SSAO sub-system (e.g. to bind ssaoMap to PBR).
     const SsaoSystem& ssaoSystem() const

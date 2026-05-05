@@ -749,7 +749,7 @@ int main()
 
         // -- Render -----------------------------------------------------------
         double frameStart = glfwGetTime();
-        eng.renderer().beginFrameDirect();
+        eng.renderer().beginFrame();
 
         // Recompute view/proj (camera may have moved from orbit/WASD).
         viewMat = cam.view();

@@ -402,7 +402,7 @@ int main()
 
         // -- Render -----------------------------------------------------------
         double frameStart = glfwGetTime();
-        eng.renderer().beginFrameDirect();
+        eng.renderer().beginFrame();
 
         glm::mat4 viewMat = cam.view();
         glm::vec3 camPos = cam.position();

@@ -490,7 +490,7 @@ void PhysicsGame::onUpdate(Engine& engine, Registry& registry, float dt)
 void PhysicsGame::onRender(Engine& engine)
 {
     double frameStart = glfwGetTime();
-    engine.renderer().beginFrameDirect();
+    engine.renderer().beginFrame();
 
     const float fbW = static_cast<float>(engine.fbWidth());
     const float fbH = static_cast<float>(engine.fbHeight());

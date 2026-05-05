@@ -481,7 +481,7 @@ int main()
         audioSys.update(reg);
 
         // -- Render -----------------------------------------------------------
-        eng.renderer().beginFrameDirect();
+        eng.renderer().beginFrame();
 
         glm::mat4 viewMat = cam.view();
         glm::vec3 camPos = cam.position();
