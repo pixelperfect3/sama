@@ -69,8 +69,12 @@ private:
     // Line width in world-space units (will be scaled by distance).
     static constexpr float kLineWidth = 0.012f;
 
-    // View ID for gizmo overlay rendering.
-    static constexpr bgfx::ViewId kGizmoView = 50;
+    // View ID for gizmo overlay rendering.  Sits above kViewImGui (50) and
+    // kViewUi (51) so editor gizmos render on top of the HUD overlay and the
+    // game UI.  Pre-Phase-7 the engine UI lived at views 14/15 and gizmo
+    // could safely use view 50; the unified post-process pipeline moved
+    // engine UI into 48-51, so editor overlays must move past that range.
+    static constexpr bgfx::ViewId kGizmoView = 52;
 };
 
 }  // namespace engine::editor

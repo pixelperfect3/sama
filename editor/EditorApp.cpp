@@ -85,6 +85,7 @@
 #include "engine/rendering/SkyboxRenderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
+#include "engine/rendering/systems/PostProcessSystem.h"
 #include "engine/scene/HierarchyComponents.h"
 #include "engine/scene/NameComponent.h"
 #include "engine/scene/SceneGraph.h"
@@ -124,6 +125,16 @@ struct EditorApp::Impl
     bgfx::ProgramHandle pbrProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle skinnedPbrProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle shadowProgram = BGFX_INVALID_HANDLE;
+
+    // Post-process — owns the HDR scene framebuffer and the tonemap shader.
+    // The editor binds kViewOpaque to postProcess.resources().sceneFb() so
+    // PBR (which now outputs linear HDR) writes there; postProcess.submit()
+    // tonemaps to the backbuffer every frame.  This also fixes the "viewport
+    // goes black when idle" bug — the sceneFb persists between frames, so
+    // the tonemap pass keeps presenting it even when no scene draws are
+    // re-submitted.
+    engine::rendering::PostProcessSystem postProcess;
+    bool postProcessInitialized = false;
 
     // Default textures
     bgfx::TextureHandle whiteTex = BGFX_INVALID_HANDLE;
@@ -1282,6 +1293,15 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     // -- Uniforms -------------------------------------------------------------
     impl_->uniforms.init();
     startupSamples.push_back({"uniforms", startupNow()});
+
+    // -- Post-process (HDR scene FB + ACES tonemap) --------------------------
+    // Owns the offscreen scene framebuffer that kViewOpaque writes into.
+    // submit() runs every frame so the tonemap pass converts linear HDR PBR
+    // output to sRGB-gamma LDR for the backbuffer.  Because the scene FB is
+    // persistent, idle frames (viewportDirty=false) can skip scene re-
+    // submission and the tonemap pass still re-presents the last scene.
+    impl_->postProcess.init(impl_->fbW, impl_->fbH);
+    impl_->postProcessInitialized = true;
 
     // -- Shader programs ------------------------------------------------------
     // ShaderLoader returns engine::rendering::ProgramHandle (bgfx-free
@@ -2722,6 +2742,7 @@ void EditorApp::run()
             bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(fbW), static_cast<uint16_t>(fbH));
             impl_->fbW = static_cast<uint16_t>(fbW);
             impl_->fbH = static_cast<uint16_t>(fbH);
+            impl_->postProcess.resize(impl_->fbW, impl_->fbH);
             impl_->viewportDirty = true;
         }
 
@@ -4000,9 +4021,22 @@ void EditorApp::run()
         // submission below, so the GPU just re-presents the previous frame.
         const bool renderViewport = impl_->viewportDirty;
 
-        // Main scene on kViewOpaque (view 9).
+        // Main scene on kViewOpaque (view 9).  Routes into the post-process
+        // HDR scene FB so PBR's linear HDR output gets tonemapped to the
+        // backbuffer in postProcess.submit() below.  Clear is only set when
+        // dirty so idle frames preserve the previously-rendered scene FB —
+        // the tonemap pass keeps presenting it without a re-draw.
         bgfx::setViewRect(kViewOpaque, 0, 0, W, H);
-        bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f, 0);
+        bgfx::setViewFrameBuffer(kViewOpaque, impl_->postProcess.resources().sceneFb());
+        if (renderViewport)
+        {
+            bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f,
+                               0);
+        }
+        else
+        {
+            bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_NONE);
+        }
         bgfx::setViewTransform(kViewOpaque, glm::value_ptr(viewMtx), glm::value_ptr(projMtx));
         if (!renderViewport)
         {
@@ -4121,22 +4155,46 @@ void EditorApp::run()
             impl_->skybox.render(kViewOpaque, engine::rendering::TextureHandle{
                                                   impl_->iblResources.prefiltered().idx});
 
-            // -- Gizmo rendering --------------------------------------------------
-            // Hide all editor gizmos in Play/Paused mode so the viewport shows a
-            // clean preview of the running game (Unity/Unreal/Godot convention).
-            if (impl_->editorState.playState() == EditorPlayState::Editing)
-            {
-                EntityID selE = impl_->editorState.primarySelection();
-                if (selE != INVALID_ENTITY)
-                {
-                    impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
-                }
+            ++impl_->viewportRedrawCount;
+        }
 
-                // Light gizmos (directional cylinder + arrows, point light icon).
-                impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
+        // -- Gizmo rendering --------------------------------------------------
+        // Submitted EVERY frame (not gated on viewportDirty) because the
+        // gizmo writes to its own view (kGizmoView=52) which targets the
+        // backbuffer — and the post-process tonemap pass below overwrites
+        // the backbuffer each frame.  If we only submitted on dirty frames,
+        // the gizmo would vanish on the first idle frame after a redraw.
+        // Hide all editor gizmos in Play/Paused mode so the viewport shows a
+        // clean preview of the running game (Unity/Unreal/Godot convention).
+        if (impl_->editorState.playState() == EditorPlayState::Editing)
+        {
+            EntityID selE = impl_->editorState.primarySelection();
+            if (selE != INVALID_ENTITY)
+            {
+                impl_->gizmoRenderer.render(*impl_->gizmo, viewMtx, projMtx, W, H);
             }
 
-            ++impl_->viewportRedrawCount;
+            // Light gizmos (directional cylinder + arrows, point light icon).
+            impl_->gizmoRenderer.renderLightGizmos(impl_->registry, viewMtx, projMtx, W, H);
+        }
+
+        // -- Post-process: tonemap HDR scene FB → backbuffer ------------------
+        // Runs every frame (dirty or idle).  PBR (fs_pbr.sc) outputs linear
+        // HDR; this pass applies ACES + sRGB gamma and writes the LDR result
+        // to the backbuffer.  Bloom / SSAO / FXAA stay off — they would cost
+        // extra view IDs and the editor doesn't need them yet.
+        // On idle frames the kViewOpaque scene FB is unchanged, but the
+        // tonemap pass still re-presents it, fixing the "viewport goes black
+        // when idle" behaviour the dirty-flag path used to produce.
+        {
+            engine::rendering::PostProcessSettings ppSettings;
+            ppSettings.bloom.enabled = false;
+            ppSettings.ssao.enabled = false;
+            ppSettings.fxaaEnabled = false;
+            ppSettings.toneMapper = engine::rendering::ToneMapper::ACES;
+            impl_->postProcess.submit(ppSettings, impl_->uniforms,
+                                      engine::rendering::kViewPostProcessBase,
+                                      bgfx::FrameBufferHandle{bgfx::kInvalidHandle});
         }
 
         // -- Native panel updates (dirty-flag guarded) ------------------------
@@ -4152,14 +4210,15 @@ void EditorApp::run()
         impl_->syncConsoleView();
 
         // -- HUD (viewport overlay: FPS, gizmo mode, shortcuts, status) -------
-        // Built every frame the viewport is being redrawn as a UiDrawList of
-        // text commands and submitted on view kViewImGui through the engine's
-        // UiRenderer + the JetBrains Mono MSDF font (loaded once in init()).
-        // Falls back to bgfx debug text if the font failed to load. When the
-        // viewport is idle we still touch view kViewImGui so it persists, but
-        // we do not rebuild or resubmit the overlay (it's already on screen
-        // from the previous frame).
-        if (renderViewport)
+        // Built EVERY frame as a UiDrawList of text commands, submitted on
+        // view kViewImGui through the engine's UiRenderer + JetBrains Mono
+        // MSDF font (loaded once in init()).  Pre-Phase-7 the editor skipped
+        // the rebuild on idle frames and just touched the view to keep it
+        // alive (the swapchain re-presented the previous backbuffer).  That
+        // optimisation no longer holds: the post-process tonemap pass at
+        // view kViewPostProcessBase rewrites the entire backbuffer every
+        // frame, so anything we don't re-submit on top — HUD, gizmo — is
+        // wiped.  Falls back to bgfx debug text if the font failed to load.
         {
             bgfx::dbgTextClear();
 
@@ -4262,14 +4321,6 @@ void EditorApp::run()
                 }
             }
         }
-        else
-        {
-            // Idle path: keep the HUD overlay view alive so the swapchain
-            // re-presents the previously-submitted text.
-            bgfx::setViewRect(kViewImGui, 0, 0, impl_->fbW, impl_->fbH);
-            bgfx::setViewClear(kViewImGui, BGFX_CLEAR_NONE);
-            bgfx::touch(kViewImGui);
-        }
 
         // -- Animation system + panel ----------------------------------------
         // The editor runs the animation system unconditionally (not gated on
@@ -4369,6 +4420,13 @@ void EditorApp::shutdown()
     // Tear down HUD font + UI renderer.
     impl_->hudFont.shutdown();
     impl_->uiRenderer.shutdown();
+
+    // Tear down post-process (HDR scene FB + tonemap shader).
+    if (impl_->postProcessInitialized)
+    {
+        impl_->postProcess.shutdown();
+        impl_->postProcessInitialized = false;
+    }
 
     // Shut down physics (destroys all remaining bodies internally).
     impl_->physics.shutdown();
