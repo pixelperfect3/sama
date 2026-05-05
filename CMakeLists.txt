@@ -1676,6 +1676,11 @@ if(SAMA_IOS)
     add_executable(ios_test MACOSX_BUNDLE
         ${SAMA_ROOT_DIR}/apps/ios_test/IosTestGame.mm
         ${SAMA_ROOT_DIR}/apps/ios_test/main.mm
+        # VirtualJoystick lives in engine/platform/android/ but its .cpp is
+        # pure C++ (no Android headers).  Link it directly so the iOS
+        # joystick overlay matches the Android demo without needing a new
+        # cross-platform library.
+        ${SAMA_ROOT_DIR}/engine/platform/android/VirtualJoystick.cpp
     )
     target_include_directories(ios_test PRIVATE ${SAMA_ROOT_DIR})
     # Link the full engine stack so the smoke test can opt into engine_core /

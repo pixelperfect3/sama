@@ -1,24 +1,36 @@
 // iOS Test — port of apps/android_test/AndroidTestGame.cpp.
 //
-// Demonstrates the same gameplay/visualization features as the Android test
-// app on iOS:
+// Renders the same scene + interactions as the Android demo so the two test
+// apps stay at feature parity:
 //
-//   - Touch (drag): leaves a colored hue trail; X position drives base hue.
-//   - Multi-touch: each finger contributes a dot.
-//   - Gyro: tilt forward/back adjusts brightness; yaw shifts hue.
-//   - DamagedHelmet glTF scene with ground plane and orbiting light, lit by
-//     a directional light + shadow cascade pass (same as Android).
-//   - DebugHud overlay: FPS, frame time, touch count, gyro pitch/yaw/roll,
-//     gravity vector, helmet load status, controls.
+//   - PBR DamagedHelmet on a ground plane, lit by an orbiting directional
+//     light + shadow cascade 0.
+//   - Bright emissive cube at (1.5, 1.4, 0) emissiveScale=15 — the
+//     post-process bloom regression signal.
+//   - GestureRecognizer: pinch scales the helmet, pan orbits the camera.
+//   - Virtual joystick (lower-left) rendered via VirtualJoystickRenderer.
+//   - HUD overlay: fps, frame time, screen size, post-process state, mouse,
+//     touches, gyro, gravity, hue/brightness, joystick, gesture, helmet
+//     load status.
+//   - Post-process toggle: tap upper-right corner (top 15%, right 30%) to
+//     flip RenderSettings.bloom.enabled + fxaaEnabled.
+//   - Audio smoke: procedural 440Hz / 0.3s WAV played once at init and on
+//     every new touch.
 //
-// Objective-C++ (.mm) is required only because the file lives next to the
-// iOS application bootstrap and is compiled by the iOS toolchain. The bulk
-// of the game logic is plain C++ that mirrors AndroidTestGame line-for-line;
-// the only iOS-specific code is constructing IosFileSystem in onInit().
+// iOS-specific bits (all gated by `__APPLE__ && TARGET_OS_IPHONE`):
+//   - Gyroscope wiring lives inside Engine::initIos via IosGyro.
+//   - The native iOS app shell (main.mm + IosApp.mm) is unchanged here.
+//   - NSLog is unused — we only stderr-printf for parity with the previous
+//     iOS smoke prints.
 //
-// Build wiring (CMakeLists.txt) and Engine::initIos(...) integration are
-// handled by other agents — this file uses only public engine APIs that
-// already exist for Android.
+// ImGui: not wired on iOS yet (Phase 7 NOTES.md follow-up).  See the
+// "TODO: iOS ImGui not wired" comment in onUpdate.
+//
+// Objective-C++ (.mm) is required because the file lives next to the iOS
+// application bootstrap and is compiled by the iOS toolchain.  All game
+// logic is plain C++ that mirrors AndroidTestGame line-for-line.
+
+#include <TargetConditionals.h>
 
 #include <algorithm>
 #include <cmath>
@@ -36,11 +48,14 @@
 #include "engine/assets/GltfLoader.h"
 #include "engine/assets/GltfSceneSpawner.h"
 #include "engine/assets/TextureLoader.h"
+#include "engine/audio/IAudioEngine.h"
 #include "engine/core/Engine.h"
 #include "engine/ecs/Registry.h"
 #include "engine/game/IGame.h"
+#include "engine/input/GestureRecognizer.h"
 #include "engine/input/InputState.h"
 #include "engine/input/Key.h"
+#include "engine/platform/android/VirtualJoystick.h"  // pure-C++ helper, namespace engine::platform
 #include "engine/platform/ios/IosApp.h"
 #include "engine/platform/ios/IosFileSystem.h"
 #include "engine/rendering/EcsComponents.h"
@@ -48,14 +63,17 @@
 #include "engine/rendering/Material.h"
 #include "engine/rendering/MeshBuilder.h"
 #include "engine/rendering/RenderPass.h"
+#include "engine/rendering/RenderSettings.h"
+#include "engine/rendering/Renderer.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 #include "engine/scene/TransformSystem.h"
 #include "engine/threading/ThreadPool.h"
-#include "engine/ui/DebugHud.h"
+#include "engine/ui/BitmapFont.h"
 #include "engine/ui/MsdfFont.h"
 #include "engine/ui/UiDrawList.h"
 #include "engine/ui/UiRenderer.h"
+#include "engine/ui/VirtualJoystickRenderer.h"
 
 using namespace engine::core;
 using namespace engine::ecs;
@@ -65,6 +83,58 @@ using namespace engine::rendering;
 
 namespace
 {
+
+// Procedural mono 16-bit PCM WAV with a fade-in/fade-out envelope.  Mirrors
+// AndroidTestGame::generateToneWav so the iOS audio smoke test doesn't need
+// any asset bundled into the .app to verify the SoLoud + miniaudio CoreAudio
+// path.
+std::vector<uint8_t> generateToneWav(float frequencyHz, float durationSec,
+                                     float sampleRate = 44100.0f)
+{
+    uint32_t numSamples = static_cast<uint32_t>(sampleRate * durationSec);
+    uint32_t dataSize = numSamples * 2;
+    uint32_t fileSize = 44 + dataSize;
+
+    std::vector<uint8_t> wav(fileSize);
+
+    std::memcpy(&wav[0], "RIFF", 4);
+    uint32_t chunkSize = fileSize - 8;
+    std::memcpy(&wav[4], &chunkSize, 4);
+    std::memcpy(&wav[8], "WAVE", 4);
+    std::memcpy(&wav[12], "fmt ", 4);
+    uint32_t subchunk1Size = 16;
+    std::memcpy(&wav[16], &subchunk1Size, 4);
+    uint16_t audioFormat = 1;
+    std::memcpy(&wav[20], &audioFormat, 2);
+    uint16_t numChannels = 1;
+    std::memcpy(&wav[22], &numChannels, 2);
+    uint32_t sr = static_cast<uint32_t>(sampleRate);
+    std::memcpy(&wav[24], &sr, 4);
+    uint32_t byteRate = sr * 2;
+    std::memcpy(&wav[28], &byteRate, 4);
+    uint16_t blockAlign = 2;
+    std::memcpy(&wav[32], &blockAlign, 2);
+    uint16_t bitsPerSample = 16;
+    std::memcpy(&wav[34], &bitsPerSample, 2);
+    std::memcpy(&wav[36], "data", 4);
+    std::memcpy(&wav[40], &dataSize, 4);
+
+    int16_t* samples = reinterpret_cast<int16_t*>(&wav[44]);
+    for (uint32_t i = 0; i < numSamples; ++i)
+    {
+        float t = static_cast<float>(i) / sampleRate;
+        float value = std::sin(2.0f * 3.14159265f * frequencyHz * t);
+        float envelope = 1.0f;
+        float fadeTime = 0.01f * sampleRate;
+        if (i < static_cast<uint32_t>(fadeTime))
+            envelope = static_cast<float>(i) / fadeTime;
+        if (i > numSamples - static_cast<uint32_t>(fadeTime))
+            envelope = static_cast<float>(numSamples - i) / fadeTime;
+        samples[i] = static_cast<int16_t>(value * envelope * 16000.0f);
+    }
+
+    return wav;
+}
 
 // Convert HSV (h in [0,360), s/v in [0,1]) to a packed RGBA uint32_t.
 // Identical to AndroidTestGame so the colour cycling matches exactly.
@@ -123,11 +193,24 @@ public:
         hue_ = 200.0f;
         brightness_ = 0.4f;
 
-        hud_.init();
+        uiRenderer_.init();
+        font_.createDebugFont();
+
+        // ----------------------------------------------------------------
+        // Virtual joystick — lower-left corner.  Drives nothing in this
+        // demo (the camera is gesture-driven) but renders so we can
+        // visually verify the overlay on the simulator + device.
+        // ----------------------------------------------------------------
+        engine::platform::VirtualJoystickConfig joyCfg;
+        joyCfg.centerX = 0.15f;
+        joyCfg.centerY = 0.85f;
+        joyCfg.radiusScreen = 0.08f;
+        joyCfg.deadZone = 0.15f;
+        joystick_.setConfig(joyCfg);
 
         // ----------------------------------------------------------------
         // Asset system: thread pool + IosFileSystem (NSBundle-backed) +
-        // AssetManager. iOS reads from the application bundle, the same
+        // AssetManager.  iOS reads from the application bundle, the same
         // way Android reads from the APK's assets/ directory.
         // ----------------------------------------------------------------
         threadPool_ = std::make_unique<engine::threading::ThreadPool>(2);
@@ -137,23 +220,8 @@ public:
         assetManager_->registerLoader(std::make_unique<engine::assets::GltfLoader>());
 
         // MSDF text — load ChunkFive from the app bundle (bundled by
-        // SamaIosAssets.cmake). Renders on its own UI view above the HUD.
-        // fileSystem_ is constructed above; this must run after it.
-        uiRenderer_.init();
-        if (fileSystem_)
-        {
-            const auto json = fileSystem_->read("fonts/ChunkFive-msdf.json");
-            const auto png = fileSystem_->read("fonts/ChunkFive-msdf.png");
-            std::fprintf(stderr, "[ios_test] MSDF font bytes: json=%zu png=%zu\n", json.size(),
-                         png.size());
-            if (!json.empty() && !png.empty())
-            {
-                const bool ok =
-                    msdfFont_.loadFromMemory(json.data(), json.size(), png.data(), png.size());
-                std::fprintf(stderr, "[ios_test] msdfFont_.loadFromMemory: %s, glyphs=%zu\n",
-                             ok ? "ok" : "FAILED", msdfFont_.glyphCount());
-            }
-        }
+        // SamaIosAssets.cmake).  Renders alongside the bitmap-font HUD.
+        loadMsdfFont();
 
         // Procedural sky/ground IBL — gives the helmet realistic env reflections.
         ibl_.generateDefault();
@@ -169,7 +237,7 @@ public:
         groundMeshId_ = engine.resources().addMesh(std::move(cubeMesh));
 
         Material groundMat;
-        groundMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};  // pure white — maximum shadow contrast
+        groundMat.albedo = {0.85f, 0.82f, 0.78f, 1.0f};  // light beige for shadow contrast
         groundMat.roughness = 0.9f;
         groundMat.metallic = 0.0f;
         groundMatId_ = engine.resources().addMaterial(groundMat);
@@ -210,6 +278,53 @@ public:
         registry.emplace<MaterialComponent>(lightEntity_, lightMatId_);
         registry.emplace<VisibleTag>(lightEntity_);
         // Light cube does NOT cast shadow on itself / scene.
+
+        // ----------------------------------------------------------------
+        // HDR-bright emitter — small white-hot cube floating above the
+        // helmet.  Its emissiveScale is intentionally well above the bloom
+        // threshold (default 1.0) so the post-process pass produces a
+        // clearly visible halo when toggled on.  When the post-process
+        // path is OFF, this still renders as a white cube but without any
+        // bloom — that's the visual delta the regression catches.
+        // ----------------------------------------------------------------
+        Material brightMat;
+        brightMat.albedo = {1.0f, 1.0f, 1.0f, 1.0f};
+        brightMat.emissiveScale = 15.0f;  // way past bloom threshold
+        brightMat.roughness = 1.0f;
+        brightEmitterMatId_ = engine.resources().addMaterial(brightMat);
+
+        brightEmitterEntity_ = registry.createEntity();
+        TransformComponent bec;
+        bec.position = {1.5f, 1.4f, 0.0f};  // upper-right of helmet centre
+        bec.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        bec.scale = {0.25f, 0.25f, 0.25f};
+        bec.flags = 1;
+        registry.emplace<TransformComponent>(brightEmitterEntity_, bec);
+        registry.emplace<WorldTransformComponent>(brightEmitterEntity_);
+        registry.emplace<MeshComponent>(brightEmitterEntity_, groundMeshId_);  // reuse cube
+        registry.emplace<MaterialComponent>(brightEmitterEntity_, brightEmitterMatId_);
+        registry.emplace<VisibleTag>(brightEmitterEntity_);
+        // No ShadowVisibleTag — emitters shouldn't darken themselves with
+        // their own shadow; matches the orbiting-light cube convention.
+
+        // ----------------------------------------------------------------
+        // Audio smoke test — generate a procedural beep, load it into the
+        // engine-owned SoLoud and play it once at init.  Tapping the
+        // screen also plays it (see onUpdate).  Verifies the CoreAudio /
+        // miniaudio backend is wired up on iOS.
+        // ----------------------------------------------------------------
+        {
+            auto wav = generateToneWav(440.0f, 0.3f);
+            beepClipId_ = engine.audio().loadClip(wav.data(), wav.size(), /*streaming=*/false);
+            std::fprintf(stderr, "[ios_test audio] loaded beep clip id=%u (size=%zu bytes)\n",
+                         beepClipId_, wav.size());
+            if (beepClipId_ != engine::audio::INVALID_SOUND)
+            {
+                auto handle = engine.audio().play(beepClipId_, engine::audio::SoundCategory::SFX,
+                                                  /*volume=*/0.5f, /*loop=*/false);
+                std::fprintf(stderr, "[ios_test audio] init-time play handle=%u\n", handle);
+            }
+        }
     }
 
     void onUpdate(Engine& engine, Registry& registry, float dt) override
@@ -220,10 +335,37 @@ public:
         const float fbW = static_cast<float>(engine.fbWidth());
         const float fbH = static_cast<float>(engine.fbHeight());
 
+        // --- Virtual joystick (touch on iOS, left-click drag on desktop) ---
+        // Driven from the first active touch.  We don't *consume* the input —
+        // existing touch/mouse handlers below still fire — the joystick is
+        // purely a visual + state output for now.
+        {
+            float touchX = 0.f;
+            float touchY = 0.f;
+            bool touchActive = false;
+            if (!input.touches().empty())
+            {
+                const auto& t = input.touches().front();
+                if (t.phase != TouchPoint::Phase::Ended)
+                {
+                    touchX = t.x;
+                    touchY = t.y;
+                    touchActive = true;
+                }
+            }
+            else if (input.isMouseButtonHeld(MouseButton::Left))
+            {
+                touchX = static_cast<float>(input.mouseX());
+                touchY = static_cast<float>(input.mouseY());
+                touchActive = true;
+            }
+            joystick_.update(touchX, touchY, touchActive, fbW, fbH);
+        }
+
         // --- Touch / mouse input ---
-        // On iOS: real touch events. The first touch is also mapped to the
-        // mouse cursor by IosTouchInput, so the desktop-style mouse path
-        // works identically to AndroidTestGame.
+        // On iOS: real touch events.  IosTouchInput maps the first touch to
+        // the mouse cursor, so the desktop-style mouse path works identically
+        // to AndroidTestGame.
         if (input.isMouseButtonHeld(MouseButton::Left))
         {
             // Map mouse X to hue (0..360)
@@ -239,6 +381,25 @@ public:
             touchTrail_.push_back(dot);
         }
 
+        // Post-process toggle hit-test — top 15% of screen, right 30%.
+        // A Began-phase touch in this rectangle flips postProcessEnabled_,
+        // which gates the bloom + FXAA passes in Renderer::endFrame's auto
+        // post-process submit.  The tonemap pass always runs (fs_pbr.sc
+        // outputs linear HDR).  IosTouchInput synthesises mouse events from
+        // the primary touch, so we ONLY listen to the touch list (a desktop
+        // fallback would double-toggle on every iOS tap).
+        auto inToggleRect = [&](float px, float py) -> bool
+        { return px >= fbW * 0.70f && py <= fbH * 0.15f; };
+        for (const auto& touch : input.touches())
+        {
+            if (touch.phase == TouchPoint::Phase::Began && inToggleRect(touch.x, touch.y))
+            {
+                postProcessEnabled_ = !postProcessEnabled_;
+                std::fprintf(stderr, "[ios_test] post-process toggled: %s\n",
+                             postProcessEnabled_ ? "ON" : "OFF");
+            }
+        }
+
         // Multi-touch: each touch gets a dot
         for (const auto& touch : input.touches())
         {
@@ -250,6 +411,16 @@ public:
                 dot.hue = std::fmod(static_cast<float>(touch.id) * 60.0f, 360.0f);
                 dot.age = 0.0f;
                 touchTrail_.push_back(dot);
+            }
+            // Audio smoke test: any new touch plays the beep clip once.
+            // Confirms SoLoud is still pumping after init AND after the
+            // resume path (CoreAudio's stream is rebuilt on app foreground
+            // and a successful play() proves the device is open).
+            if (touch.phase == TouchPoint::Phase::Began &&
+                beepClipId_ != engine::audio::INVALID_SOUND)
+            {
+                engine.audio().play(beepClipId_, engine::audio::SoundCategory::SFX,
+                                    /*volume=*/0.5f, /*loop=*/false);
             }
         }
 
@@ -276,13 +447,12 @@ public:
         }
 
         // --- Keyboard ---
-        // iOS: deferred — there is no hardware-keyboard test on iOS Phone in
-        // this sample. Space/Escape would require a soft keyboard overlay
-        // which is out of scope for the test app.
+        // iOS: only fires when a Bluetooth keyboard is attached.  Kept for
+        // parity with Android and so the same code path runs on a desktop
+        // debug build (when one exists).
         if (input.isKeyPressed(Key::Space))
         {
-            // Reset (still useful when a Bluetooth keyboard is attached or
-            // when the same code path runs on a desktop debug build).
+            // Reset
             hue_ = 200.0f;
             brightness_ = 0.4f;
             touchTrail_.clear();
@@ -313,52 +483,106 @@ public:
                 // original ~1m size so it casts a substantial shadow).
                 // GltfSceneSpawner already adds ShadowVisibleTag to spawned
                 // mesh entities, so we don't need to do that ourselves.
-                // IMPORTANT: skip the ground and the light indicator —
-                // we manage their positions ourselves and they must NOT
-                // be touched (especially: light cube must never become a
-                // shadow caster).
+                // IMPORTANT: skip the ground, the light indicator, and the
+                // bright emitter — we manage their positions ourselves and
+                // they must NOT be touched (especially: light/emitter cubes
+                // must never become shadow casters).
                 registry.view<TransformComponent, MeshComponent>().each(
                     [&](EntityID e, TransformComponent& tc, const MeshComponent&)
                     {
-                        if (e == groundEntity_ || e == lightEntity_)
+                        if (e == groundEntity_ || e == lightEntity_ || e == brightEmitterEntity_)
                             return;
                         tc.position.y += 0.8f;
                         tc.flags |= 1;
+                        // Snapshot the spawn-time scale so the pinch
+                        // demo can apply gestureScale_ as a uniform
+                        // multiplier each frame without compounding.
+                        helmetEntities_.push_back({e, tc.scale});
                     });
-                // Defensive: never let the light cube or the ground become
-                // a shadow caster.
+                // Defensive: never let the light cube, ground, or bright
+                // emitter become a shadow caster.
                 if (registry.has<ShadowVisibleTag>(lightEntity_))
                     registry.remove<ShadowVisibleTag>(lightEntity_);
                 if (registry.has<ShadowVisibleTag>(groundEntity_))
                     registry.remove<ShadowVisibleTag>(groundEntity_);
+                if (registry.has<ShadowVisibleTag>(brightEmitterEntity_))
+                    registry.remove<ShadowVisibleTag>(brightEmitterEntity_);
 
                 // Tweak roughness slightly so the helmet looks less mirror-like.
+                // Skip ground + bright emitter so we don't clobber their materials.
                 registry.view<MaterialComponent>().each(
                     [&](EntityID, MaterialComponent& mc)
                     {
                         auto* mat = engine.resources().getMaterialMut(mc.material);
-                        if (mat && mc.material != groundMatId_)
+                        if (mat && mc.material != groundMatId_ &&
+                            mc.material != brightEmitterMatId_)
                             mat->roughness = 0.55f;
                     });
             }
         }
 
+        // ----------------------------------------------------------------
+        // Two-finger gestures: pinch scales the helmet, pan orbits the
+        // camera.  We update *every* frame (including no-touch frames) so
+        // GestureRecognizer can see the touch list shrink to zero and
+        // drop tracking; calling it conditionally would let a stale
+        // tracking pair silently persist across a finger-lift.
+        // ----------------------------------------------------------------
+        gestureRecognizer_.update(input, gestureState_);
+        if (gestureState_.active)
+        {
+            // 1px of pinch ~= 0.2% scale change.  Keeps a typical 200px
+            // pinch (~3cm on a 6" phone) at a comfortable ~1.4x without
+            // demanding a full hand-spread for a 2x zoom.
+            gestureScale_ *= (1.0f + gestureState_.pinchDelta * 0.002f);
+            gestureScale_ = std::clamp(gestureScale_, 0.5f, 4.0f);
+
+            // 360 degrees of yaw per ~600px of pan-X (~ a thumb-swipe across
+            // a 6" phone).  Pitch is half-strength + clamped so the camera
+            // stays above the horizon (otherwise lookAt's up vector becomes
+            // degenerate).
+            cameraYaw_ += gestureState_.panDeltaX * (2.0f * 3.14159265f / 600.0f);
+            cameraPitch_ -= gestureState_.panDeltaY * (3.14159265f / 600.0f);
+            cameraPitch_ = std::clamp(cameraPitch_, 0.05f, 1.45f);
+        }
+
+        // Apply gestureScale_ to every spawned helmet entity.  We rebuild
+        // the scale from the snapshot (rather than multiplying in-place)
+        // so the result tracks gestureScale_ exactly — no drift from
+        // accumulated float error after thousands of frames.
+        for (const auto& he : helmetEntities_)
+        {
+            if (auto* tc = registry.get<TransformComponent>(he.entity))
+            {
+                tc->scale = he.baseScale * gestureScale_;
+                tc->flags |= 1;
+            }
+        }
+
         transformSys_.update(registry);
 
-        // Camera pulled way back so the entire scene — helmet, ground,
-        // light indicator cube, and the helmet's cast shadow — all fit
-        // comfortably in frame.
+        // Camera orbits at a fixed 14m radius around the helmet centre.
+        // The default yaw=0, pitch=0.42 reproduces the original
+        // (0, 5, 13) viewpoint so visual regression diffs against the
+        // pre-gesture demo are minimal when the user hasn't panned yet.
         const float aspect = (fbH > 0.f) ? (fbW / fbH) : 1.0f;
-        const glm::vec3 camPos{0.0f, 5.0f, 13.0f};
+        const float kCamRadius = 14.0f;
         const glm::vec3 camTarget{0.0f, 0.0f, 0.0f};
+        const glm::vec3 camPos{kCamRadius * std::cos(cameraPitch_) * std::sin(cameraYaw_),
+                               kCamRadius * std::sin(cameraPitch_),
+                               kCamRadius * std::cos(cameraPitch_) * std::cos(cameraYaw_)};
         const glm::mat4 viewMat = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projMat = glm::perspective(glm::radians(45.f), aspect, 0.05f, 50.f);
 
-        // Fixed directional light from upper-front-right.  Locked (not
-        // orbiting) so the cast shadow on the ground is in a predictable
-        // place — easier to spot during development.  Avoids the
-        // (0, 1, 0) degeneracy of lookAt(origin, origin, up=(0,1,0)).
-        const glm::vec3 kLightDir = glm::normalize(glm::vec3(0.6f, 1.2f, 0.8f));
+        // Orbiting directional light. Elevation 0.55 keeps the light fairly
+        // high so it doesn't dip below the horizon. NOTE: must NOT be
+        // (0, 1, 0) — lookAt(lightPos, origin, up=(0,1,0)) is degenerate
+        // when the look direction is parallel to up, producing NaN matrices.
+        const float lightAngle = elapsed_ * 0.45f;
+        const float kLightElevation = 0.55f;
+        const float cosE = std::sqrt(1.0f - kLightElevation * kLightElevation);
+        const glm::vec3 kLightDir = glm::normalize(
+            glm::vec3(cosE * std::sin(lightAngle), kLightElevation, cosE * std::cos(lightAngle)));
         constexpr float kLightIntens = 18.0f;
 
         // Move the light indicator cube to follow the directional light.
@@ -385,26 +609,25 @@ public:
         drawCallSys_.submitShadowDrawCalls(registry, engine.resources(),
                                            bgfx::ProgramHandle{engine.shadowProgram().idx}, 0);
 
-        // One-shot shadow diagnostic at frame 100.
-        if (frameCount_ == 100)
-        {
-            int casters = 0;
-            registry.view<ShadowVisibleTag, MeshComponent>().each(
-                [&](EntityID, const ShadowVisibleTag&, const MeshComponent&) { ++casters; });
-            const auto atlas = engine.shadow().atlasTexture();
-            const glm::mat4 sm = engine.shadow().shadowMatrix(0);
-            std::fprintf(stderr,
-                         "[ios_test shadow] casters=%d atlasValid=%d "
-                         "shadowMat[0]=(%.2f,%.2f,%.2f,%.2f) lightDir=(%.2f,%.2f,%.2f) "
-                         "shadowProgValid=%d\n",
-                         casters, bgfx::isValid(atlas), sm[0][0], sm[0][1], sm[0][2], sm[0][3],
-                         kLightDir.x, kLightDir.y, kLightDir.z,
-                         engine::rendering::isValid(engine.shadowProgram()));
-        }
-
         // Opaque PBR pass.
         const auto W = engine.fbWidth();
         const auto H = engine.fbHeight();
+
+        // Opt the bloom + FXAA passes in or out via RenderSettings — the
+        // Renderer's auto post-process submit (in endFrame) reads this and
+        // gates the extra passes accordingly.  The tonemap pass always runs
+        // because fs_pbr.sc outputs linear HDR.
+        {
+            engine::rendering::RenderSettings rs = engine.renderer().renderSettings();
+            rs.postProcess.bloom.enabled = postProcessEnabled_;
+            rs.postProcess.bloom.threshold = 0.5f;
+            rs.postProcess.bloom.intensity = 0.6f;
+            rs.postProcess.bloom.downsampleSteps = 5;
+            rs.postProcess.fxaaEnabled = postProcessEnabled_;
+            rs.postProcess.ssao.enabled = false;  // requires depth prepass
+            engine.renderer().setRenderSettings(rs);
+        }
+
         RenderPass(kViewOpaque)
             .rect(0, 0, W, H)
             .clearColorAndDepth(bgColor)
@@ -426,135 +649,215 @@ public:
         drawCallSys_.update(registry, engine.resources(),
                             bgfx::ProgramHandle{engine.pbrProgram().idx}, engine.uniforms(), frame);
 
-        // --- DebugHud overlay ------------------------------------------------
-        // Same content as AndroidTestGame's hand-rolled UiDrawList overlay,
-        // but rendered through the platform-agnostic DebugHud helper. Cells
-        // are 8x16 px columns/rows; we keep a small left-margin column so
-        // text doesn't run into rounded screen corners on iPhone.
-        hud_.begin(static_cast<uint32_t>(W), static_cast<uint32_t>(H));
+        // Post-process is auto-submitted by Renderer::endFrame using the
+        // RenderSettings we set above (bloom + FXAA gated by the toggle,
+        // tonemap always on).  The bright emissive cube at (1.5, 1.4, 0)
+        // produces a clearly visible halo when bloom is on — the visual
+        // signal that proves the chain executed end-to-end.
 
-        const uint32_t kWhite = 0xFFFFFFFFu;
-        const uint32_t kGreen = 0x66FF66FFu;
-        const uint32_t kGray = 0xB0B0B0FFu;
-        const uint32_t kRed = 0xFF6666FFu;
-
-        uint16_t row = 1;
-        hud_.printf(2, row++, kWhite, "iOS Test  |  %.1f fps  |  %.3f ms",
-                    dt > 0 ? 1.0f / dt : 0.0f, dt * 1000.0f);
-        hud_.printf(2, row++, kWhite, "Screen: %ux%u", engine.fbWidth(), engine.fbHeight());
-        row++;
-
-        // Mouse / first-touch (IosTouchInput maps the first finger here)
-        hud_.printf(2, row++, kGray, "Mouse: (%.0f, %.0f)  %s", static_cast<double>(input.mouseX()),
-                    static_cast<double>(input.mouseY()),
-                    input.isMouseButtonHeld(MouseButton::Left) ? "[DOWN]" : "");
-
-        // Touch list
-        hud_.printf(2, row++, kGray, "Touches: %zu active", input.touches().size());
-        int touchRow = 0;
-        for (const auto& touch : input.touches())
+        // --- Text overlay via UiRenderer ---
         {
-            const char* phase = "?";
-            if (touch.phase == TouchPoint::Phase::Began)
-                phase = "Began";
-            else if (touch.phase == TouchPoint::Phase::Moved)
-                phase = "Moved";
-            else if (touch.phase == TouchPoint::Phase::Ended)
-                phase = "Ended";
-            hud_.printf(4, row++, kGray, "[%llu] (%.0f, %.0f) %s",
-                        static_cast<unsigned long long>(touch.id), touch.x, touch.y, phase);
-            if (++touchRow >= 5)
-                break;
-        }
-        row++;
+            using engine::ui::UiDrawList;
+            drawList_.clear();
 
-        // Gyro
-        if (gyro.available)
-        {
-            hud_.printf(2, row++, kGreen, "Gyro: pitch=%.2f  yaw=%.2f  roll=%.2f", gyro.pitchRate,
-                        gyro.yawRate, gyro.rollRate);
-            hud_.printf(2, row++, kGreen, "Gravity: (%.2f, %.2f, %.2f)", gyro.gravityX,
-                        gyro.gravityY, gyro.gravityZ);
-        }
-        else
-        {
-            hud_.printf(2, row++, kGray, "Gyro: not available");
-        }
-        row++;
+            char buf[256];
+            // Larger margin for rounded screens + status bar (iPhone 13/14/15)
+            float y = 160.f;
+            const float leftMargin = 40.f;
+            const float fontSize = 14.f;
+            const float lineH = 18.f;
 
-        // Trail + colour info
-        hud_.printf(2, row++, kGray, "Trail dots: %zu", touchTrail_.size());
-        hud_.printf(2, row++, kGray, "Hue: %.0f  Brightness: %.2f", hue_, brightness_);
-        row++;
+            const glm::vec4 white{1.f, 1.f, 1.f, 1.f};
+            const glm::vec4 green{0.4f, 1.f, 0.4f, 1.f};
+            const glm::vec4 gray{0.7f, 0.7f, 0.7f, 1.f};
 
-        // Controls
-        hud_.printf(2, row++, kGray, "--- Controls ---");
-        hud_.printf(2, row++, kGray, "Touch/Drag: change hue + leave trail");
-        hud_.printf(2, row++, kGray, "Gyro tilt: adjust brightness + hue");
-        // iOS: deferred — no hardware Space/Escape on touch-only devices.
-        // Bluetooth keyboards still trigger isKeyPressed, so the line is
-        // documented for parity with Android.
-        hud_.printf(2, row++, kGray, "Space (BT keyboard): reset");
+            snprintf(buf, sizeof(buf), "iOS Test | %.1f fps | %.3f ms", dt > 0 ? 1.0f / dt : 0.0f,
+                     dt * 1000.0f);
+            drawList_.drawText({leftMargin, y}, buf, white, &font_, fontSize);
+            y += lineH;
 
-        hud_.printf(2, row++, kGray, "Color: R=%u G=%u B=%u  (hue=%.0f val=%.2f)",
-                    (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF, hue_,
-                    brightness_);
+            snprintf(buf, sizeof(buf), "Screen: %ux%u", engine.fbWidth(), engine.fbHeight());
+            drawList_.drawText({leftMargin, y}, buf, white, &font_, fontSize);
+            y += lineH;
 
-        // Helmet asset status
-        const char* helmetStatus = "Loading...";
-        uint32_t helmetColor = kGray;
-        if (helmetSpawned_)
-        {
-            helmetStatus = "Ready (PBR + shadow)";
-            helmetColor = kGreen;
+            // Post-process status — tap upper-right corner to toggle.
+            // Tonemap always runs (fs_pbr.sc outputs linear HDR); the toggle
+            // gates the optional bloom + FXAA passes.
+            // ON  = bloom around the bright emitter + FXAA edge smoothing.
+            // OFF = tonemap + sRGB gamma only (cheap mobile default).
+            snprintf(buf, sizeof(buf), "Post: %s   (tap upper-right to toggle)",
+                     postProcessEnabled_ ? "ON " : "OFF");
+            drawList_.drawText({leftMargin, y}, buf, postProcessEnabled_ ? green : white, &font_,
+                               fontSize);
+            y += lineH * 1.5f;
+
+            // Mouse / touch
+            snprintf(buf, sizeof(buf), "Mouse: (%.0f, %.0f)  %s",
+                     static_cast<double>(input.mouseX()), static_cast<double>(input.mouseY()),
+                     input.isMouseButtonHeld(MouseButton::Left) ? "[LEFT]" : "");
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            snprintf(buf, sizeof(buf), "Touches: %zu active", input.touches().size());
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            int touchRow = 0;
+            for (const auto& touch : input.touches())
+            {
+                const char* phase = "?";
+                if (touch.phase == TouchPoint::Phase::Began)
+                    phase = "Began";
+                else if (touch.phase == TouchPoint::Phase::Moved)
+                    phase = "Moved";
+                else if (touch.phase == TouchPoint::Phase::Ended)
+                    phase = "Ended";
+                snprintf(buf, sizeof(buf), "  [%llu] (%.0f, %.0f) %s",
+                         static_cast<unsigned long long>(touch.id), touch.x, touch.y, phase);
+                drawList_.drawText({leftMargin + 10.f, y}, buf, gray, &font_, fontSize);
+                y += lineH;
+                if (++touchRow >= 5)
+                    break;
+            }
+            y += lineH * 0.5f;
+
+            // Gyro
+            if (gyro.available)
+            {
+                snprintf(buf, sizeof(buf), "Gyro: pitch=%.2f  yaw=%.2f  roll=%.2f", gyro.pitchRate,
+                         gyro.yawRate, gyro.rollRate);
+                drawList_.drawText({leftMargin, y}, buf, green, &font_, fontSize);
+                y += lineH;
+                snprintf(buf, sizeof(buf), "Gravity: (%.2f, %.2f, %.2f)", gyro.gravityX,
+                         gyro.gravityY, gyro.gravityZ);
+                drawList_.drawText({leftMargin, y}, buf, green, &font_, fontSize);
+                y += lineH;
+            }
+            else
+            {
+                drawList_.drawText({leftMargin, y}, "Gyro: not available", gray, &font_, fontSize);
+                y += lineH;
+            }
+            y += lineH * 0.5f;
+
+            // Trail + color info
+            snprintf(buf, sizeof(buf), "Trail dots: %zu", touchTrail_.size());
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+            snprintf(buf, sizeof(buf), "Hue: %.0f  Brightness: %.2f", hue_, brightness_);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            const auto jdir = joystick_.direction();
+            snprintf(buf, sizeof(buf), "Joystick: dir=(%.2f, %.2f) %s", jdir.x, jdir.y,
+                     joystick_.isTouched() ? "[touched]" : "");
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            // Gesture HUD — visible feedback for the recogniser even when
+            // the helmet scale / camera change is too subtle to see at a
+            // glance.  `[ACTIVE]` flips on as soon as two fingers land.
+            snprintf(buf, sizeof(buf), "Pinch: %.2fx  Pan: yaw=%.0f° pitch=%.0f° %s", gestureScale_,
+                     glm::degrees(cameraYaw_), glm::degrees(cameraPitch_),
+                     gestureState_.active ? "[ACTIVE]" : "");
+            drawList_.drawText({leftMargin, y}, buf, gestureState_.active ? green : gray, &font_,
+                               fontSize);
+            y += lineH;
+            snprintf(buf, sizeof(buf), "  delta: pinch=%+.1f pan=(%+.1f, %+.1f)",
+                     gestureState_.pinchDelta, gestureState_.panDeltaX, gestureState_.panDeltaY);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH * 1.5f;
+
+            // Controls
+            drawList_.drawText({leftMargin, y}, "--- Controls ---", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Touch/Click: change hue by X", gray, &font_,
+                               fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Drag: draw colored trail", gray, &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Pinch: scale helmet | Pan: orbit camera", gray,
+                               &font_, fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Gyro tilt: adjust brightness + hue", gray, &font_,
+                               fontSize);
+            y += lineH;
+            drawList_.drawText({leftMargin, y}, "Space (BT keyboard): reset", gray, &font_,
+                               fontSize);
+            y += lineH;
+
+            snprintf(buf, sizeof(buf), "Color: R=%u G=%u B=%u  (hue=%.0f sat=0.6 val=%.2f)",
+                     (bgColor >> 24) & 0xFF, (bgColor >> 16) & 0xFF, (bgColor >> 8) & 0xFF, hue_,
+                     brightness_);
+            drawList_.drawText({leftMargin, y}, buf, gray, &font_, fontSize);
+            y += lineH;
+
+            // Helmet asset status
+            const char* helmetStatus = "Loading…";
+            glm::vec4 helmetColor = gray;
+            if (helmetSpawned_)
+            {
+                helmetStatus = "Ready (PBR + shadow)";
+                helmetColor = green;
+            }
+            else if (assetManager_ &&
+                     assetManager_->state(helmetHandle_) == engine::assets::AssetState::Failed)
+            {
+                helmetStatus = "FAILED to load";
+                helmetColor = glm::vec4{1.f, 0.4f, 0.4f, 1.f};
+            }
+            snprintf(buf, sizeof(buf), "DamagedHelmet.glb: %s", helmetStatus);
+            drawList_.drawText({leftMargin, y}, buf, helmetColor, &font_, fontSize);
+            y += lineH * 1.5f;
+
+            // MSDF font test line
+            if (msdfFont_.glyphCount() > 0)
+            {
+                const glm::vec4 yellow{1.f, 0.95f, 0.4f, 1.f};
+                drawList_.drawText({leftMargin, y}, "ChunkFive MSDF: The quick brown fox!", yellow,
+                                   &msdfFont_, fontSize * 1.5f);
+                y += lineH * 2.f;
+            }
+
+            // Shadow atlas debug viewer — bottom-left corner. Shows what the
+            // light "sees" — should contain the helmet's silhouette in white
+            // (close to light) on a black background (cleared depth = far).
+            const auto shadowAtlasDbg = engine.shadow().atlasTexture();
+            if (bgfx::isValid(shadowAtlasDbg))
+            {
+                const float panel = 240.f;
+                drawList_.drawRect({18.f, fbH - panel - 18.f}, {panel + 4.f, panel + 4.f},
+                                   {0.0f, 0.0f, 0.0f, 1.0f}, 0.f);
+                drawList_.drawTexturedRect({20.f, fbH - panel - 16.f}, {panel, panel},
+                                           shadowAtlasDbg, {0.f, 0.f, 1.f, 1.f},
+                                           {1.f, 1.f, 1.f, 1.f});
+                drawList_.drawText({22.f, fbH - panel - 36.f}, "shadow atlas (depth)", white,
+                                   &font_, 12.f);
+            }
+
+            // Virtual joystick overlay — submit AFTER all other UI so the
+            // stick reads on top of any text/panels, but BEFORE the renderer
+            // submits the draw list.
+            engine::ui::renderVirtualJoystick(joystick_, drawList_,
+                                              static_cast<uint16_t>(engine.fbWidth()),
+                                              static_cast<uint16_t>(engine.fbHeight()));
+
+            // Render UI on view kViewGameUi (48)
+            uiRenderer_.render(drawList_, kViewGameUi, static_cast<uint16_t>(engine.fbWidth()),
+                               static_cast<uint16_t>(engine.fbHeight()));
         }
-        else if (assetManager_ &&
-                 assetManager_->state(helmetHandle_) == engine::assets::AssetState::Failed)
-        {
-            helmetStatus = "FAILED to load";
-            helmetColor = kRed;
-        }
-        hud_.printf(2, row++, helmetColor, "DamagedHelmet.glb: %s", helmetStatus);
 
-        hud_.end();
-
-        // --- MSDF text overlay -----------------------------------------------
-        // Vector text on top of the bitmap HUD — mirrors AndroidTestGame's
-        // "ChunkFive MSDF: The quick brown fox!" line.  Renders only if the
-        // font loaded successfully in onInit (otherwise glyphCount == 0).
-        drawList_.clear();
-        if (msdfFont_.glyphCount() > 0)
-        {
-            const glm::vec4 yellow{1.0f, 0.95f, 0.4f, 1.0f};
-            const float fontSize = 32.0f;
-            const float xPos = 40.0f;
-            const float yPos = static_cast<float>(fbH) - 80.0f;
-            drawList_.drawText({xPos, yPos}, "ChunkFive MSDF: The quick brown fox!", yellow,
-                               &msdfFont_, fontSize);
-        }
-        // Debug: draw the shadow atlas top-right corner so we can see if the
-        // depth pass actually wrote anything into it.  If the atlas is empty
-        // (uniform black or white), the shadow path is broken upstream.
-        const auto debugAtlas = engine.shadow().atlasTexture();
-        if (bgfx::isValid(debugAtlas))
-        {
-            const float panel = 360.0f;
-            const float xRight = static_cast<float>(fbW) - panel - 30.0f;
-            const float yTop = 30.0f;
-            drawList_.drawRect({xRight - 4.0f, yTop - 4.0f}, {panel + 8.0f, panel + 8.0f},
-                               {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
-            drawList_.drawTexturedRect({xRight, yTop}, {panel, panel}, debugAtlas, {0, 0, 1, 1},
-                                       {1, 1, 1, 1});
-        }
-        uiRenderer_.render(drawList_, kViewGameUi, static_cast<uint16_t>(fbW),
-                           static_cast<uint16_t>(fbH));
+        // TODO: iOS ImGui not wired — the bgfx examples/common/imgui wrapper
+        // is created by Engine on desktop + Android only (see Engine.cpp).
+        // Phase 7 NOTES.md flags wiring up imguiCreate / imguiBeginFrame /
+        // imguiEndFrame on iOS as a documented follow-up; until then this
+        // app omits Android's ImGui smoke window.
     }
 
     void onShutdown(Engine& engine, Registry& registry) override
     {
         (void)engine;
         (void)registry;
-        hud_.shutdown();
         // Asset manager + thread pool destroy automatically via unique_ptr.
     }
 
@@ -573,16 +876,15 @@ private:
     };
     std::vector<TouchDot> touchTrail_;
 
-    // Platform-agnostic debug text overlay (works on iOS via UiRenderer +
-    // BitmapFont). Replaces Android's hand-rolled UiDrawList.
-    engine::ui::DebugHud hud_;
-
-    // Vector text overlay — MsdfFont rendered through UiRenderer on view
-    // kViewGameUi.  Loaded from the app bundle in onInit and drawn each
-    // frame after the HUD; falls through silently if the font is missing.
+    // UI text rendering (works on both iOS and a future desktop-debug build)
     engine::ui::UiRenderer uiRenderer_;
+    engine::ui::BitmapFont font_;
     engine::ui::MsdfFont msdfFont_;
     engine::ui::UiDrawList drawList_;
+
+    // On-screen virtual joystick overlay.  Driven by the first active touch
+    // on iOS; by left-click drag if the same code ever runs on desktop.
+    engine::platform::VirtualJoystick joystick_;
 
     // PBR scene — DamagedHelmet on a ground plane, lit by an orbiting light.
     engine::scene::TransformSystem transformSys_;
@@ -593,11 +895,58 @@ private:
     engine::rendering::IblResources ibl_;
     engine::assets::AssetHandle<engine::assets::GltfAsset> helmetHandle_{};
     bool helmetSpawned_ = false;
+
+    // Gesture demo — pinch scales the spawned helmet, pan orbits the
+    // camera around it.  We snapshot each helmet entity's *base* scale at
+    // spawn time so applying gestureScale_ each frame doesn't compound.
+    engine::input::GestureRecognizer gestureRecognizer_;
+    engine::input::GestureState gestureState_{};
+    struct HelmetTransform
+    {
+        EntityID entity = INVALID_ENTITY;
+        glm::vec3 baseScale{1.f};
+    };
+    std::vector<HelmetTransform> helmetEntities_;
+    float gestureScale_ = 1.0f;  // Pinch result, clamped to [0.5, 4.0].
+    float cameraYaw_ = 0.0f;     // Pan-X result, radians around Y.
+    float cameraPitch_ = 0.42f;  // Pan-Y result, radians (default ~24deg).
+
     EntityID groundEntity_ = INVALID_ENTITY;
     EntityID lightEntity_ = INVALID_ENTITY;
+    EntityID brightEmitterEntity_ = INVALID_ENTITY;
     uint32_t groundMeshId_ = 0;
     uint32_t groundMatId_ = 0;
     uint32_t lightMatId_ = 0;
+    uint32_t brightEmitterMatId_ = 0;
+
+    // Post-process opt-in toggle.  Default OFF — tonemap always runs (see
+    // Renderer::endFrame), so OFF still produces correct sRGB output; the
+    // toggle gates the optional bloom + FXAA passes that the bright emissive
+    // cube relies on as a visual signal.  Tapping the upper-right corner
+    // flips this and feeds the value into RenderSettings each frame.
+    bool postProcessEnabled_ = false;
+
+    // Audio smoke test — id of a procedurally-generated beep clip loaded
+    // into the engine-owned SoLoud at init time.  Played once at init and
+    // again on every new touch.  See onInit / onUpdate.
+    uint32_t beepClipId_ = engine::audio::INVALID_SOUND;
+
+    void loadMsdfFont()
+    {
+        if (!fileSystem_)
+            return;
+        const auto json = fileSystem_->read("fonts/ChunkFive-msdf.json");
+        const auto png = fileSystem_->read("fonts/ChunkFive-msdf.png");
+        std::fprintf(stderr, "[ios_test] MSDF font bytes: json=%zu png=%zu\n", json.size(),
+                     png.size());
+        if (!json.empty() && !png.empty())
+        {
+            const bool ok =
+                msdfFont_.loadFromMemory(json.data(), json.size(), png.data(), png.size());
+            std::fprintf(stderr, "[ios_test] msdfFont_.loadFromMemory: %s, glyphs=%zu\n",
+                         ok ? "ok" : "FAILED", msdfFont_.glyphCount());
+        }
+    }
 };
 
 // ---------------------------------------------------------------------------
