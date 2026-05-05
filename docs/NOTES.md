@@ -143,10 +143,11 @@ Tracks all decisions and progress made during development.
 
 **View ID layout** — bgfx views are a scarce resource (max 32 by default). Shadows with CSM require one view per cascade, so the shadow range must be reserved upfront:
   - Views 0–7: shadow maps (`kViewShadowBase = 0`, up to 8 cascades/spot lights)
-  - Views 8–13: fixed passes (depth prepass=8, opaque=9, transparency=10, reserved=11–13)
-  - Views 14–15: UI/HUD
+  - Views 8–10: fixed scene passes (depth prepass=8, opaque=9, transparent=10)
+  - Views 11–15: reserved for future scene passes (decals, velocity, particles)
   - Views 16–47: post-process sub-passes (bloom needs 10+ sequential passes, each requiring its own view)
-  This replaces the original "6 fixed views" design — the post-process chain is not a single view.
+  - Views 48–51: UI / HUD (`kViewGameUi=48`, `kViewDebugHud=49`, `kViewImGui=50`, `kViewUi=51`) — all UI is rendered AFTER post-process so tonemap / bloom / FXAA do not touch text and icons
+  This replaces the original "6 fixed views" design — the post-process chain is not a single view, and the original UI placement at views 14/15 was clobbered by the post-process FXAA write to the backbuffer (fixed during the unified post-process refactor — see "Phase 7: unified post-process pipeline" below).
 
 **Light data format** — `u_lights` as a uniform array cannot hold 256 lights × 3 vec4s = 768 vec4s: bgfx's `BGFX_CONFIG_MAX_UNIFORMS = 512` by default. **Decision: pack light data into an `RGBA32F` texture (256×4 texels, 16 KB)**:
   - Row 0: `position.xyz, radius`
@@ -1565,7 +1566,7 @@ Extended `android/compile_shaders.sh` to compile the full engine shader set (UI,
 
 Reorganised `PostProcessSystem.cpp` and `SsaoSystem.cpp` so the desktop and Android paths share the same submit logic. The `#ifdef __ANDROID__` now only switches the shader-loading mechanism (asset-loaded SPIRV via `loadBloomThresholdProgram()` etc. on Android; `BGFX_EMBEDDED_SHADER` on desktop). All resource setup and per-frame submit code is identical across platforms. New `loadBloomThresholdProgram`, `loadBloomDownsampleProgram`, `loadBloomUpsampleProgram`, `loadTonemapProgram`, `loadFxaaProgram`, `loadSsaoProgram` entry points were added to the Android branch of `ShaderLoader.cpp`. They are not declared in the public `ShaderLoader.h` because only the post-process subsystems consume them — keeping them as forward-declared internals avoids polluting the public API.
 
-`Engine::beginFrame()` on Android continues to call `renderer_.beginFrameDirect()` for parity with all desktop demos: every existing demo (helmet, hierarchy, scene, physics, ik, animation, audio) calls `eng.renderer().beginFrameDirect()` itself rather than relying on the engine to set up the post-process framebuffer chain. Apps that want the full HDR + bloom + tonemap + FXAA chain must call `renderer().beginFrame()` followed by `renderer().postProcess().submit(...)` themselves — the same pattern as desktop. The post-process programs are valid on Android now (loaded from the APK), so opting in works identically across platforms.
+`Engine::beginFrame()` on Android calls `renderer_.beginFrame()` and `Renderer::endFrame` auto-submits the tonemap pass — same contract as every desktop demo. (Pre-Phase-7 the call was `beginFrameDirect()` and the inline Reinhard tonemap in `fs_pbr.sc` handled gamma; that path was removed when the unified post-process pipeline landed. See "Phase 7: unified post-process pipeline" further down for the rationale.) Apps that want bloom / SSAO / FXAA on top set them via `renderer().setRenderSettings(...)` once during init; the per-frame auto-submit picks up the change.
 
 **Verifying PBR on Android via `android_test`**
 
@@ -2093,3 +2094,111 @@ falls back to RGBA8 instead.
   documents why), no-priority-match formats, empty list, RGBA8 +
   10-bit (RGBA8 still wins).
 
+## Phase 7: unified post-process pipeline — fs_pbr.sc outputs linear HDR (2026-05-05)
+
+Earlier, `fs_pbr.sc` ended with an inline Reinhard tonemap + sRGB gamma so a
+demo could render straight to the backbuffer with `Renderer::beginFrameDirect`
+and look correct without any post-process pass. The PostProcessSystem chain
+(bloom + ACES tonemap + FXAA) was opt-in. The two paths quietly conflicted:
+on every demo that *did* opt into post-process, the same pixel went through
+Reinhard → sRGB → ACES → sRGB and came out muddy / blown out / gamma-incorrect.
+The "Phase 7 will replace this" comment in `fs_pbr.sc` had been there since the
+chain landed; nothing forced the cleanup until iOS / Android post-process
+bring-up made the breakage visible end-to-end.
+
+### Decision
+Strip the inline tonemap from `fs_pbr.sc` (now outputs linear HDR), delete
+`Renderer::beginFrameDirect`, and have `Renderer::endFrame` automatically
+submit the post-process tonemap pass on every frame. `Renderer` stores a
+`RenderSettings` member (default = ACES tonemap, bloom / SSAO / FXAA off);
+games opt into the heavier passes via `setRenderSettings()`.
+
+### Why auto-submit in `endFrame`, not require every demo to call submit
+Demos almost always want correct gamma + tonemap. Making it the default cost
+no caller and removed an entire class of "I forgot to submit post-process"
+bug. Demos that want bloom etc set a single `RenderSettings` once during
+init; nothing else changes.
+
+### Why move `kViewImGui` from view 15 → 50, `kViewUi` 14 → 51
+With post-process always on, the FXAA pass at view 16+ writes to the
+backbuffer last. Anything submitted earlier to a backbuffer-targeted view
+(< 16) was clobbered. The pre-Phase-7 layout had ImGui at view 15 and the
+SpriteBatcher at view 14; both targeted the backbuffer and would have been
+overwritten silently. The `kViewGameUi=48` / `kViewDebugHud=49` slots were
+already declared "after post-process" in `ViewIds.h` for exactly this
+reason — extending the convention to ImGui (50) and the 3D-sprite UI (51)
+made the layout consistent.
+
+### Tradeoff
+Every demo now pays the cost of a single full-screen tonemap pass even when
+nothing else changes. On desktop / mobile this is well under 0.1 ms — cheaper
+than rebuilding the docs every release. The alternative (keeping two render
+paths and a conditional shader) was the source of the bug we just fixed.
+
+### Why screenshot tests required new infrastructure
+The screenshot fixture used to bind a single BGRA8 LDR target as the opaque
+framebuffer. With the inline tonemap gone, the PBR shader writes linear HDR
+into BGRA8 and every value > 1.0 clips to white — every PBR / lit golden
+came back as a flat white silhouette on the first regen pass. Fixed by
+giving `ScreenshotFixture` an internal `PostProcessSystem` whose HDR scene
+fb the lit tests now bind, plus a `runTonemap(viewId)` helper that submits
+PostProcessSystem with bloom / SSAO / FXAA off and writes the LDR result
+into `captureFb_` via the new `finalTarget` parameter on
+`PostProcessSystem::submit`. UI tests (text, panels, sprites) are unaffected
+— they still bind `captureFb_` directly and skip `runTonemap`. All 22
+goldens were regenerated against the unified pipeline.
+
+### Verification
+- `build/engine_tests` — 6638 assertions in 682 test cases pass.
+- `build/engine_screenshot_tests` against the regenerated goldens — all 22
+  tests pass.
+- All 8 desktop demos + Android `runAndroid` path + iOS `runIos` path
+  switched from `beginFrameDirect` → `beginFrame`. Each builds clean.
+- Android `apps/android_test` post-process toggle simplified from a render-
+  path switch to a `RenderSettings.bloom.enabled` flip, matching the new
+  Renderer contract.
+- iOS `apps/ios_test/IosTestGame.mm` brought to feature parity with
+  `AndroidTestGame.cpp`: helmet + ground + shadow, GestureRecognizer for
+  pinch / pan, VirtualJoystick, post-process toggle, audio smoke. iOS ImGui
+  is the single deferred follow-up (commented inline; engine support is the
+  step that's missing).
+
+### Bug fixes that fell out of the same cycle
+- **`fs_skybox.sc` had its own inline Reinhard.** The skybox sampled the
+  IBL cubemap, applied Reinhard, and wrote into the HDR scene FB.  The
+  PostProcessSystem then ACES-tonemapped + sRGB-gamma'd the result —
+  classic double tonemap, washed-out sky. Stripped the inline Reinhard;
+  skybox now outputs raw linear HDR like fs_pbr.
+- **`fs_tonemap.sc` was unconditionally adding bloom on top of HDR.**
+  When bloom was disabled, PostProcessSystem bound `s_bloomTex` to
+  `s_hdrColor` (same texture) so the shader effectively did
+  `hdr + hdr = 2 * hdr` — every demo was tonemapping double-brightness
+  input. Multiplied bloom by `u_bloomParams.y` in the shader, then set
+  intensity = 0 (bloom off) / 1 (bloom on; intensity already baked into
+  bloomLevel[0] by upsample) in PostProcessSystem.  Both fixes together
+  restored correct exposure across the editor and every demo.
+
+### Editor wiring (post-Phase-7 follow-up)
+The editor does its own bgfx setup (it doesn't use `engine::rendering::
+Renderer` to avoid GLFW). After Phase 7 the editor's viewport rendered
+PBR's now-linear-HDR output straight into the BGRA8 backbuffer — clipped /
+gamma-incorrect. Fixed by giving `EditorApp` its own `PostProcessSystem`,
+binding `kViewOpaque` to `postProcess.resources().sceneFb()`, and calling
+`postProcess.submit()` every frame (`finalTarget = backbuffer`).
+
+That move also fixed a pre-existing "viewport goes black when idle" bug:
+the dirty-flag optimisation used to skip scene re-submission on idle
+frames and rely on the swapchain re-presenting the previous backbuffer,
+which doesn't actually hold across all swapchain configurations. With the
+HDR scene FB now persistent, idle frames simply re-run the tonemap pass
+that re-presents the unchanged scene FB — viewport stays put without
+re-rendering.
+
+The HUD overlay (kViewImGui = 50) and gizmo overlay (kGizmoView, bumped
+50 → 52 to clear the new kViewImGui slot) had to come out from under the
+`if (renderViewport)` guard for the same reason: the post-process tonemap
+pass at view 16 rewrites the entire backbuffer every frame, so anything
+not re-submitted on top is wiped. Re-submitting the (cheap) HUD + gizmo
+draw lists every frame is the right answer; the previous "touch the view
+to keep it alive" trick relied on the same not-actually-true swapchain
+behaviour.
