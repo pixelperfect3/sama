@@ -390,6 +390,61 @@ compile_shader(
 compile_shader(
     ${SHADER_SRC_DIR}/fs_gizmo.sc FRAGMENT ANDROID ""   fs_gizmo_essl COMPILED_SHADERS)
 
+# Selection outline (editor-only) — stencil-fill + inflated outline shaders.
+# Two programs: vs_outline_fill/fs_outline_fill writes 1 to stencil, and
+# vs_outline/fs_outline draws an inflated silhouette gated by stencil_test
+# = NOT_EQUAL 1.  See engine/rendering/PostProcessResources.cpp for the
+# matching D24S8 depth-stencil attachment, and editor/EditorApp.cpp for
+# view IDs 53 (stencil pass) and 54 (outline pass).
+
+# Outline fill (stencil writer) — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline_fill.sc VERTEX   OSX   metal  vs_outline_fill_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline_fill.sc FRAGMENT OSX   metal  fs_outline_fill_mtl  COMPILED_SHADERS)
+
+# Outline fill — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline_fill.sc VERTEX   LINUX spirv  vs_outline_fill_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline_fill.sc FRAGMENT LINUX spirv  fs_outline_fill_spv  COMPILED_SHADERS)
+
+# Outline fill — GLSL (OpenGL)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline_fill.sc VERTEX   LINUX 120    vs_outline_fill_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline_fill.sc FRAGMENT LINUX 120    fs_outline_fill_glsl COMPILED_SHADERS)
+
+# Outline fill — ESSL (OpenGLES / Android)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline_fill.sc VERTEX   ANDROID ""   vs_outline_fill_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline_fill.sc FRAGMENT ANDROID ""   fs_outline_fill_essl COMPILED_SHADERS)
+
+# Outline (inflated silhouette) — Metal (macOS / iOS)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline.sc VERTEX   OSX   metal  vs_outline_mtl  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline.sc FRAGMENT OSX   metal  fs_outline_mtl  COMPILED_SHADERS)
+
+# Outline — SPIRV (Vulkan)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline.sc VERTEX   LINUX spirv  vs_outline_spv  COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline.sc FRAGMENT LINUX spirv  fs_outline_spv  COMPILED_SHADERS)
+
+# Outline — GLSL (OpenGL)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline.sc VERTEX   LINUX 120    vs_outline_glsl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline.sc FRAGMENT LINUX 120    fs_outline_glsl COMPILED_SHADERS)
+
+# Outline — ESSL (OpenGLES / Android)
+compile_shader(
+    ${SHADER_SRC_DIR}/vs_outline.sc VERTEX   ANDROID ""   vs_outline_essl COMPILED_SHADERS)
+compile_shader(
+    ${SHADER_SRC_DIR}/fs_outline.sc FRAGMENT ANDROID ""   fs_outline_essl COMPILED_SHADERS)
+
 # PBR — Metal (macOS / iOS)
 compile_shader(
     ${SHADER_SRC_DIR}/vs_pbr.sc VERTEX   OSX   metal  vs_pbr_mtl  COMPILED_SHADERS)
@@ -739,6 +794,10 @@ _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_unlit.sc          VERTEX   v
 _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_unlit.sc          FRAGMENT fs_unlit_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
 _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_gizmo.sc          VERTEX   vs_gizmo_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
 _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_gizmo.sc          FRAGMENT fs_gizmo_mtl          ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_outline_fill.sc   VERTEX   vs_outline_fill_mtl   ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_outline_fill.sc   FRAGMENT fs_outline_fill_mtl   ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_outline.sc        VERTEX   vs_outline_mtl        ${VARYING_DEF}    COMPILED_SHADERS)
+_sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_outline.sc        FRAGMENT fs_outline_mtl        ${VARYING_DEF}    COMPILED_SHADERS)
 _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_pbr.sc            VERTEX   vs_pbr_mtl            ${VARYING_DEF}    COMPILED_SHADERS)
 _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/fs_pbr.sc            FRAGMENT fs_pbr_mtl            ${VARYING_DEF}    COMPILED_SHADERS)
 _sama_ios_compile_metal_shader(${SHADER_SRC_DIR}/vs_pbr_skinned.sc    VERTEX   vs_pbr_skinned_mtl    ${VARYING_DEF}    COMPILED_SHADERS)
@@ -1174,6 +1233,7 @@ add_executable(engine_tests
     tests/platform/TestAndroidTierDetect.cpp
     tests/input/TestGestureRecognizer.cpp
     tests/editor/TestBuildPhaseParser.cpp
+    tests/editor/TestSelectionOutline.cpp
     engine/platform/android/AndroidKeyMap.cpp
     engine/platform/android/VirtualJoystick.cpp
     engine/platform/android/AndroidTierDetect.cpp

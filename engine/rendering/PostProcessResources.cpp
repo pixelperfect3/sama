@@ -55,11 +55,17 @@ void PostProcessResources::validate(uint16_t width, uint16_t height, uint8_t dow
     // -----------------------------------------------------------------
     // HDR scene color + depth → sceneFb_
     // -----------------------------------------------------------------
-    hdrColor_ = bgfx::createTexture2D(
-        width_, height_, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
+    hdrColor_ = bgfx::createTexture2D(width_, height_, false, 1, bgfx::TextureFormat::RGBA16F,
+                                      BGFX_TEXTURE_RT);
 
-    sceneDepth_ = bgfx::createTexture2D(
-        width_, height_, false, 1, bgfx::TextureFormat::D24, BGFX_TEXTURE_RT);
+    // D24S8 (depth24 + stencil8) packed format.  D24 alone would suffice for
+    // the runtime engine, but the editor's selection-outline pass needs an
+    // 8-bit stencil buffer alongside scene depth.  Choosing D24S8 here over
+    // a separate stencil attachment keeps the runtime cost identical (same
+    // 32-bit-per-pixel target) and avoids a second render-target binding.
+    // Sampling the depth component still works on every backend bgfx supports.
+    sceneDepth_ = bgfx::createTexture2D(width_, height_, false, 1, bgfx::TextureFormat::D24S8,
+                                        BGFX_TEXTURE_RT);
 
     {
         bgfx::TextureHandle attachments[2] = {hdrColor_, sceneDepth_};
@@ -79,8 +85,8 @@ void PostProcessResources::validate(uint16_t width, uint16_t height, uint8_t dow
         if (lh < 1)
             lh = 1;
 
-        bloomLevels_[i] = bgfx::createTexture2D(
-            lw, lh, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
+        bloomLevels_[i] =
+            bgfx::createTexture2D(lw, lh, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
 
         bloomFbs_[i] = bgfx::createFrameBuffer(1, &bloomLevels_[i], false);
     }
@@ -88,8 +94,8 @@ void PostProcessResources::validate(uint16_t width, uint16_t height, uint8_t dow
     // -----------------------------------------------------------------
     // LDR target (tonemapper output, input to FXAA)
     // -----------------------------------------------------------------
-    ldrColor_ = bgfx::createTexture2D(
-        width_, height_, false, 1, bgfx::TextureFormat::BGRA8, BGFX_TEXTURE_RT);
+    ldrColor_ = bgfx::createTexture2D(width_, height_, false, 1, bgfx::TextureFormat::BGRA8,
+                                      BGFX_TEXTURE_RT);
 
     ldrFb_ = bgfx::createFrameBuffer(1, &ldrColor_, false);
 }

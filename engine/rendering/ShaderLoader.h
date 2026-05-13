@@ -79,4 +79,18 @@ namespace engine::rendering
 // by UiRenderer when a rect command has cornerRadius > 0.
 [[nodiscard]] ProgramHandle loadRoundedRectProgram();
 
+// Outline fill program — position-only vertex shader, dummy fragment shader.
+// Used by the editor selection-outline pass to write a constant value into
+// the stencil buffer at every pixel covered by the visible mesh surface.
+// The accompanying draw call is configured with color writes disabled so
+// only the stencil side-effect is observable.
+[[nodiscard]] ProgramHandle loadOutlineFillProgram();
+
+// Outline program — position + oct-encoded normal vertex stream, solid-colour
+// fragment shader.  The vertex shader inflates each vertex along its normal
+// by u_outlineParams.x metres so that drawing it with stencil_test =
+// NOT_EQUAL 1 produces a silhouette band around the original mesh.  Used by
+// the editor selection-outline pass.
+[[nodiscard]] ProgramHandle loadOutlineProgram();
+
 }  // namespace engine::rendering

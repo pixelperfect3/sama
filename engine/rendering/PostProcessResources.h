@@ -17,7 +17,12 @@ namespace engine::rendering
 //
 // HDR scene:
 //   hdrColor_   RGBA16F  — scene color output from opaque/transparent passes
-//   sceneDepth_ D24      — scene depth (packed with hdrColor_ in sceneFb_)
+//   sceneDepth_ D24S8    — scene depth + 8-bit stencil (packed with hdrColor_ in
+//                          sceneFb_).  Stencil is used by the editor selection
+//                          outline pass; runtime opaque/transparent passes
+//                          never read or write stencil and are unaffected.
+//                          SSAO samples the depth component just like a plain
+//                          D24 attachment did.
 //
 // Bloom chain (up to 5 levels):
 //   bloomLevels_[0]   full resolution filtered output (threshold)
@@ -54,8 +59,9 @@ public:
         return hdrColor_;
     }
 
-    // Scene depth buffer (D24, packed with hdrColor_ in sceneFb_).
-    // Used by the SSAO pass to reconstruct view-space positions.
+    // Scene depth-stencil buffer (D24S8, packed with hdrColor_ in sceneFb_).
+    // Used by the SSAO pass to reconstruct view-space positions and by the
+    // editor selection-outline pass for stencil masking.
     bgfx::TextureHandle sceneDepth() const
     {
         return sceneDepth_;

@@ -117,6 +117,18 @@ ProgramHandle loadGizmoProgram()
     return wrap(loadProgramFromAssets("shaders/spirv/vs_gizmo.bin", "shaders/spirv/fs_gizmo.bin"));
 }
 
+ProgramHandle loadOutlineFillProgram()
+{
+    return wrap(loadProgramFromAssets("shaders/spirv/vs_outline_fill.bin",
+                                      "shaders/spirv/fs_outline_fill.bin"));
+}
+
+ProgramHandle loadOutlineProgram()
+{
+    return wrap(
+        loadProgramFromAssets("shaders/spirv/vs_outline.bin", "shaders/spirv/fs_outline.bin"));
+}
+
 ProgramHandle loadMsdfProgram()
 {
     return wrap(loadProgramFromAssets("shaders/spirv/vs_sprite.bin", "shaders/spirv/fs_msdf.bin"));
@@ -177,6 +189,8 @@ bgfx::ProgramHandle loadSsaoProgram()
 // from the BGFX_EMBEDDED_SHADER tables below.
 #include "generated/shaders/fs_gizmo_mtl.bin.h"
 #include "generated/shaders/fs_msdf_mtl.bin.h"
+#include "generated/shaders/fs_outline_fill_mtl.bin.h"
+#include "generated/shaders/fs_outline_mtl.bin.h"
 #include "generated/shaders/fs_pbr_mtl.bin.h"
 #include "generated/shaders/fs_rounded_rect_mtl.bin.h"
 #include "generated/shaders/fs_shadow_mtl.bin.h"
@@ -185,6 +199,8 @@ bgfx::ProgramHandle loadSsaoProgram()
 #include "generated/shaders/fs_sprite_mtl.bin.h"
 #include "generated/shaders/fs_unlit_mtl.bin.h"
 #include "generated/shaders/vs_gizmo_mtl.bin.h"
+#include "generated/shaders/vs_outline_fill_mtl.bin.h"
+#include "generated/shaders/vs_outline_mtl.bin.h"
 #include "generated/shaders/vs_pbr_mtl.bin.h"
 #include "generated/shaders/vs_pbr_skinned_mtl.bin.h"
 #include "generated/shaders/vs_rounded_rect_mtl.bin.h"
@@ -206,6 +222,12 @@ bgfx::ProgramHandle loadSsaoProgram()
 #include "generated/shaders/fs_msdf_essl.bin.h"
 #include "generated/shaders/fs_msdf_glsl.bin.h"
 #include "generated/shaders/fs_msdf_spv.bin.h"
+#include "generated/shaders/fs_outline_essl.bin.h"
+#include "generated/shaders/fs_outline_fill_essl.bin.h"
+#include "generated/shaders/fs_outline_fill_glsl.bin.h"
+#include "generated/shaders/fs_outline_fill_spv.bin.h"
+#include "generated/shaders/fs_outline_glsl.bin.h"
+#include "generated/shaders/fs_outline_spv.bin.h"
 #include "generated/shaders/fs_pbr_essl.bin.h"
 #include "generated/shaders/fs_pbr_glsl.bin.h"
 #include "generated/shaders/fs_pbr_spv.bin.h"
@@ -230,6 +252,12 @@ bgfx::ProgramHandle loadSsaoProgram()
 #include "generated/shaders/vs_gizmo_essl.bin.h"
 #include "generated/shaders/vs_gizmo_glsl.bin.h"
 #include "generated/shaders/vs_gizmo_spv.bin.h"
+#include "generated/shaders/vs_outline_essl.bin.h"
+#include "generated/shaders/vs_outline_fill_essl.bin.h"
+#include "generated/shaders/vs_outline_fill_glsl.bin.h"
+#include "generated/shaders/vs_outline_fill_spv.bin.h"
+#include "generated/shaders/vs_outline_glsl.bin.h"
+#include "generated/shaders/vs_outline_spv.bin.h"
 #include "generated/shaders/vs_pbr_essl.bin.h"
 #include "generated/shaders/vs_pbr_glsl.bin.h"
 #include "generated/shaders/vs_pbr_skinned_essl.bin.h"
@@ -306,6 +334,23 @@ static const bgfx::EmbeddedShader kSkinnedShadowShaders[] = {
 static const bgfx::EmbeddedShader kGizmoShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_gizmo),
     BGFX_EMBEDDED_SHADER(fs_gizmo),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+// Selection outline — stencil-fill program (writes 1 to stencil at the
+// visible mesh surface).  Color writes are disabled at draw-state level.
+static const bgfx::EmbeddedShader kOutlineFillShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_outline_fill),
+    BGFX_EMBEDDED_SHADER(fs_outline_fill),
+    BGFX_EMBEDDED_SHADER_END(),
+};
+
+// Selection outline — inflated silhouette program.  Vertex shader pushes
+// position along the oct-decoded normal by u_outlineParams.x metres; pair
+// with stencil_test = NOT_EQUAL 1 to leave only the silhouette band visible.
+static const bgfx::EmbeddedShader kOutlineShaders[] = {
+    BGFX_EMBEDDED_SHADER(vs_outline),
+    BGFX_EMBEDDED_SHADER(fs_outline),
     BGFX_EMBEDDED_SHADER_END(),
 };
 
@@ -518,6 +563,50 @@ ProgramHandle loadGizmoProgram()
         return kInvalidProgram;
 
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kGizmoShaders, renderer, "fs_gizmo");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return kInvalidProgram;
+    }
+
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
+}
+
+ProgramHandle loadOutlineFillProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return kInvalidProgram;
+
+    bgfx::ShaderHandle vsh =
+        bgfx::createEmbeddedShader(kOutlineFillShaders, renderer, "vs_outline_fill");
+    if (!bgfx::isValid(vsh))
+        return kInvalidProgram;
+
+    bgfx::ShaderHandle fsh =
+        bgfx::createEmbeddedShader(kOutlineFillShaders, renderer, "fs_outline_fill");
+    if (!bgfx::isValid(fsh))
+    {
+        bgfx::destroy(vsh);
+        return kInvalidProgram;
+    }
+
+    return wrap(bgfx::createProgram(vsh, fsh, /*destroyShaders=*/true));
+}
+
+ProgramHandle loadOutlineProgram()
+{
+    const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
+
+    if (renderer == bgfx::RendererType::Noop)
+        return kInvalidProgram;
+
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(kOutlineShaders, renderer, "vs_outline");
+    if (!bgfx::isValid(vsh))
+        return kInvalidProgram;
+
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(kOutlineShaders, renderer, "fs_outline");
     if (!bgfx::isValid(fsh))
     {
         bgfx::destroy(vsh);

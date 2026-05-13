@@ -25,6 +25,7 @@
 #include "editor/BuildPhaseParser.h"
 #include "editor/EditorLog.h"
 #include "editor/EditorState.h"
+#include "editor/SelectionOutline.h"
 #include "editor/gizmo/GizmoRenderer.h"
 #include "editor/gizmo/TransformGizmo.h"
 #include "editor/inspectors/ColliderInspector.h"
@@ -119,12 +120,25 @@ struct EditorApp::Impl
     std::unique_ptr<CocoaEditorWindow> window;
 
     // Renderer state (not using engine::rendering::Renderer to avoid GLFW dependency
-    // through engine_core; instead we init bgfx directly).
+    // through engine_core; instead we init bgfx directly, including selection
+    // outline pass — see SelectionOutline.h for the stencil state helpers).
     ShaderUniforms uniforms;
     RenderResources resources;
     bgfx::ProgramHandle pbrProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle skinnedPbrProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle shadowProgram = BGFX_INVALID_HANDLE;
+
+    // Selection-outline programs.  Both run on the HDR scene FB right after
+    // the opaque/skybox passes so they can use the FB's D24S8 stencil
+    // attachment and get tonemapped along with the rest of the scene.
+    //   outlineFillProgram  — writes 1 to stencil at the visible mesh surface.
+    //   outlineProgram      — re-renders the mesh inflated along its normal,
+    //                         gated by stencil_test = NOT_EQUAL 1, painting
+    //                         the silhouette band in u_outlineColor.
+    bgfx::ProgramHandle outlineFillProgram = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle outlineProgram = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle outlineColorUniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle outlineParamsUniform = BGFX_INVALID_HANDLE;
 
     // Post-process — owns the HDR scene framebuffer and the tonemap shader.
     // The editor binds kViewOpaque to postProcess.resources().sceneFb() so
@@ -1309,7 +1323,20 @@ bool EditorApp::init(uint32_t width, uint32_t height)
     impl_->pbrProgram = bgfx::ProgramHandle{loadPbrProgram().idx};
     impl_->skinnedPbrProgram = bgfx::ProgramHandle{loadSkinnedPbrProgram().idx};
     impl_->shadowProgram = bgfx::ProgramHandle{loadShadowProgram().idx};
-    startupSamples.push_back({"shader programs (PBR + skinned + shadow)", startupNow()});
+    impl_->outlineFillProgram = bgfx::ProgramHandle{loadOutlineFillProgram().idx};
+    impl_->outlineProgram = bgfx::ProgramHandle{loadOutlineProgram().idx};
+    // u_outlineColor: linear-HDR RGBA used by fs_outline.sc.  Bright yellow
+    // value chosen so ACES tonemap output reads as a vivid, saturated band
+    // in the editor viewport (see Phase 7 NOTES — fs_pbr.sc now writes
+    // linear HDR, so anything subsequently submitted into sceneFb gets
+    // tonemapped).
+    // u_outlineParams.x: outline thickness in metres in object space.  The
+    // vs_outline shader pushes each vertex along its normal by this much
+    // before MVP — kept in object space so non-uniform world scales don't
+    // distort the apparent silhouette width.
+    impl_->outlineColorUniform = bgfx::createUniform("u_outlineColor", bgfx::UniformType::Vec4);
+    impl_->outlineParamsUniform = bgfx::createUniform("u_outlineParams", bgfx::UniformType::Vec4);
+    startupSamples.push_back({"shader programs (PBR + skinned + shadow + outline)", startupNow()});
 
     // -- Default textures -----------------------------------------------------
     {
@@ -4030,8 +4057,12 @@ void EditorApp::run()
         bgfx::setViewFrameBuffer(kViewOpaque, impl_->postProcess.resources().sceneFb());
         if (renderViewport)
         {
-            bgfx::setViewClear(kViewOpaque, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030FF, 1.0f,
-                               0);
+            // Clear stencil too — the selection-outline pass below relies on
+            // a clean (=0) stencil buffer in the HDR scene FB's D24S8
+            // depth-stencil attachment.
+            bgfx::setViewClear(kViewOpaque,
+                               BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH | BGFX_CLEAR_STENCIL, 0x303030FF,
+                               1.0f, 0);
         }
         else
         {
@@ -4098,49 +4129,89 @@ void EditorApp::run()
                                                  boneBuffer);
             }
 
-            // -- Selection highlight
-            // -------------------------------------------------
+            // -- Selection outline (single-pass stencil) --------------------------
+            // Replaces the pre-Phase-7 wireframe-with-gold-material hack.  Two
+            // bgfx draws targeting the HDR scene FB:
+            //   View kViewEditorSelectionStencil (11): position-only draw with
+            //     stencil-write state, color writes off, depth test on — marks
+            //     stencil = 1 wherever the selected mesh's *visible* surface
+            //     hits the framebuffer.
+            //   View kViewEditorSelectionOutline (12): inflated re-draw of the
+            //     same mesh (vs_outline pushes vertices along their oct-decoded
+            //     normal by u_outlineParams.x metres), gated by stencil_test =
+            //     NOT_EQUAL 1 so only the silhouette band remains.  Depth test
+            //     OFF — the outline pokes through any geometry that occludes
+            //     the entity, which is the entire reason this feature exists
+            //     ("where is my selection when the gizmo is hidden by a wall?").
+            // Both views target the post-process sceneFb (set up below) so the
+            // outline gets tonemapped along with the rest of the scene.  We use
+            // an HDR-bright yellow so ACES tonemap output reads as a vivid,
+            // saturated band.
             {
                 EntityID selE = impl_->editorState.primarySelection();
-                if (selE != INVALID_ENTITY)
+                if (selE != INVALID_ENTITY && bgfx::isValid(impl_->outlineFillProgram) &&
+                    bgfx::isValid(impl_->outlineProgram))
                 {
                     auto* wt = impl_->registry.get<WorldTransformComponent>(selE);
                     auto* mc = impl_->registry.get<MeshComponent>(selE);
-                    if (wt && mc)
+                    const Mesh* mesh = (wt && mc) ? impl_->resources.getMesh(mc->mesh) : nullptr;
+
+                    if (mesh && mesh->isValid() && bgfx::isValid(mesh->surfaceVbh))
                     {
-                        const Mesh* mesh = impl_->resources.getMesh(mc->mesh);
-                        if (mesh && mesh->isValid())
-                        {
-                            glm::mat4 outlineMtx = glm::scale(wt->matrix, glm::vec3(1.02f));
-                            bgfx::setTransform(glm::value_ptr(outlineMtx));
+                        // Scale outline thickness by camera distance so the
+                        // visible band stays roughly constant in screen space
+                        // (a fixed object-space inflation looks huge up close
+                        // and vanishes far away).  The 0.005 factor was tuned
+                        // against the editor's default cube + camera distance.
+                        const glm::vec3 entityPos = glm::vec3(wt->matrix[3]);
+                        const float camDist = glm::length(impl_->camera.position() - entityPos);
+                        const float outlineWidth = 0.005f * camDist + 0.01f;
+                        const float outlineParams[4] = {outlineWidth, 0.0f, 0.0f, 0.0f};
 
-                            const float matData[8] = {
-                                1.0f, 0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                            };
-                            bgfx::setUniform(impl_->uniforms.u_material, matData, 2);
-                            bgfx::setUniform(impl_->uniforms.u_dirLight, lightData, 2);
+                        // HDR-bright yellow — ACES tonemap output reads as a
+                        // saturated yellow band against the scene image.
+                        const float outlineColor[4] = {6.0f, 4.5f, 0.0f, 1.0f};
 
-                            bgfx::setTexture(
-                                0, impl_->uniforms.s_albedo,
-                                bgfx::TextureHandle{impl_->resources.whiteTexture().idx});
-                            bgfx::setTexture(
-                                1, impl_->uniforms.s_normal,
-                                bgfx::TextureHandle{impl_->resources.neutralNormalTexture().idx});
-                            bgfx::setTexture(
-                                2, impl_->uniforms.s_orm,
-                                bgfx::TextureHandle{impl_->resources.whiteTexture().idx});
+                        // Configure the two views.  Both target the same HDR
+                        // scene FB as kViewOpaque so they share the D24S8
+                        // attachment populated by the opaque pass.  Neither
+                        // clears (BGFX_CLEAR_NONE preserves both color and
+                        // stencil state from view 9 / view 11 respectively).
+                        bgfx::setViewName(kViewEditorSelectionStencil, "SelectionStencil");
+                        bgfx::setViewRect(kViewEditorSelectionStencil, 0, 0, W, H);
+                        bgfx::setViewClear(kViewEditorSelectionStencil, BGFX_CLEAR_NONE);
+                        bgfx::setViewFrameBuffer(kViewEditorSelectionStencil,
+                                                 impl_->postProcess.resources().sceneFb());
+                        bgfx::setViewTransform(kViewEditorSelectionStencil, glm::value_ptr(viewMtx),
+                                               glm::value_ptr(projMtx));
 
-                            bgfx::setVertexBuffer(0, mesh->positionVbh);
-                            if (bgfx::isValid(mesh->surfaceVbh))
-                            {
-                                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
-                            }
-                            bgfx::setIndexBuffer(mesh->ibh);
+                        bgfx::setViewName(kViewEditorSelectionOutline, "SelectionOutline");
+                        bgfx::setViewRect(kViewEditorSelectionOutline, 0, 0, W, H);
+                        bgfx::setViewClear(kViewEditorSelectionOutline, BGFX_CLEAR_NONE);
+                        bgfx::setViewFrameBuffer(kViewEditorSelectionOutline,
+                                                 impl_->postProcess.resources().sceneFb());
+                        bgfx::setViewTransform(kViewEditorSelectionOutline, glm::value_ptr(viewMtx),
+                                               glm::value_ptr(projMtx));
 
-                            bgfx::setState(BGFX_STATE_DEFAULT | BGFX_STATE_PT_LINES);
+                        // Pass 1: stencil-fill.  Position stream only.
+                        bgfx::setTransform(glm::value_ptr(wt->matrix));
+                        bgfx::setVertexBuffer(0, mesh->positionVbh);
+                        bgfx::setIndexBuffer(mesh->ibh);
+                        bgfx::setState(outlineStencilFillState());
+                        bgfx::setStencil(outlineStencilFillStencilFront(), BGFX_STENCIL_NONE);
+                        bgfx::submit(kViewEditorSelectionStencil, impl_->outlineFillProgram);
 
-                            bgfx::submit(kViewOpaque, impl_->pbrProgram);
-                        }
+                        // Pass 2: inflated outline draw.  Position + surface
+                        // streams (vs_outline reads a_normal from stream 1).
+                        bgfx::setTransform(glm::value_ptr(wt->matrix));
+                        bgfx::setVertexBuffer(0, mesh->positionVbh);
+                        bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+                        bgfx::setIndexBuffer(mesh->ibh);
+                        bgfx::setUniform(impl_->outlineColorUniform, outlineColor);
+                        bgfx::setUniform(impl_->outlineParamsUniform, outlineParams);
+                        bgfx::setState(outlineDrawState());
+                        bgfx::setStencil(outlineDrawStencilFront(), BGFX_STENCIL_NONE);
+                        bgfx::submit(kViewEditorSelectionOutline, impl_->outlineProgram);
                     }
                 }
             }
@@ -4438,6 +4509,14 @@ void EditorApp::shutdown()
         bgfx::destroy(impl_->skinnedPbrProgram);
     if (bgfx::isValid(impl_->shadowProgram))
         bgfx::destroy(impl_->shadowProgram);
+    if (bgfx::isValid(impl_->outlineFillProgram))
+        bgfx::destroy(impl_->outlineFillProgram);
+    if (bgfx::isValid(impl_->outlineProgram))
+        bgfx::destroy(impl_->outlineProgram);
+    if (bgfx::isValid(impl_->outlineColorUniform))
+        bgfx::destroy(impl_->outlineColorUniform);
+    if (bgfx::isValid(impl_->outlineParamsUniform))
+        bgfx::destroy(impl_->outlineParamsUniform);
 
     // Destroy default textures.
     if (bgfx::isValid(impl_->whiteTex))
