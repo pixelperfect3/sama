@@ -35,19 +35,23 @@ namespace engine::editor
 //   - WRITE_Z, WRITE_A both off: the only side-effect is stencil.  Color
 //     writes are off because we don't want to alter the tonemapped scene
 //     image; only the stencil bit-plane matters here.
-//   - DEPTH_TEST_LEQUAL so a fragment whose depth EQUALS the previously
-//     written value (the common case — the opaque pass just drew this
-//     same mesh at the same world transform) still passes the test.  Plain
-//     DEPTH_TEST_LESS would fail every fragment of the selected mesh
-//     because the depth buffer already holds the mesh's own depth, and
-//     stencil would never get written — silhouette stays 0 and the
-//     outline pass's NOT_EQUAL 1 test would pass everywhere, filling the
-//     entire silhouette interior with the outline colour (the very bug
-//     this comment block exists to prevent regressing).
+//   - No DEPTH_TEST flag (bgfx: absence = always pass).  Depth test ON
+//     would only mark stencil where the selected mesh is the *closest*
+//     geometry — so any pixels where another object occludes the
+//     selection would stay stencil=0, and pass 2's inflated silhouette
+//     would then paint over those occluder pixels because NOT_EQUAL 1
+//     passes there too (the "ground selected, cube turns yellow" bug
+//     this comment block exists to prevent regressing).  We want stencil
+//     marked wherever the mesh projects into screen space regardless of
+//     occlusion; pass 2 then computes (inflated silhouette ∖ original
+//     silhouette) as exactly the band that should glow.
 //   - CULL_CW matches the engine's default winding for static meshes.
+//     This is critical: without back-face culling, with depth test off,
+//     the back faces would also project and stencil-mark a region
+//     larger than the visible silhouette.
 [[nodiscard]] constexpr uint64_t outlineStencilFillState() noexcept
 {
-    return BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA;
+    return BGFX_STATE_CULL_CW | BGFX_STATE_MSAA;
 }
 
 // Stencil mask for the stencil-fill draw.

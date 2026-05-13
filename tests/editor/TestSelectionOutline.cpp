@@ -37,21 +37,27 @@ TEST_CASE("SelectionOutline: stencil-fill state writes neither color nor depth",
     CHECK((s & BGFX_STATE_WRITE_Z) == 0);
 }
 
-TEST_CASE("SelectionOutline: stencil-fill state respects depth occlusion",
+TEST_CASE("SelectionOutline: stencil-fill state has no depth test",
           "[editor][selection_outline]")
 {
     const uint64_t s = outlineStencilFillState();
 
-    // Depth test ON — without it, the back face of the selected mesh would
-    // also mark stencil = 1, causing the outline pass to skip pixels behind
-    // the mesh and breaking visibility-aware silhouettes.  Must be LEQUAL
-    // (not LESS) because the opaque pass already wrote the selected mesh's
-    // depth, so DEPTH_TEST_LESS would fail every fragment and stencil
-    // would never get written — see the comment in SelectionOutline.h.
-    CHECK((s & BGFX_STATE_DEPTH_TEST_LEQUAL) == BGFX_STATE_DEPTH_TEST_LEQUAL);
-    // Specifically not LESS — if anyone ever reverts to LESS, the test
-    // catches it before the editor ships with no outline.
-    CHECK((s & BGFX_STATE_DEPTH_TEST_MASK) != BGFX_STATE_DEPTH_TEST_LESS);
+    // Depth test MUST be off (bgfx: no DEPTH_TEST_* bit = always pass).
+    // The stencil-fill pass marks every screen-space pixel covered by the
+    // selected mesh's front-facing silhouette, regardless of whether
+    // another entity occludes it.  Depth test ON would only mark stencil
+    // where the selection is the *closest* geometry — and pass 2's
+    // inflated silhouette would then paint over the OCCLUDER's pixels
+    // because they would still read stencil = 0 there.  Visible symptom:
+    // selecting a large mesh that other meshes sit on (the ground in the
+    // editor's default scene) turned every overlapping mesh yellow.
+    //
+    // Front-face culling (CULL_CW) plus depth test off keeps the marked
+    // region equal to the visible silhouette: only front-facing triangles
+    // project into stencil, so we mark the outside-of-mesh silhouette
+    // exactly, not the union of front + back face projections.
+    CHECK((s & BGFX_STATE_DEPTH_TEST_MASK) == 0);
+    CHECK((s & BGFX_STATE_CULL_CW) == BGFX_STATE_CULL_CW);
 }
 
 TEST_CASE("SelectionOutline: stencil-fill replaces stencil with reference value 1",
@@ -71,8 +77,9 @@ TEST_CASE("SelectionOutline: stencil-fill replaces stencil with reference value 
     CHECK((st & BGFX_STENCIL_OP_PASS_Z_MASK) == BGFX_STENCIL_OP_PASS_Z_REPLACE);
 
     // Stencil-fail and depth-fail KEEP the existing stencil value — a
-    // depth-occluded fragment is *not* part of the visible silhouette and
-    // must not contribute to the mask.
+    // belt-and-braces guard; with depth test disabled the depth-fail
+    // branch is unreachable today, but a future revert to a depth-tested
+    // stencil-fill must not accidentally pollute the mask.
     CHECK((st & BGFX_STENCIL_OP_FAIL_S_MASK) == BGFX_STENCIL_OP_FAIL_S_KEEP);
     CHECK((st & BGFX_STENCIL_OP_FAIL_Z_MASK) == BGFX_STENCIL_OP_FAIL_Z_KEEP);
 }
