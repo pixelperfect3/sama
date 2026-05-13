@@ -41,6 +41,7 @@
 #include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidGlobals.h"
 #include "engine/platform/android/AndroidGyro.h"
+#include "engine/platform/android/AndroidSavedState.h"
 #include "engine/platform/android/AndroidTierDetect.h"
 #include "engine/platform/android/AndroidWindow.h"
 
@@ -430,6 +431,25 @@ void Engine::handleAndroidCmd(struct android_app* app, int32_t cmd)
             LOGI("APP_CMD_CONFIG_CHANGED");
             engine->androidWindow_->updateSize();
             break;
+
+        case APP_CMD_SAVE_STATE:
+            // Android fires this on rotation, when the process is about to
+            // be killed for memory pressure, or when the activity has been
+            // backgrounded long enough that the OS may evict it.  This is
+            // the documented "persist your state now" hook.  NativeActivity
+            // also offers `app->savedState` (a malloc'd buffer the OS holds
+            // across process restart), but we take the simpler path: invoke
+            // the game's callback so it writes its own file under
+            // externalDataPath via engine::platform::writeSavedState.  That
+            // path survives full process kill (the kernel-shared-memory
+            // savedState slot does not).
+            LOGI("APP_CMD_SAVE_STATE");
+            engine->savedStateFired_ = true;
+            if (engine->saveStateCallback_)
+            {
+                engine->saveStateCallback_();
+            }
+            break;
     }
 }
 
@@ -453,6 +473,18 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
 
     // Store the AAssetManager globally so ShaderLoader can access it.
     platform::setAssetManager(app->activity->assetManager);
+
+    // Cache externalDataPath for AndroidSavedState read/write helpers.  This
+    // is the path Android guarantees the app may freely read/write without
+    // any runtime permission grant — equivalent to Java's
+    // `Context.getExternalFilesDir(null)`.  May be null in pathological
+    // configurations (no storage mounted at all), in which case the helpers
+    // return empty / false and the game silently runs without persistence.
+    if (app->activity && app->activity->externalDataPath)
+    {
+        platform::setAndroidExternalDataPath(app->activity->externalDataPath);
+        LOGI("externalDataPath: %s", app->activity->externalDataPath);
+    }
 
     // Register callbacks.
     app->userData = this;
@@ -612,6 +644,11 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     initialized_ = true;
     LOGI("Sama Engine — Android init complete (%ux%u)", fbW_, fbH_);
     return true;
+}
+
+void Engine::registerSaveStateCallback(std::function<void()> cb)
+{
+    saveStateCallback_ = std::move(cb);
 }
 
 void Engine::shutdown()

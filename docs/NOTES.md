@@ -2378,3 +2378,60 @@ into the test harness — too much surface for one assertion. The
 play-state gate is one expression (`state.playState() ==
 EditorPlayState::Editing`) checked before the mutate site; manual
 verification in the editor is the proportionate test.
+
+## Android saved-state via externalDataPath + callback (2026-05-13)
+
+NativeActivity does not surface the Java `onSaveInstanceState` /
+`onRestoreInstanceState` callbacks to native code, so a pure-NDK game
+cannot use the standard Bundle-based persistence path.  The accepted
+workaround in the NDK samples is to read/write a small state file under
+`android_app::activity->externalDataPath` (which maps to
+`Context.getExternalFilesDir(null)` — no `WRITE_EXTERNAL_STORAGE`
+required).  We codified that pattern into the engine:
+
+1. `engine/platform/android/AndroidSavedState.{h,cpp}` exposes
+   `androidExternalDataPath()`, `readSavedState(name)`,
+   `writeSavedState(name, bytes)`, and an injectable
+   `setAndroidExternalDataPath(path)` used both by `Engine::initAndroid`
+   and by host unit tests.  The helpers are pure-C++ (no `<android/...>`
+   includes) so the read/write/path-sanitisation logic is host-buildable
+   and unit-tested via Catch2 in a tmp dir (see
+   `tests/platform/TestAndroidSavedState.cpp`).
+2. `Engine::registerSaveStateCallback(std::function<void()>)` lets the
+   game register a serialiser.  The engine fires the callback
+   synchronously from its `APP_CMD_SAVE_STATE` handler in
+   `Engine::handleAndroidCmd`.
+
+Design choices weighed:
+
+1. *Use NativeActivity's `app->savedState` / `savedStateSize` slot
+   instead of a file.* Rejected: the slot is malloc'd kernel-shared
+   memory with a practical ~4 KiB ceiling and tricky lifetime (the
+   pointer must be freshly `malloc()`'d each save; the OS frees it
+   later), and it does NOT survive a full process kill — only
+   in-process reconfiguration.  A file under externalDataPath survives
+   every termination mode, supports arbitrary size, and is trivial to
+   inspect with `adb shell ls`.
+2. *Polling instead of a callback.* Rejected: the game would need to
+   call something like `engine.shouldSaveNow()` every frame to catch
+   the `APP_CMD_SAVE_STATE` window, which is racy (the OS may kill the
+   process before the next beginFrame) and forces an "is save pending"
+   bit through a hot path.  The callback fires inside the engine's
+   command-dispatch loop, in the same thread that drives the frame, so
+   no locking is required.
+3. *Bake the schema into the engine (versioned blob with magic +
+   field IDs).* Rejected for now: each game's state differs, and a
+   generic serialiser would either be too constrained (fixed
+   key/value bag) or pull a serialisation library into the platform
+   layer.  Today the game writes a plain POD blob with its own
+   `magic + version` header — the smoke test in `AndroidTestGame.cpp`
+   demonstrates the pattern.
+
+Cost: callers must remember to `engine.registerSaveStateCallback(...)`
+during `onInit` or their state never gets persisted.  An alternative
+would have been to make the callback part of `IGame` (an
+`onSaveState()` method).  Rejected because (a) it would force every
+non-Android port to stub the method, (b) most games on iOS / desktop
+have entirely different persistence needs, and (c) the explicit
+`registerSaveStateCallback` call makes it obvious in the game's
+`onInit` that persistence is wired up.

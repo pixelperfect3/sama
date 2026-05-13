@@ -67,6 +67,7 @@
 
 #include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidGlobals.h"
+#include "engine/platform/android/AndroidSavedState.h"
 #endif
 
 using namespace engine::core;
@@ -77,6 +78,27 @@ using namespace engine::rendering;
 
 namespace
 {
+
+#ifdef __ANDROID__
+// Saved-state blob — written to <externalDataPath>/android_test.state from
+// the engine's APP_CMD_SAVE_STATE callback and read back on the next launch
+// in onInit.  Versioned so a future field addition is rejected cleanly
+// rather than silently mis-parsing a stale file.  Plain POD so the
+// memcpy-based marshal works without any serialisation library.
+struct SavedStateV1
+{
+    uint32_t magic = 0x534D4131;  // 'SMA1' — Sama Android Test v1.
+    uint32_t version = 1;
+    uint32_t postProcessEnabled = 0;  // bool → uint32 for stable layout.
+    uint32_t frameCount = 0;
+    float pinchScale = 1.0f;
+};
+
+static_assert(sizeof(SavedStateV1) == 5 * sizeof(uint32_t),
+              "SavedStateV1 layout must remain stable for cross-launch compatibility");
+
+constexpr const char* kSavedStateFile = "android_test.state";
+#endif
 
 #ifdef __ANDROID__
 // Procedural mono 16-bit PCM WAV with a fade-in/fade-out envelope.  Pulled
@@ -305,6 +327,82 @@ public:
 
 #ifdef __ANDROID__
         // ----------------------------------------------------------------
+        // Saved-state restore — fired on every launch, including cold
+        // start.  If `android_test.state` exists under externalDataPath
+        // and matches our schema, apply the persisted fields BEFORE
+        // anything that consumes them (post-process toggle is read every
+        // frame; pinch scale is applied to the helmet snapshot list once
+        // the helmet finishes loading; frameCount is informational).
+        // The Engine fires the matching APP_CMD_SAVE_STATE callback
+        // registered below, which writes the same blob back out on
+        // rotate / background / kill.
+        // ----------------------------------------------------------------
+        {
+            auto blob = engine::platform::readSavedState(kSavedStateFile);
+            if (blob.size() == sizeof(SavedStateV1))
+            {
+                SavedStateV1 s{};
+                std::memcpy(&s, blob.data(), sizeof(s));
+                if (s.magic == 0x534D4131 && s.version == 1)
+                {
+                    postProcessEnabled_ = (s.postProcessEnabled != 0);
+                    frameCount_ = static_cast<int>(s.frameCount);
+                    gestureScale_ = std::clamp(s.pinchScale, 0.5f, 4.0f);
+                    restoredFromSavedState_ = true;
+                    restoredIndicatorTimer_ = 3.0f;
+                    __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                                        "SavedState: restored postProcess=%s frameCount=%u "
+                                        "pinch=%.2f",
+                                        postProcessEnabled_ ? "ON" : "OFF", s.frameCount,
+                                        s.pinchScale);
+                }
+                else
+                {
+                    __android_log_print(ANDROID_LOG_WARN, "SamaEngine",
+                                        "SavedState: header mismatch (magic=0x%08X v=%u) "
+                                        "— ignoring stale blob",
+                                        s.magic, s.version);
+                }
+            }
+            else if (!blob.empty())
+            {
+                __android_log_print(ANDROID_LOG_WARN, "SamaEngine",
+                                    "SavedState: size mismatch (%zu vs %zu) — ignoring",
+                                    blob.size(), sizeof(SavedStateV1));
+            }
+            else
+            {
+                __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                                    "SavedState: no prior blob — fresh launch");
+            }
+        }
+
+        // Register the save-state callback.  Engine invokes this on
+        // APP_CMD_SAVE_STATE (rotation, backgrounded-long-enough, process
+        // kill).  We serialise our small POD blob synchronously — the OS
+        // does NOT wait for any deferred I/O, so the write must complete
+        // before we return.  Capturing `this` is safe: the callback can
+        // only fire between onInit and onShutdown.
+        engine.registerSaveStateCallback(
+            [this]()
+            {
+                SavedStateV1 s{};
+                s.magic = 0x534D4131;
+                s.version = 1;
+                s.postProcessEnabled = postProcessEnabled_ ? 1u : 0u;
+                s.frameCount = static_cast<uint32_t>(frameCount_);
+                s.pinchScale = gestureScale_;
+                uint8_t buf[sizeof(SavedStateV1)];
+                std::memcpy(buf, &s, sizeof(s));
+                bool ok = engine::platform::writeSavedState(
+                    kSavedStateFile, std::span<const uint8_t>(buf, sizeof(buf)));
+                __android_log_print(ok ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR, "SamaEngine",
+                                    "SavedState: %s postProcess=%s frameCount=%u pinch=%.2f",
+                                    ok ? "wrote" : "FAILED to write",
+                                    postProcessEnabled_ ? "ON" : "OFF", s.frameCount, s.pinchScale);
+            });
+
+        // ----------------------------------------------------------------
         // Audio smoke test — generate a procedural beep, load it into the
         // engine-owned SoLoud and play it once at init.  Tapping the
         // screen also plays it (see onUpdate).  Verifies the AAudio /
@@ -331,6 +429,10 @@ public:
     {
         elapsed_ += dt;
         frameCount_++;
+#ifdef __ANDROID__
+        if (restoredIndicatorTimer_ > 0.0f)
+            restoredIndicatorTimer_ -= dt;
+#endif
         const auto& input = engine.inputState();
         const float fbW = static_cast<float>(engine.fbWidth());
         const float fbH = static_cast<float>(engine.fbHeight());
@@ -767,8 +869,18 @@ public:
             // gates the optional bloom + FXAA passes.
             // ON  = bloom around the bright emitter + FXAA edge smoothing.
             // OFF = tonemap + sRGB gamma only (cheap mobile default).
-            snprintf(buf, sizeof(buf), "Post: %s   (tap upper-right to toggle)",
-                     postProcessEnabled_ ? "ON " : "OFF");
+            //
+            // "(restored)" suffix is appended for the first 3s after a
+            // successful saved-state restore so a user toggling, killing,
+            // relaunching can visually confirm persistence worked.
+#ifdef __ANDROID__
+            const char* restoredSuffix =
+                (restoredFromSavedState_ && restoredIndicatorTimer_ > 0.0f) ? " (restored)" : "";
+#else
+            const char* restoredSuffix = "";
+#endif
+            snprintf(buf, sizeof(buf), "Post: %s   (tap upper-right to toggle)%s",
+                     postProcessEnabled_ ? "ON " : "OFF", restoredSuffix);
             drawList_.drawText({leftMargin, y}, buf, postProcessEnabled_ ? green : white, &font_,
                                fontSize);
             y += lineH * 1.5f;
@@ -1035,6 +1147,13 @@ private:
     // can verify the click landed (logged to logcat each press; also
     // displayed inside the ImGui window itself).
     int imguiButtonPressCount_ = 0;
+
+    // Saved-state restore — flipped on in onInit when a stored blob is
+    // found and applied; drives the "(restored)" HUD suffix that fades
+    // out 3s after launch so a user toggling post-process, killing the
+    // process, and relaunching can visually confirm persistence worked.
+    bool restoredFromSavedState_ = false;
+    float restoredIndicatorTimer_ = 0.0f;
 #endif
 
     void loadMsdfFont()

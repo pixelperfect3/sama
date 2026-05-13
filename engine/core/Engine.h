@@ -9,6 +9,7 @@
 #endif
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include "engine/input/InputState.h"
@@ -242,6 +243,37 @@ public:
         return fbH_;
     }
 
+#ifdef __ANDROID__
+    // ----- Save / restore state (Android only) -----
+    //
+    // NativeActivity does not surface `onSaveInstanceState` /
+    // `onRestoreInstanceState` to native code (those are Java-only callbacks
+    // on `android.app.Activity`), so games that need cross-launch state
+    // persist their own data via `android_app::activity->externalDataPath`.
+    //
+    // The callback registered here fires from `APP_CMD_SAVE_STATE` — Android
+    // emits it on rotation, process kill, and "backgrounded long enough"
+    // events.  Games should write their state synchronously inside the
+    // callback (typical pattern: serialise a tiny POD blob with
+    // `engine::platform::writeSavedState("game.state", ...)`).  Restore is
+    // pull-based: the game calls `engine::platform::readSavedState(...)`
+    // from `onInit` and applies whatever it gets back.
+    //
+    // The callback is invoked on the main / app-glue thread (the same
+    // thread that calls beginFrame), so no locking is required between
+    // the callback and the rest of the game state.
+    void registerSaveStateCallback(std::function<void()> cb);
+
+    // Returns true iff `APP_CMD_SAVE_STATE` has fired at least once since
+    // init.  Useful when games need to distinguish "first launch" from
+    // "restored launch" for telemetry / HUD purposes.  Mirrors the iOS
+    // restored-from-state flag.
+    [[nodiscard]] bool savedStateFired() const
+    {
+        return savedStateFired_;
+    }
+#endif
+
 #if !defined(__ANDROID__) && !ENGINE_IS_IOS
     // ----- GLFW handle (needed for scroll callbacks, cursor capture, etc.) -----
 
@@ -299,6 +331,20 @@ private:
     // engine/core/Engine.cpp handleAndroidCmd() for the lifecycle table
     // and docs/ANDROID_SUPPORT.md Phase B for the design rationale.
     bool paused_ = false;
+
+    // Save-state callback — registered by the game via
+    // registerSaveStateCallback() and fired from APP_CMD_SAVE_STATE.  The
+    // callback is expected to call engine::platform::writeSavedState()
+    // synchronously to persist its small state blob under externalDataPath.
+    // We do NOT use NativeActivity's `savedState` / `savedStateSize` slots
+    // (those are kernel-shared-memory pages with a 4 KiB practical limit
+    // and tricky lifetime rules) — a plain file is simpler and supports
+    // larger payloads.
+    std::function<void()> saveStateCallback_;
+
+    // Set true on the first APP_CMD_SAVE_STATE this process sees.  Powers
+    // savedStateFired() so games can show "restored" indicators.
+    bool savedStateFired_ = false;
 #else
     // iOS platform objects — owned by IosApp / the application delegate, not
     // by the Engine.  The Engine holds back-pointers so beginFrame/endFrame
