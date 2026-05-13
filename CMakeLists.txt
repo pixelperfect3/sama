@@ -241,6 +241,22 @@ if(NOT rapidjson_POPULATED)
     FetchContent_Populate(rapidjson)
 endif()
 
+# meshoptimizer — vertex cache + simplification (MIT).  Used by the asset
+# tool's MeshProcessor for LOD generation + post-T&L cache layout.  Desktop
+# only (the tool is desktop-only).
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
+    FetchContent_Declare(
+        meshoptimizer
+        GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+        GIT_TAG        v0.20
+    )
+    set(MESHOPT_BUILD_DEMO       OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_BUILD_GLTFPACK   OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(meshoptimizer)
+endif()
+
+
 # ---------------------------------------------------------------------------
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
 # ---------------------------------------------------------------------------
@@ -1137,9 +1153,13 @@ if(NOT ANDROID AND NOT SAMA_IOS)
         tools/asset_tool/TextureProcessor.cpp
         tools/asset_tool/ShaderProcessor.cpp
         tools/asset_tool/AstcEncoderStub.cpp
+        tools/asset_tool/MeshProcessor.cpp
     )
     target_include_directories(engine_asset_tool PUBLIC ${SAMA_ROOT_DIR})
     target_include_directories(engine_asset_tool PRIVATE ${stb_SOURCE_DIR})
+    if(TARGET meshoptimizer)
+        target_link_libraries(engine_asset_tool PUBLIC meshoptimizer)
+    endif()
     target_link_libraries(engine_asset_tool PUBLIC engine_io)
 
     # ASTC encoding object library — compiled separately so it can link
@@ -1227,6 +1247,7 @@ add_executable(engine_tests
     tests/ui/TestSlugFont.cpp
     tests/ui/TestVirtualJoystickRenderer.cpp
     tests/tools/TestAssetProcessor.cpp
+    tests/tools/TestMeshProcessor.cpp
     tests/platform/TestAndroidKeyMap.cpp
     tests/platform/TestAndroidInput.cpp
     tests/platform/TestVirtualJoystick.cpp

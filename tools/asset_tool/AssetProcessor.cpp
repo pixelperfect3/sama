@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "engine/io/Json.h"
+#include "tools/asset_tool/MeshProcessor.h"
 #include "tools/asset_tool/ShaderProcessor.h"
 #include "tools/asset_tool/TextureProcessor.h"
 
@@ -150,6 +151,7 @@ int AssetProcessor::run()
     discoverTextures();
     discoverShaders();
     discoverModels();
+    discoverMeshes();
 
     if (args_.verbose)
     {
@@ -164,6 +166,9 @@ int AssetProcessor::run()
 
         ShaderProcessor shaderProc(args_, tier_);
         shaderProc.processAll(entries_);
+
+        MeshProcessor meshProc(args_, tier_);
+        meshProc.processAll(entries_);
 
         // Copy models as-is
         for (const auto& entry : entries_)
@@ -276,6 +281,13 @@ void AssetProcessor::discoverModels()
 
         entries_.push_back(std::move(entry));
     }
+}
+
+void AssetProcessor::discoverMeshes()
+{
+    MeshProcessor meshProc(args_, tier_);
+    auto meshEntries = meshProc.discover();
+    entries_.insert(entries_.end(), meshEntries.begin(), meshEntries.end());
 }
 
 bool AssetProcessor::ensureOutputDir()

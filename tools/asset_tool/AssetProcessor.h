@@ -86,6 +86,7 @@ private:
     void discoverTextures();
     void discoverShaders();
     void discoverModels();
+    void discoverMeshes();
     bool writeManifest();
     bool ensureOutputDir();
 

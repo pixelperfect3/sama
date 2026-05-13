@@ -136,7 +136,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase D — Asset Pipeline CLI (MOSTLY DONE — 2 items deferred)
+## Phase D — Asset Pipeline CLI (MOSTLY DONE — 1 item deferred)
 
 **Effort:** Medium | **Dependencies:** None (can run in parallel with A)
 
@@ -163,8 +163,8 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ### Deferred (Phase D)
 
-- [ ] Mesh processing — LOD generation, vertex cache optimization. Today the pipeline ships meshes through unchanged.
-- [ ] Audio transcoding — WAV to Opus. Today the pipeline copies audio sources unchanged. Both items are tracked in **Remaining Limitations** above.
+- [x] Mesh processing — LOD generation, vertex cache optimization. *Done:* `MeshProcessor` (`tools/asset_tool/MeshProcessor.{h,cpp}`) discovers `.obj` inputs and writes a self-contained `.smsh` LOD chain. Uses `meshoptimizer` (FetchContent, MIT, v0.20): `meshopt_optimizeVertexCache` + `meshopt_optimizeOverdraw` + `meshopt_optimizeVertexFetch` on LOD 0, then `meshopt_simplify` per LOD level. Per-tier LOD count: low=1 (25%), mid=2 (50% + 25%), high=3 (50%, 25%, 10%). Container format documented in `MeshProcessor.h`; covered by 5 test cases / 67 assertions in `tests/tools/TestMeshProcessor.cpp` (ACMR improvement, monotone LOD counts, degenerate-input guards, end-to-end `.obj`→`.smsh`).
+- [ ] Audio transcoding — WAV to Opus. Today the pipeline copies audio sources unchanged.
 
 ---
 
@@ -577,7 +577,7 @@ adb emu kill
 ### Remaining Limitations
 
 - [x] **`onSaveInstanceState` / `onRestoreInstanceState` not surfaced by NativeActivity.** *Fix:* `engine/platform/android/AndroidSavedState.{h,cpp}` exposes `androidExternalDataPath()` + `readSavedState(name)` / `writeSavedState(name, bytes)`, and `Engine::registerSaveStateCallback(cb)` (engine/core/Engine.h) wires the game's serialiser into `APP_CMD_SAVE_STATE` so it fires synchronously on rotation / background / kill. The activity's `externalDataPath` is cached at `initAndroid` time so the helpers work without re-querying NativeActivity. Smoke-tested in `apps/android_test/AndroidTestGame.cpp` — persists `postProcessEnabled_`, `frameCount_`, and `gestureScale_` to `android_test.state`; a `(restored)` HUD suffix appears for the first 3 s after a relaunch with a stored blob. Host unit tests in `tests/platform/TestAndroidSavedState.cpp` round-trip the helpers via a tmp dir.
-- [ ] **Mesh LOD generation and audio transcoding (WAV → Opus).** Phase D nice-to-haves; deferred. Today the asset pipeline runs textures + shaders only.
+- [ ] **Audio transcoding (WAV → Opus).** Phase D nice-to-have; deferred. Mesh LOD generation is done (see Phase D above).
 - [ ] **Fast-follow / on-demand asset packs.** Only **install-time** packs are supported. Dynamic delivery requires a JNI bridge to Google Play Core's `AssetPackManager`, which would mean shipping a Kotlin/Java half of the application. See "Known limitation: dynamic asset pack delivery" under Phase H for the full path.
 - [x] **`ProjectConfig::loadFromFile` on Android uses raw `fopen()`.** *Fix:* `GameRunner::runAndroid(app, configPath)` (engine/game/GameRunner.cpp) now reads `configPath` from APK assets via `AndroidFileSystem` and feeds the buffer to `ProjectConfig::loadFromString`. `AndroidApp.cpp::runAndroidApp` passes `"project.json"` by default so games that ship one alongside their APK get it for free. The empty / `"auto"` `activeTier` → runtime tier-detection fallback is preserved. Logcat (`SamaEngine` tag) confirms the parsed tier and the resulting `shadowMapSize` / `IBL` / `SSAO` / `bloom` / `renderScale` / `targetFPS` on every boot.
 - [ ] **iOS ImGui not wired yet.** Engine still skips ImGui on iOS. The path is: plumb iOS touch input similarly to Android, verify `engine_debug` cross-compiles for iOS, confirm Metal `vs_ocornut_imgui_mtl` bytecode is present (it is). Future task — out of scope for the Android round.

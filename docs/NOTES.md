@@ -2479,3 +2479,74 @@ Verified on `sama_mid` AVD (2 GB RAM → tier=Low): logcat shows
 by `tier='low' shadowMapSize=512 cascades=1 IBL=0 SSAO=0 bloom=0
 renderScale=0.75 targetFPS=30`.
 
+
+## Mesh LOD pipeline via meshoptimizer (2026-05-13)
+
+The asset tool's `MeshProcessor` (`tools/asset_tool/MeshProcessor.{h,cpp}`)
+generates per-tier LOD chains and runs vertex-cache + overdraw + vertex-fetch
+optimization on every processed mesh.  Output is a self-contained `.smsh`
+container.
+
+### Decision
+
+- **Library:** `meshoptimizer` v0.20 (MIT) via FetchContent.  Same pattern as
+  `astcenc` / `JoltPhysics`: declared at top-level `CMakeLists.txt`, built as
+  a static lib, linked into `engine_asset_tool` only on desktop.
+- **Pipeline per mesh (LOD 0):**
+  `meshopt_optimizeVertexCache` → `meshopt_optimizeOverdraw` (threshold 1.05)
+  → `meshopt_optimizeVertexFetch`.  These are all lossless re-orderings — the
+  reference geometry is preserved; only the index/vertex order changes.
+- **Per-tier LOD count (fractions of source index count):**
+  - `low`  → 1 LOD at 25 %
+  - `mid`  → 2 LODs at 50 %, 25 %
+  - `high` → 3 LODs at 50 %, 25 %, 10 %
+  Simplification uses `meshopt_simplify` with `target_error=0.1`, then
+  re-runs `meshopt_optimizeVertexCache` on the simplified index buffer.
+
+### Container format (`.smsh`)
+
+Why not extend the runtime `MeshData` struct or use glTF extensions?  The
+existing runtime pipeline (`cgltf` + `ObjLoader` + `MeshBuilder`) is shaped
+around per-mesh upload at load time, with no concept of LOD switching.
+Bolting a LOD chain into `MeshData` would force every caller (demos,
+editor, tests, screenshot fixtures) to deal with the extra state before any
+of it is exercised.
+
+Instead we ship a separate side-by-side `.smsh` container that's trivially
+parsable in C++ and Python: 5-uint32 header, per-LOD index-count/offset
+table, then position floats, then concatenated `uint16` index buffers.  The
+runtime can adopt this incrementally — today it's tooling-only, but the
+format is documented in `MeshProcessor.h` so a future `SmshLoader` can read
+it without spelunking the encoder.
+
+### Tradeoffs
+
+- `.smsh` carries positions only, no surface attributes (normals / tangents /
+  UVs).  Reason: `meshopt_simplify` doesn't operate on attributes, so they'd
+  need a parallel re-mapping pass — minor extension, but out of scope.  Today
+  `.glb` / `.gltf` continue to flow through the as-is copy path for any mesh
+  that needs attributes.
+- 16-bit indices only (the format reserves an `indexType` byte for a future
+  32-bit promotion).  Meshes above 65 535 vertices are rejected by the
+  encoder, which is an explicit ceiling rather than a silent overflow.
+- The simplifier may collapse below 3 indices for trivially small meshes;
+  in that case we duplicate the previous LOD to keep the chain valid.  This
+  is detectable from the LOD index-count table (entries equal to the prior
+  level).
+
+### Why not use the existing engine `MeshData` and call `buildMesh` here
+
+The asset tool runs without bgfx initialized — `bgfx::createVertexBuffer`
+would crash.  Decoupling the optimizer from `MeshBuilder` keeps the tool
+testable on the host CI without rendering setup.
+
+### Tests
+
+`tests/tools/TestMeshProcessor.cpp` (5 cases / 67 assertions):
+- per-tier LOD count matrix
+- monotonic LOD-index-count chain on a 16×16 grid
+- vertex-cache ACMR strictly decreases on a shuffled-index baseline
+- degenerate inputs (empty / single-tri / out-of-range index) are rejected
+  with no crash
+- end-to-end `.obj` → `.smsh` write
+
