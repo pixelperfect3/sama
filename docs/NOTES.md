@@ -646,7 +646,7 @@ Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, n
 
 **Known bugs / UX gaps (dogfooding backlog)**
 - [ ] Material editor: changing a field in the material inspector doesn't apply to the selected entity's `MaterialComponent`. The UI binds, but the write-back path is missing — likely needs a `MaterialInspector::commit()` hook in the same place rotation/scale edits got fixed (`b76908d`). *Why:* the inspector exists but is non-functional, so the panel is misleading.
-- [ ] Selection outline: viewport-clicked entities have no visible highlight — the gizmo appears but the mesh itself is not stenciled. Spec calls for a single-pass stencil outline (§ 18.7 Rendering checklist). *Why:* hard to tell what's selected when the gizmo is occluded by geometry.
+- [x] Selection outline: viewport-clicked entities now get a vivid yellow stencil-band outline drawn on top of the mesh in the editor viewport. Two-pass stencil approach — see "Editor selection outline — two-pass stencil" architectural-decision entry below.
 - [x] Viewport dirty-flagging: implemented in `EditorApp::run()` via a `viewportDirty` flag on `Impl`. The opaque/skinned PBR pass, selection outline, skybox, gizmos, and HUD overlay are all skipped when the flag is false; bgfx views are still touched so the swapchain re-presents the previous frame. The flag is set true on camera orbit/zoom (only when there's actual mouse delta), gizmo hover/mode/drag, picking, every property/material/light/visibility/transform write-back, every hierarchy mutation (rename excluded), undo/redo, scene new/open, asset import, environment loads, window resize, active animator playback, and forced true every frame while in Play mode. A "redraws: N" counter is shown in the HUD; idle frames stop incrementing it within 1-2 frames. *Tradeoff:* the FPS readout in the HUD only refreshes when the viewport redraws — acceptable since the whole point is to stop redrawing when idle. *Why this approach:* a global flag in `EditorApp::Impl` keeps the change confined to the editor (no engine API churn) and slots into the existing `hierarchyDirty` / `propertiesDirty` pattern.
 - [ ] `TransformInspector` keyboard editing path (Tab/Arrow/+/-) bypasses the play-state gate added in Phase 12 — the gizmo and PropertiesPanel callbacks are blocked during Play, but typing into the inspector still mutates `TransformComponent` and races `PhysicsSystem::syncDynamicBodies`. Cleanest fix: thread `EditorState&` into `IComponentInspector::inspect()`. *Why:* a user inspecting numbers during Play could accidentally fight the simulation and not understand why nothing happens.
 - [x] Editor HUD swap to UiRenderer + JetBrains Mono MSDF — done in commit `755f33e`. The FPS counter, mode label, gizmo shortcut hint, "PLAYING" indicator, status message, and Add Component overlay all render through `UiRenderer` on view 15 (`kViewImGui`). Falls back to `bgfx::dbgTextPrintf` if the JBM atlas fails to load.
@@ -2202,3 +2202,133 @@ not re-submitted on top is wiped. Re-submitting the (cheap) HUD + gizmo
 draw lists every frame is the right answer; the previous "touch the view
 to keep it alive" trick relied on the same not-actually-true swapchain
 behaviour.
+
+## Editor selection outline — two-pass stencil (2026-05-12)
+
+The editor used to "highlight" the selected mesh by re-drawing it in
+wireframe with a gold material on top of the opaque pass. Visually broken
+in many ways: no depth test, occluded by geometry from any angle, did not
+show the silhouette correctly, and the wireframe was nearly invisible
+against the cube it was supposed to highlight. Replaced with a real
+single-pass stencil outline matching the spec in
+`docs/EDITOR_ARCHITECTURE.md` § 18.7.
+
+### Decision
+
+Two bgfx draws targeting the HDR scene framebuffer, gated by a stencil
+attachment that we packed into the existing scene-depth target.
+
+1. **Stencil-fill pass** (`kViewEditorSelectionStencil` = 11):
+   `vs_outline_fill` + `fs_outline_fill`. Position-only stream. Color
+   writes off, depth test `LEQUAL` (the opaque pass already wrote the
+   selected mesh's depth — `LESS` would fail every fragment and the
+   stencil would never get marked, the bug we explicitly catch in
+   `tests/editor/TestSelectionOutline.cpp`). Stencil state writes the
+   reference value 1 to every fragment that survives depth test.
+
+2. **Outline-draw pass** (`kViewEditorSelectionOutline` = 12):
+   `vs_outline` + `fs_outline`. Position + surface streams (we read the
+   oct-encoded normal from stream 1 and decode it in the vertex shader,
+   then push the position outward by `u_outlineParams.x` metres in
+   object space before MVP). Stencil test = `NOT_EQUAL 1`, depth test
+   off, no depth write. The result is a vivid HDR-yellow band wherever
+   the inflated mesh extends beyond the original silhouette — and
+   because depth test is off, the band shows through any geometry
+   occluding the selected entity (the whole point: "where is my
+   selection when the gizmo is hidden behind a wall?").
+
+Both views target the post-process `sceneFb`, so the outline gets
+tonemapped along with the rest of the scene. The outline color is
+`(6, 4.5, 0)` linear HDR — ACES tonemap output reads as a saturated
+yellow that pops against any background.
+
+### View IDs
+
+Slotted into the previously-reserved 11–15 scene-pass range
+(`engine/rendering/ViewIds.h`). They MUST run before the post-process
+tonemap (view 16) so they can write into the HDR scene FB and so the
+outline gets tonemapped. Editor-only — runtime engine never submits to
+these views. View 13–15 stay reserved for future scene-pass work
+(decals, velocity, particles).
+
+### Depth attachment: D24 → D24S8
+
+`PostProcessResources::sceneDepth_` switched from D24 to D24S8 because
+D24 has no stencil byte and we needed the stencil bit-plane co-located
+with scene depth (so we could drop the outline pass into the existing
+sceneFb without allocating a second framebuffer). Same 32-bit-per-pixel
+cost. SSAO still samples the depth component normally — the format
+swap is invisible to anything that doesn't write `setStencil`.
+
+The opaque-pass clear in `EditorApp::run()` had to add
+`BGFX_CLEAR_STENCIL` so the stencil byte starts at 0 each dirty frame.
+Without that, leftover stencil from the previous selection would mask
+the new outline (or vice-versa, the outline would persist after
+deselection).
+
+### Persistence across idle frames
+
+The outline lives in the sceneFb pixels alongside the rest of the
+tonemapped scene. The viewport dirty-flag (NOTES.md → "Viewport
+dirty-flagging") already triggers a full re-render whenever selection
+changes, the camera moves, or the gizmo is dragged — so the outline
+gets repainted every time it could have moved. On idle frames the
+sceneFb is preserved verbatim and the post-process tonemap pass keeps
+re-presenting it, outline included, for free.
+
+### Why not draw the outline AFTER tonemap
+
+Considered: render outline to backbuffer (LDR target) post-tonemap so
+the band is exactly the colour we asked for. Two reasons against:
+
+- The backbuffer has no stencil attachment in this codebase. Adding one
+  to the swapchain config is a per-platform wrinkle (Vulkan needs
+  D24S8 + stencil load store ops in the swapchain image, Metal needs a
+  separate `stencilAttachment` texture in the pass descriptor) — much
+  more surface area than D24S8 in `PostProcessResources`.
+- Tonemap-after-outline costs a full-screen pass extra bandwidth on the
+  outline pixels and is barely visible (the band already crushes to
+  saturated yellow).
+
+### Why a header-only state helper
+
+`editor/SelectionOutline.h` exists so the bgfx state / stencil masks
+are constexpr functions with explanatory comments and unit tests
+(`tests/editor/TestSelectionOutline.cpp`) — instead of a wall of
+`BGFX_STATE_*` macros buried inline in `EditorApp::run()`. The tests
+catch the LESS-vs-LEQUAL regression and pin the REF(1) handshake
+between the two passes; they cost ~21 assertions and zero runtime.
+The functions do not pull in any editor surface, so the test binary
+links them with no extra dependencies.
+
+### What we are NOT doing
+
+- Outline thickness in pixels. The current implementation scales by
+  camera distance (`0.005 * camDist + 0.01` metres) which keeps the
+  visible band roughly constant in screen space. A true screen-space
+  outline would re-project clip-space derivatives and is overkill for
+  the editor selection use case.
+- Multi-color outlines (selected vs. hovered vs. parent-of-selection).
+  Single hard-coded HDR yellow is enough for now; if we want richer
+  semantics later, swap `u_outlineColor` for an instanced uniform.
+- Skinned mesh outlines. The vs_outline shader uses the static-mesh
+  vertex layout (position + oct-normal). Skinned characters would need
+  a `vs_outline_skinned` variant doing the same bone-matrix blend as
+  `vs_pbr_skinned`. Not blocked by anything in the editor today
+  (skeletal selection is rare in the editor) but worth flagging.
+- Outline on the runtime engine. The runtime never renders gizmos
+  either — selection is an editor concept. Keeping the two passes
+  editor-only avoids the runtime paying for a feature it cannot use.
+
+### Verification
+
+- `cmake --build build --target sama_editor` clean.
+- `cmake --build build --target engine_tests engine_screenshot_tests`
+  clean; all 6,659 + 37 assertions pass (no regression in PBR / SSAO /
+  HDR scene FB paths despite the depth-format swap).
+- `tests/editor/TestSelectionOutline.cpp` covers the bgfx state /
+  stencil masks: 21 assertions across 7 cases.
+- Manual: launched `sama_editor`, programmatically auto-selected the
+  default cube, took a `screencapture` — vivid yellow outline visible
+  around the red cube even with the gizmo arrows on top. Confirmed by
+  reverting the auto-select and clicking the cube manually.

@@ -555,12 +555,12 @@ An infinite ground-plane grid rendered as a single full-screen quad with a fragm
 
 ### 6.5 Selection Highlight
 
-Selected entities are highlighted with an outline effect:
-1. Render selected entities to a stencil buffer
-2. Dilate the stencil (3x3 or 5x5 kernel) in a post-process pass
-3. Draw the dilated area minus the original stencil as a colored outline
+**Implemented (2026-05-12).** Two-pass stencil outline rendered into the HDR scene framebuffer immediately after the opaque pass:
 
-Alternative: render selected entities in wireframe mode with a bright color on an overlay view. Simpler but less visually polished.
+1. **Stencil-fill pass** (view `kViewEditorSelectionStencil` = 11): position-only draw with color writes off and depth test `LEQUAL`. Marks stencil = 1 wherever the selected mesh's visible surface lies. Uses `vs_outline_fill` / `fs_outline_fill`.
+2. **Outline-draw pass** (view `kViewEditorSelectionOutline` = 12): re-renders the mesh with vertices pushed outward along their oct-decoded normal by `u_outlineParams.x` metres. Stencil test `NOT_EQUAL 1`, depth test off — only the silhouette band remains visible, and it pokes through any occluding geometry. Uses `vs_outline` / `fs_outline` with `u_outlineColor` (HDR-bright yellow that ACES-tonemaps to a saturated band).
+
+The scene depth attachment in `PostProcessResources` was switched from D24 to D24S8 to host the 8-bit stencil byte; SSAO's depth sampling is unaffected. Editor-only — the runtime engine never submits to views 11/12. State helpers live in `editor/SelectionOutline.h` with unit tests at `tests/editor/TestSelectionOutline.cpp`. See `docs/NOTES.md` → "Editor selection outline — two-pass stencil" for the full rationale.
 
 ### 6.6 Multiple Viewports
 
