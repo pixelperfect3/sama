@@ -1,6 +1,5 @@
 {
-    "_comment": "Android test app — ProjectConfig template demonstrating Phase E's runtime tier detection. activeTier=\"auto\" tells GameRunner::runAndroid to call AndroidTierDetect::detectAndroidTier() and substitute the result before constructing EngineDesc. The same substitution fires when activeTier is empty (so the current android_test build, which doesn't pass a configPath to runAndroid, still gets auto-detection — see engine/platform/android/AndroidApp.cpp).",
-    "_loading_note": "TODO: ProjectConfig::loadFromFile uses raw fopen(); on Android it cannot read APK assets. To make this file load on-device, wire runAndroid(app, configPath) to read via AndroidFileSystem (engine/platform/android/AndroidFileSystem.h) and call loadFromString instead. Until then, this file is a template for game devs to copy into their own runAndroid(configPath)-aware setup, and it's loaded as expected on desktop/iOS.",
+    "_comment": "Android test app — ProjectConfig template demonstrating Phase E's runtime tier detection. activeTier=\"auto\" tells GameRunner::runAndroid to call AndroidTierDetect::detectAndroidTier() and substitute the result before constructing EngineDesc. The same substitution fires when activeTier is empty. Loaded at runtime via AndroidFileSystem -> ProjectConfig::loadFromString (see engine/game/GameRunner.cpp's runAndroid(configPath) overload, wired from engine/platform/android/AndroidApp.cpp).",
 
     "name": "Sama Android Test",
     "activeTier": "auto",

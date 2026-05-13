@@ -2435,3 +2435,47 @@ non-Android port to stub the method, (b) most games on iOS / desktop
 have entirely different persistence needs, and (c) the explicit
 `registerSaveStateCallback` call makes it obvious in the game's
 `onInit` that persistence is wired up.
+## ProjectConfig loaded via AndroidFileSystem on Android (2026-05-13)
+
+`ProjectConfig::loadFromFile` uses raw `fopen()`, which cannot read
+anything under the APK's `assets/` directory — the file paths there are
+served by `AAssetManager`, not by the C runtime.  The Phase E
+gap-fill template (`apps/android_test/project.json`) was therefore
+bundled into APKs but never parsed at runtime; the empty-`activeTier` →
+auto-detect fallback still produced sane behaviour, but no other
+configurable field (tier render-scale, target FPS, shadow size, etc.)
+was actually driving the engine.
+
+Fix: `GameRunner::runAndroid(app, configPath)` (in
+`engine/game/GameRunner.cpp`) now opens `configPath` via
+`engine::platform::AndroidFileSystem` and passes the buffer to
+`ProjectConfig::loadFromString`.  The runtime-tier-detection fallback
+for empty / `"auto"` `activeTier` is preserved.
+
+Design choices:
+
+1. *Add an `IFileSystem` override to `ProjectConfig::loadFromFile`.*
+   Tempting because it'd make the API symmetric on every platform, but
+   the load-from-file path is also reached from the editor + desktop
+   tooling where there's no `IFileSystem` instance lying around.  Keeping
+   `loadFromString` as the platform-neutral entry point + a thin Android
+   adapter in GameRunner is less invasive.
+2. *Change `AndroidApp.cpp`'s entry to pass `"project.json"` by
+   default.* Yes — every Android game that ships a `project.json` under
+   its `apps/<game>/` directory gets it picked up automatically.  Games
+   that don't ship one still work: `AndroidFileSystem::read` returns an
+   empty vector, the load is skipped, defaults persist.  The cost is
+   that game authors no longer choose the filename, but no shipped game
+   used a non-`project.json` name and the convention matches desktop.
+3. *Surface the tier choice via a non-logging API for telemetry.* Out
+   of scope; we just log via `__android_log_print` so logcat (`SamaEngine`
+   tag) shows the parsed tier and the resulting `shadowMapSize` / `IBL` /
+   `SSAO` / `bloom` / `renderScale` / `targetFPS` on every boot.  Games
+   that want to surface the tier in their HUD can read it via
+   `engine.renderer().renderSettings()`.
+
+Verified on `sama_mid` AVD (2 GB RAM → tier=Low): logcat shows
+`ProjectConfig: loaded 'project.json' from APK (1872 bytes)` followed
+by `tier='low' shadowMapSize=512 cascades=1 IBL=0 SSAO=0 bloom=0
+renderScale=0.75 targetFPS=30`.
+

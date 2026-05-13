@@ -37,8 +37,12 @@ void runAndroidApp(struct android_app* app)
         return;
     }
 
+    // Wire the ProjectConfig template bundled in apps/<game>/project.json
+    // through the Android asset reader.  Falls back to defaults if the file
+    // is missing inside the APK.  See GameRunner::runAndroid(configPath) for
+    // the read path (AndroidFileSystem -> ProjectConfig::loadFromString).
     engine::game::GameRunner runner(*game);
-    int result = runner.runAndroid(app);
+    int result = runner.runAndroid(app, "project.json");
 
     delete game;
 

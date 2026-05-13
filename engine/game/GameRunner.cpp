@@ -9,6 +9,10 @@
 #include "engine/scene/TransformSystem.h"
 
 #ifdef __ANDROID__
+#include <android/log.h>
+#include <android_native_app_glue.h>
+
+#include "engine/platform/android/AndroidFileSystem.h"
 #include "engine/platform/android/AndroidTierDetect.h"
 #endif
 
@@ -140,10 +144,37 @@ int GameRunner::runAndroid(struct android_app* app, const core::EngineDesc& desc
 int GameRunner::runAndroid(struct android_app* app, const char* configPath)
 {
     ProjectConfig config;
-    if (configPath)
+    bool loaded = false;
+    if (configPath && configPath[0] != '\0')
     {
-        config.loadFromFile(configPath);
+        // ProjectConfig::loadFromFile uses raw fopen() which can't reach
+        // anything inside the APK on Android.  Read via AAssetManager
+        // instead and hand the buffer to loadFromString.  The asset
+        // manager is owned by NativeActivity (app->activity->assetManager)
+        // and outlives this call.
+        if (app && app->activity && app->activity->assetManager)
+        {
+            platform::AndroidFileSystem fs(app->activity->assetManager);
+            auto bytes = fs.read(configPath);
+            if (!bytes.empty())
+            {
+                loaded = config.loadFromString(reinterpret_cast<const char*>(bytes.data()),
+                                               bytes.size());
+                __android_log_print(loaded ? ANDROID_LOG_INFO : ANDROID_LOG_WARN, "SamaEngine",
+                                    "ProjectConfig: %s '%s' from APK (%zu bytes)",
+                                    loaded ? "loaded" : "FAILED to parse", configPath,
+                                    bytes.size());
+            }
+            else
+            {
+                __android_log_print(ANDROID_LOG_WARN, "SamaEngine",
+                                    "ProjectConfig: '%s' not present in APK assets — "
+                                    "using defaults",
+                                    configPath);
+            }
+        }
     }
+    (void)loaded;  // Defaults are intentionally fine when no config is supplied.
 
     // -- Runtime tier detection ------------------------------------------
     // If the user did not specify `activeTier` in project.json, OR they
@@ -155,6 +186,27 @@ int GameRunner::runAndroid(struct android_app* app, const char* configPath)
     {
         const auto detected = platform::android::detectAndroidTier();
         config.activeTier = platform::android::androidTierToProjectConfigName(detected);
+        __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                            "ProjectConfig: activeTier auto-detected as '%s'",
+                            config.activeTier.c_str());
+    }
+    else
+    {
+        __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                            "ProjectConfig: activeTier explicitly set to '%s'",
+                            config.activeTier.c_str());
+    }
+
+    // Emit the resolved tier fields so on-device verification can confirm
+    // the JSON actually drove the EngineDesc (vs. the hard-coded defaults).
+    {
+        const TierConfig t = config.getActiveTier();
+        __android_log_print(ANDROID_LOG_INFO, "SamaEngine",
+                            "ProjectConfig: tier='%s' shadowMapSize=%d cascades=%d "
+                            "IBL=%d SSAO=%d bloom=%d renderScale=%.2f targetFPS=%d",
+                            config.activeTier.c_str(), t.shadowMapSize, t.shadowCascades,
+                            t.enableIBL ? 1 : 0, t.enableSSAO ? 1 : 0, t.enableBloom ? 1 : 0,
+                            t.renderScale, t.targetFPS);
     }
 
     fixedTimestep_ = config.physics.fixedTimestep;
