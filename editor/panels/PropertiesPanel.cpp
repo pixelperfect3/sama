@@ -68,13 +68,15 @@ void PropertiesPanel::render()
 
     bgfx::dbgTextPrintf(kCol, kStartRow + 2, 0x07, "Tab/Arrows=navigate  +/-=edit");
 
-    // Render each applicable inspector.
+    // Render each applicable inspector. EditorState is threaded through so
+    // inspectors can gate write-back on play state (matching the gizmo and
+    // hierarchy callbacks; see EditorApp.cpp:1421 and TransformGizmo.cpp:170).
     uint16_t row = kStartRow + 4;
     for (auto& inspector : inspectors_)
     {
         if (inspector->canInspect(registry_, entity))
         {
-            uint16_t consumed = inspector->inspect(registry_, entity, row);
+            uint16_t consumed = inspector->inspect(registry_, entity, state_, row);
             row += consumed;
         }
     }

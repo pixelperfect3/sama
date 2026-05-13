@@ -21,7 +21,8 @@ bool NameInspector::canInspect(const Registry& reg, EntityID entity) const
     return reg.has<engine::scene::NameComponent>(entity);
 }
 
-uint16_t NameInspector::inspect(Registry& reg, EntityID entity, uint16_t startRow)
+uint16_t NameInspector::inspect(Registry& reg, EntityID entity, const EditorState& /*state*/,
+                                uint16_t startRow)
 {
     auto* nc = reg.get<engine::scene::NameComponent>(entity);
     if (!nc)

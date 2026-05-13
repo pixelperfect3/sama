@@ -20,7 +20,15 @@ namespace engine::editor
 // MaterialInspector -- inspects and edits material properties via the
 // MaterialComponent + RenderResources material table.
 //
-// Displays albedo color (RGB), roughness, and metallic as editable fields.
+// Displays albedo color (RGB), roughness, metallic, and emissive scale as
+// editable fields. Edits write through `RenderResources::getMaterialMut()` —
+// the PBR draw-call builder reads the same `Material*` per frame
+// (`DrawCallBuildSystem.cpp:99`), so no cache invalidation is needed.
+//
+// Edits are gated on `EditorState::playState() == Editing` for symmetry with
+// the other physics-affecting inspectors; material edits don't actually
+// race the simulation, but rejecting them in Play matches user expectation
+// that "the world is read-only when running".
 // ---------------------------------------------------------------------------
 
 class MaterialInspector final : public IComponentInspector
@@ -36,11 +44,16 @@ public:
 
     bool canInspect(const ecs::Registry& reg, ecs::EntityID entity) const override;
 
-    uint16_t inspect(ecs::Registry& reg, ecs::EntityID entity, uint16_t startRow) override;
+    uint16_t inspect(ecs::Registry& reg, ecs::EntityID entity, const EditorState& state,
+                     uint16_t startRow) override;
 
 private:
     const IEditorWindow& window_;
     rendering::RenderResources& resources_;
+
+    // Active field for keyboard editing:
+    //   0..2 = albedo R/G/B, 3 = roughness, 4 = metallic, 5 = emissive scale.
+    int activeField_ = 0;
 };
 
 }  // namespace engine::editor

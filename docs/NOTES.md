@@ -645,10 +645,10 @@ The version bump is critical: without it, users with the old cached file will si
 Consolidated from `EDITOR_ARCHITECTURE.md` § 18.7 (Implementation Guidelines, never enforced post-MVP), the Deferred subsection above, and outstanding bug reports surfaced while dogfooding the editor. Items grouped by trigger / dependency.
 
 **Known bugs / UX gaps (dogfooding backlog)**
-- [ ] Material editor: changing a field in the material inspector doesn't apply to the selected entity's `MaterialComponent`. The UI binds, but the write-back path is missing — likely needs a `MaterialInspector::commit()` hook in the same place rotation/scale edits got fixed (`b76908d`). *Why:* the inspector exists but is non-functional, so the panel is misleading.
+- [x] Material editor: changing a field in the material inspector doesn't apply to the selected entity's `MaterialComponent`. The UI binds, but the write-back path is missing — likely needs a `MaterialInspector::commit()` hook in the same place rotation/scale edits got fixed (`b76908d`). *Why:* the inspector exists but is non-functional, so the panel is misleading. *Fix:* MaterialInspector had no keyboard input handling at all — only a static read-only display. Added Tab/Up/Down navigation across 6 fields (albedo R/G/B, roughness, metallic, emissive scale) with Left/Right or `+`/`-` adjusting the active field. Edits write through `RenderResources::getMaterialMut()`, which is the same `Material*` slot `DrawCallBuildSystem` reads each frame (`engine/rendering/systems/DrawCallBuildSystem.cpp:99`) — no caching layer, no invalidation step. Tradeoff: this is a debug-text inspector, not a "proper" Cocoa text-field editor; full color-well/slider UI is tracked under "Material editor (proper)" below.
 - [x] Selection outline: viewport-clicked entities now get a vivid yellow stencil-band outline drawn on top of the mesh in the editor viewport. Two-pass stencil approach — see "Editor selection outline — two-pass stencil" architectural-decision entry below.
 - [x] Viewport dirty-flagging: implemented in `EditorApp::run()` via a `viewportDirty` flag on `Impl`. The opaque/skinned PBR pass, selection outline, skybox, gizmos, and HUD overlay are all skipped when the flag is false; bgfx views are still touched so the swapchain re-presents the previous frame. The flag is set true on camera orbit/zoom (only when there's actual mouse delta), gizmo hover/mode/drag, picking, every property/material/light/visibility/transform write-back, every hierarchy mutation (rename excluded), undo/redo, scene new/open, asset import, environment loads, window resize, active animator playback, and forced true every frame while in Play mode. A "redraws: N" counter is shown in the HUD; idle frames stop incrementing it within 1-2 frames. *Tradeoff:* the FPS readout in the HUD only refreshes when the viewport redraws — acceptable since the whole point is to stop redrawing when idle. *Why this approach:* a global flag in `EditorApp::Impl` keeps the change confined to the editor (no engine API churn) and slots into the existing `hierarchyDirty` / `propertiesDirty` pattern.
-- [ ] `TransformInspector` keyboard editing path (Tab/Arrow/+/-) bypasses the play-state gate added in Phase 12 — the gizmo and PropertiesPanel callbacks are blocked during Play, but typing into the inspector still mutates `TransformComponent` and races `PhysicsSystem::syncDynamicBodies`. Cleanest fix: thread `EditorState&` into `IComponentInspector::inspect()`. *Why:* a user inspecting numbers during Play could accidentally fight the simulation and not understand why nothing happens.
+- [x] `TransformInspector` keyboard editing path (Tab/Arrow/+/-) bypasses the play-state gate added in Phase 12 — the gizmo and PropertiesPanel callbacks are blocked during Play, but typing into the inspector still mutates `TransformComponent` and races `PhysicsSystem::syncDynamicBodies`. Cleanest fix: thread `EditorState&` into `IComponentInspector::inspect()`. *Why:* a user inspecting numbers during Play could accidentally fight the simulation and not understand why nothing happens. *Fix:* did exactly that — added `const EditorState&` to `IComponentInspector::inspect()` and updated all six implementations. `TransformInspector`, `ColliderInspector`, and `RigidBodyInspector` now early-out the value-mutating Left/Right/`+`/`-` paths when `playState() != Editing` (field navigation Tab/Up/Down is still allowed so users can browse). `MaterialInspector` adopts the same gate for consistency. A grey hint line `(read-only while playing)` renders below each gated inspector. `NameInspector` and `LightInspector` ignore the new param — they were already read-only.
 - [x] Editor HUD swap to UiRenderer + JetBrains Mono MSDF — done in commit `755f33e`. The FPS counter, mode label, gizmo shortcut hint, "PLAYING" indicator, status message, and Add Component overlay all render through `UiRenderer` on view 15 (`kViewImGui`). Falls back to `bgfx::dbgTextPrintf` if the JBM atlas fails to load.
 
 **Editor features still pending (post-MVP, no concrete game blocked yet)**
@@ -2332,3 +2332,49 @@ links them with no extra dependencies.
   default cube, took a `screencapture` — vivid yellow outline visible
   around the red cube even with the gizmo arrows on top. Confirmed by
   reverting the auto-select and clicking the cube manually.
+## EditorState threaded into IComponentInspector (2026-05-12)
+
+The two inspector bugs (material write-back missing; transform keyboard
+edits racing physics during Play) shared a root cause: the
+`IComponentInspector::inspect(reg, entity, startRow)` signature gave each
+inspector a `Registry&` and nothing else, so an inspector had no way to
+ask "is the simulation running?". The gizmo and the panel callbacks
+already gate on `state.playState() != Editing` (`TransformGizmo.cpp:170`,
+`EditorApp.cpp:1421`); the inspector keyboard path was the third
+entry-point and had no comparable guard.
+
+The fix threads `const EditorState&` through `inspect()`. Three
+alternatives were considered:
+
+1. *Pass `bool editingAllowed` instead of the full state.* Smaller
+   coupling, but loses the future ability for inspectors to consult any
+   other state (selection set, undo stack, modal flags). The full
+   reference is barely larger and keeps the door open.
+2. *Have `PropertiesPanel` skip render entirely when `playState !=
+   Editing`.* Wrong: users explicitly want to *inspect* values during
+   Play (debugging "what's this entity's mass right now?"). Only the
+   *write* path needs gating.
+3. *Have each inspector query a static `g_editorState`.* Avoids the
+   signature change, but globals here would couple every inspector to a
+   specific EditorApp instance and break any plan to spawn multiple
+   editor windows / scenes.
+
+Option 1's tradeoff is the chosen design's only real cost: every
+inspector implementation now takes a parameter five of six don't need.
+That's 5 `(void)state;` lines in exchange for the guard being a member
+function of the existing state object — acceptable.
+
+While at it, MaterialInspector got actual edit logic (it had a binding
+display but no input handling — the original "missing write-back" bug),
+and the play-state gate was extended to RigidBodyInspector and
+ColliderInspector for symmetry; their fields would race the physics
+sync the same way TransformComponent does.
+
+*Why no inspector-level unit test:* `inspect()` calls
+`bgfx::dbgTextPrintf`, which assert-crashes without a live bgfx context.
+Initialising bgfx in `engine_tests` (currently a non-graphical test
+binary) just to drive a debug-text inspector would pull a Metal device
+into the test harness — too much surface for one assertion. The
+play-state gate is one expression (`state.playState() ==
+EditorPlayState::Editing`) checked before the mutate site; manual
+verification in the editor is the proportionate test.
