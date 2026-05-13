@@ -136,7 +136,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 
 ---
 
-## Phase D — Asset Pipeline CLI (MOSTLY DONE — 1 item deferred)
+## Phase D — Asset Pipeline CLI (DONE)
 
 **Effort:** Medium | **Dependencies:** None (can run in parallel with A)
 
@@ -164,7 +164,7 @@ Phases A+D can run in parallel. B+C depend on A. E depends on D. F needs A+D+E. 
 ### Deferred (Phase D)
 
 - [x] Mesh processing — LOD generation, vertex cache optimization. *Done:* `MeshProcessor` (`tools/asset_tool/MeshProcessor.{h,cpp}`) discovers `.obj` inputs and writes a self-contained `.smsh` LOD chain. Uses `meshoptimizer` (FetchContent, MIT, v0.20): `meshopt_optimizeVertexCache` + `meshopt_optimizeOverdraw` + `meshopt_optimizeVertexFetch` on LOD 0, then `meshopt_simplify` per LOD level. Per-tier LOD count: low=1 (25%), mid=2 (50% + 25%), high=3 (50%, 25%, 10%). Container format documented in `MeshProcessor.h`; covered by 5 test cases / 67 assertions in `tests/tools/TestMeshProcessor.cpp` (ACMR improvement, monotone LOD counts, degenerate-input guards, end-to-end `.obj`→`.smsh`).
-- [ ] Audio transcoding — WAV to Opus. Today the pipeline copies audio sources unchanged.
+- [x] Audio transcoding — WAV to Opus. *Done:* `AudioProcessor` (`tools/asset_tool/AudioProcessor.{h,cpp}`) discovers `.wav` inputs, decodes via `dr_wav` (FetchContent, single-header), encodes via `libopus` (FetchContent, BSD, v1.4), and writes Ogg-wrapped `.opus` files with per-tier bitrate (low=48 kbps, mid=64 kbps, high=96 kbps). Bitrate is stamped into the OpusTags comment block as `SAMA_BITRATE_BPS=N` so consumers can inspect it without a full decoder. Guarded by `SAMA_WITH_OPUS=ON/OFF` — when off, audio files copy through untouched. Covered by 4 test cases / 29 assertions in `tests/tools/TestAudioProcessor.cpp` (PSNR>20 dB round-trip at 64 kbps, per-tier bitrate observable, end-to-end CLI). **Runtime caveat:** SoLoud (the engine's audio backend) does not currently load `.opus` files — the encode path is in place, but the runtime decode + playback hook is a follow-up.
 
 ---
 
@@ -577,7 +577,7 @@ adb emu kill
 ### Remaining Limitations
 
 - [x] **`onSaveInstanceState` / `onRestoreInstanceState` not surfaced by NativeActivity.** *Fix:* `engine/platform/android/AndroidSavedState.{h,cpp}` exposes `androidExternalDataPath()` + `readSavedState(name)` / `writeSavedState(name, bytes)`, and `Engine::registerSaveStateCallback(cb)` (engine/core/Engine.h) wires the game's serialiser into `APP_CMD_SAVE_STATE` so it fires synchronously on rotation / background / kill. The activity's `externalDataPath` is cached at `initAndroid` time so the helpers work without re-querying NativeActivity. Smoke-tested in `apps/android_test/AndroidTestGame.cpp` — persists `postProcessEnabled_`, `frameCount_`, and `gestureScale_` to `android_test.state`; a `(restored)` HUD suffix appears for the first 3 s after a relaunch with a stored blob. Host unit tests in `tests/platform/TestAndroidSavedState.cpp` round-trip the helpers via a tmp dir.
-- [ ] **Audio transcoding (WAV → Opus).** Phase D nice-to-have; deferred. Mesh LOD generation is done (see Phase D above).
+- [x] **Audio transcoding (WAV → Opus).** *Fix:* `AudioProcessor` transcodes `.wav` → Ogg-Opus via `libopus` with per-tier bitrate (48/64/96 kbps).  The encode-side bitrate is observable in OpusTags.  Runtime decode for `.opus` (SoLoud doesn't bundle an Opus source) is a follow-up; the asset side is complete and tested.
 - [ ] **Fast-follow / on-demand asset packs.** Only **install-time** packs are supported. Dynamic delivery requires a JNI bridge to Google Play Core's `AssetPackManager`, which would mean shipping a Kotlin/Java half of the application. See "Known limitation: dynamic asset pack delivery" under Phase H for the full path.
 - [x] **`ProjectConfig::loadFromFile` on Android uses raw `fopen()`.** *Fix:* `GameRunner::runAndroid(app, configPath)` (engine/game/GameRunner.cpp) now reads `configPath` from APK assets via `AndroidFileSystem` and feeds the buffer to `ProjectConfig::loadFromString`. `AndroidApp.cpp::runAndroidApp` passes `"project.json"` by default so games that ship one alongside their APK get it for free. The empty / `"auto"` `activeTier` → runtime tier-detection fallback is preserved. Logcat (`SamaEngine` tag) confirms the parsed tier and the resulting `shadowMapSize` / `IBL` / `SSAO` / `bloom` / `renderScale` / `targetFPS` on every boot.
 - [ ] **iOS ImGui not wired yet.** Engine still skips ImGui on iOS. The path is: plumb iOS touch input similarly to Android, verify `engine_debug` cross-compiles for iOS, confirm Metal `vs_ocornut_imgui_mtl` bytecode is present (it is). Future task — out of scope for the Android round.

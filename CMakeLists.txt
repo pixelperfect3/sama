@@ -256,6 +256,39 @@ if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
     FetchContent_MakeAvailable(meshoptimizer)
 endif()
 
+# libopus — Opus audio codec (BSD).  Used by AudioProcessor for WAV→Opus
+# transcoding.  Optional: if FetchContent fails or upstream API is missing,
+# SAMA_WITH_OPUS is left undefined and the audio path falls back to copying
+# .wav untouched.  Desktop-only (asset tool target).
+option(SAMA_WITH_OPUS "Enable Opus audio transcoding in the asset tool" ON)
+if(SAMA_WITH_OPUS AND NOT SAMA_ANDROID AND NOT SAMA_IOS)
+    FetchContent_Declare(
+        opus
+        GIT_REPOSITORY https://github.com/xiph/opus.git
+        GIT_TAG        v1.4
+    )
+    set(OPUS_BUILD_PROGRAMS  OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING   OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(opus)
+endif()
+
+# dr_libs — single-header WAV/MP3/FLAC decoders (public domain).  Used by
+# AudioProcessor for WAV reading.  Desktop-only.
+if(NOT SAMA_ANDROID AND NOT SAMA_IOS)
+    FetchContent_Declare(
+        dr_libs
+        GIT_REPOSITORY https://github.com/mackron/dr_libs.git
+        GIT_TAG        master
+    )
+    FetchContent_GetProperties(dr_libs)
+    if(NOT dr_libs_POPULATED)
+        FetchContent_Populate(dr_libs)
+    endif()
+endif()
+
 
 # ---------------------------------------------------------------------------
 # Shader compilation — runs shaderc at build time, embeds bytecode as .h files
@@ -1154,11 +1187,17 @@ if(NOT ANDROID AND NOT SAMA_IOS)
         tools/asset_tool/ShaderProcessor.cpp
         tools/asset_tool/AstcEncoderStub.cpp
         tools/asset_tool/MeshProcessor.cpp
+        tools/asset_tool/AudioProcessor.cpp
     )
     target_include_directories(engine_asset_tool PUBLIC ${SAMA_ROOT_DIR})
     target_include_directories(engine_asset_tool PRIVATE ${stb_SOURCE_DIR})
     if(TARGET meshoptimizer)
         target_link_libraries(engine_asset_tool PUBLIC meshoptimizer)
+    endif()
+    if(SAMA_WITH_OPUS AND TARGET opus)
+        target_link_libraries(engine_asset_tool PUBLIC opus)
+        target_include_directories(engine_asset_tool PRIVATE ${dr_libs_SOURCE_DIR})
+        target_compile_definitions(engine_asset_tool PUBLIC SAMA_WITH_OPUS=1)
     endif()
     target_link_libraries(engine_asset_tool PUBLIC engine_io)
 
@@ -1248,6 +1287,7 @@ add_executable(engine_tests
     tests/ui/TestVirtualJoystickRenderer.cpp
     tests/tools/TestAssetProcessor.cpp
     tests/tools/TestMeshProcessor.cpp
+    tests/tools/TestAudioProcessor.cpp
     tests/platform/TestAndroidKeyMap.cpp
     tests/platform/TestAndroidInput.cpp
     tests/platform/TestVirtualJoystick.cpp

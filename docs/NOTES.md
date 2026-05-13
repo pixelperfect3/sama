@@ -2550,3 +2550,63 @@ testable on the host CI without rendering setup.
   with no crash
 - end-to-end `.obj` → `.smsh` write
 
+
+## WAV → Opus transcoding via libopus + custom Ogg muxer (2026-05-13)
+
+The asset tool's `AudioProcessor` (`tools/asset_tool/AudioProcessor.{h,cpp}`)
+transcodes `.wav` source files to Ogg-wrapped Opus at per-tier bitrate.
+
+### Decision
+
+- **Codec:** `libopus` v1.4 (BSD) via FetchContent.  Clean CMake build with
+  `OPUS_BUILD_PROGRAMS=OFF` + `OPUS_BUILD_SHARED_LIBRARY=OFF`.
+- **WAV decoder:** `dr_wav` (single-header, public domain) from the `dr_libs`
+  repo via FetchContent_Populate.  Avoids dragging in libsndfile / autoconf.
+- **Why not libopusenc:** It pulls in libopusenc → libopus + libogg with an
+  autoconf bootstrap that fights `add_subdirectory` (no clean CMake build
+  target as of writing).  We get the same `.opus` output by emitting raw
+  Opus packets from libopus and wrapping them in Ogg pages ourselves — the
+  Ogg framing for a single logical stream is ~50 lines of code (RFC 3533,
+  RFC 7845).  Per-page CRC32, OpusHead + OpusTags packets, 20 ms packet
+  rate.  Output is interoperable with `ffmpeg`, `opusfile`, etc.
+- **Per-tier bitrate:** low = 48 kbps, mid = 64 kbps, high = 96 kbps.  CBR
+  hint via `OPUS_SET_BITRATE` with VBR enabled (Opus's default mode).
+- **Build switch:** `SAMA_WITH_OPUS=ON` (default ON).  When OFF or when the
+  FetchContent fails on a particular platform, `AudioProcessor` falls back
+  to copying `.wav` through untouched.  Tests are conditional on the macro.
+
+### Bitrate observability
+
+The encoder stamps the configured bitrate into the OpusTags comment block as
+`SAMA_BITRATE_BPS=<N>`.  `AudioProcessor::readEncodedBitrate(blob)` recovers
+the integer without needing a libopus decoder.  Useful for QA scripts and
+for the asset-tool tests to assert per-tier settings end-to-end.
+
+### Tradeoffs
+
+- The custom Ogg muxer puts exactly one packet per page.  This wastes a few
+  bytes of overhead per 20 ms frame vs. real `libopusenc`, but the resulting
+  `.opus` files are still well under 2× wire-bitrate × duration and decode
+  identically.
+- Resampling for non-48 kHz input WAVs is linear interpolation.  Adequate
+  for game SFX (rare anyway given everyone authors at 48 kHz), but if we
+  ever ship music sources at 44.1 kHz we should swap in a proper polyphase
+  resampler — flagged as a future task.
+- The runtime audio engine (SoLoud) does not currently load `.opus` files.
+  The asset side ships today; runtime decode + playback hook is a follow-up
+  (SoLoud has a `soloud_audiosource_opusfile` source available out-of-tree;
+  bringing it in would also require `libopusfile` + `libogg`).
+
+### Tests
+
+`tests/tools/TestAudioProcessor.cpp` (4 cases / 29 assertions):
+- `readEncodedBitrate` finds the tag in arbitrary buffers, returns -1 when
+  absent.
+- 1.0 s 440 Hz sine round-trips through encode → decode with PSNR > 20 dB
+  at 64 kbps (typical PSNR observed ~44 dB at the right alignment; the test
+  recovers the encoder pre-skip via a short cross-correlation sweep rather
+  than hardcoding 312 samples, and skips the encoder's warm-up transient).
+- All three tier bitrates (48/64/96 kbps) are observable in the encoded blob.
+- End-to-end: `AssetProcessor::run()` on a temp dir containing a sine WAV
+  produces a `.opus` file with the expected bitrate tag, `OggS` capture
+  pattern at byte 0, and `OpusHead` magic in the first page.

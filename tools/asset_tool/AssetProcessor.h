@@ -24,6 +24,8 @@ struct TierConfig
     int maxTextureSize = 1024;
     std::string astcBlockSize = "6x6";
     bool copyModelsAsIs = true;
+    // Audio: Opus encoding bitrate (bits/sec).  See AudioProcessor.
+    int opusBitrate = 64000;
 };
 
 TierConfig getTierConfig(const std::string& tierName);
@@ -87,6 +89,7 @@ private:
     void discoverShaders();
     void discoverModels();
     void discoverMeshes();
+    void discoverAudio();
     bool writeManifest();
     bool ensureOutputDir();
 

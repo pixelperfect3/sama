@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "engine/io/Json.h"
+#include "tools/asset_tool/AudioProcessor.h"
 #include "tools/asset_tool/MeshProcessor.h"
 #include "tools/asset_tool/ShaderProcessor.h"
 #include "tools/asset_tool/TextureProcessor.h"
@@ -25,14 +26,14 @@ TierConfig getTierConfig(const std::string& tierName)
 {
     if (tierName == "low")
     {
-        return {"low", 512, "8x8", true};
+        return {"low", 512, "8x8", true, 48000};
     }
     else if (tierName == "high")
     {
-        return {"high", 2048, "4x4", true};
+        return {"high", 2048, "4x4", true, 96000};
     }
     // Default to mid
-    return {"mid", 1024, "6x6", true};
+    return {"mid", 1024, "6x6", true, 64000};
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ int AssetProcessor::run()
     discoverShaders();
     discoverModels();
     discoverMeshes();
+    discoverAudio();
 
     if (args_.verbose)
     {
@@ -169,6 +171,9 @@ int AssetProcessor::run()
 
         MeshProcessor meshProc(args_, tier_);
         meshProc.processAll(entries_);
+
+        AudioProcessor audioProc(args_, tier_);
+        audioProc.processAll(entries_);
 
         // Copy models as-is
         for (const auto& entry : entries_)
@@ -288,6 +293,13 @@ void AssetProcessor::discoverMeshes()
     MeshProcessor meshProc(args_, tier_);
     auto meshEntries = meshProc.discover();
     entries_.insert(entries_.end(), meshEntries.begin(), meshEntries.end());
+}
+
+void AssetProcessor::discoverAudio()
+{
+    AudioProcessor audioProc(args_, tier_);
+    auto audioEntries = audioProc.discover();
+    entries_.insert(entries_.end(), audioEntries.begin(), audioEntries.end());
 }
 
 bool AssetProcessor::ensureOutputDir()
