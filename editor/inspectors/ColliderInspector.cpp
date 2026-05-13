@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "editor/EditorState.h"
 #include "editor/platform/IEditorWindow.h"
 #include "engine/ecs/Entity.h"
 #include "engine/ecs/Registry.h"
@@ -52,7 +53,8 @@ static const char* shapeLabel(ColliderShape s)
     return "?";
 }
 
-uint16_t ColliderInspector::inspect(Registry& reg, EntityID entity, uint16_t startRow)
+uint16_t ColliderInspector::inspect(Registry& reg, EntityID entity, const EditorState& state,
+                                    uint16_t startRow)
 {
     auto* cc = reg.get<ColliderComponent>(entity);
     if (!cc)
@@ -62,6 +64,10 @@ uint16_t ColliderInspector::inspect(Registry& reg, EntityID entity, uint16_t sta
     uint16_t row = startRow;
 
     bgfx::dbgTextPrintf(kCol, row++, 0x0f, "--- Collider ---");
+
+    // Mirrors TransformInspector's gate: collider edits during simulation
+    // would race the physics body sync. Navigation is still allowed.
+    const bool editsAllowed = state.playState() == EditorPlayState::Editing;
 
     // Field navigation (Tab / Up / Down).
     if (window_.isKeyPressed(kKeyTab))
@@ -77,8 +83,10 @@ uint16_t ColliderInspector::inspect(Registry& reg, EntityID entity, uint16_t sta
         activeField_ = (activeField_ + 1) % kNumFields;
     }
 
-    const bool dec = window_.isKeyPressed(kKeyLeft) || window_.isKeyPressed(kKeyMinus);
-    const bool inc = window_.isKeyPressed(kKeyRight) || window_.isKeyPressed(kKeyPlus);
+    const bool dec =
+        editsAllowed && (window_.isKeyPressed(kKeyLeft) || window_.isKeyPressed(kKeyMinus));
+    const bool inc =
+        editsAllowed && (window_.isKeyPressed(kKeyRight) || window_.isKeyPressed(kKeyPlus));
 
     if (dec || inc)
     {
@@ -140,6 +148,11 @@ uint16_t ColliderInspector::inspect(Registry& reg, EntityID entity, uint16_t sta
     line(6, "HalfExt Z % 8.3f  (Box)", cc->halfExtents.z);
     line(7, "Radius    % 8.3f  (Sph/Cap)", cc->radius);
     line(8, "Sensor    %s", cc->isSensor ? "yes" : "no");
+
+    if (!editsAllowed)
+    {
+        bgfx::dbgTextPrintf(kCol, row++, 0x08, "(read-only while playing)");
+    }
 
     row++;  // blank line
     return static_cast<uint16_t>(row - startRow);

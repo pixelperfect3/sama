@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "editor/EditorState.h"
 #include "editor/platform/IEditorWindow.h"
 #include "engine/ecs/Entity.h"
 #include "engine/ecs/Registry.h"
@@ -48,7 +49,8 @@ static const char* bodyTypeLabel(BodyType t)
     return "?";
 }
 
-uint16_t RigidBodyInspector::inspect(Registry& reg, EntityID entity, uint16_t startRow)
+uint16_t RigidBodyInspector::inspect(Registry& reg, EntityID entity, const EditorState& state,
+                                     uint16_t startRow)
 {
     auto* rb = reg.get<RigidBodyComponent>(entity);
     if (!rb)
@@ -58,6 +60,10 @@ uint16_t RigidBodyInspector::inspect(Registry& reg, EntityID entity, uint16_t st
     uint16_t row = startRow;
 
     bgfx::dbgTextPrintf(kCol, row++, 0x0f, "--- RigidBody ---");
+
+    // Mirrors TransformInspector's gate: live edits to mass/damping/etc.
+    // would race PhysicsSystem during Play. Navigation is still allowed.
+    const bool editsAllowed = state.playState() == EditorPlayState::Editing;
 
     // Field navigation (Tab / Up / Down).
     if (window_.isKeyPressed(kKeyTab))
@@ -74,8 +80,10 @@ uint16_t RigidBodyInspector::inspect(Registry& reg, EntityID entity, uint16_t st
     }
 
     // Edit the active field via Left/Right or -/+.
-    const bool dec = window_.isKeyPressed(kKeyLeft) || window_.isKeyPressed(kKeyMinus);
-    const bool inc = window_.isKeyPressed(kKeyRight) || window_.isKeyPressed(kKeyPlus);
+    const bool dec =
+        editsAllowed && (window_.isKeyPressed(kKeyLeft) || window_.isKeyPressed(kKeyMinus));
+    const bool inc =
+        editsAllowed && (window_.isKeyPressed(kKeyRight) || window_.isKeyPressed(kKeyPlus));
 
     if (dec || inc)
     {
@@ -136,6 +144,11 @@ uint16_t RigidBodyInspector::inspect(Registry& reg, EntityID entity, uint16_t st
     line(4, "Friction    % 8.3f", rb->friction);
     line(5, "Restitution % 8.3f", rb->restitution);
     line(6, "Layer       %u", static_cast<unsigned>(rb->layer));
+
+    if (!editsAllowed)
+    {
+        bgfx::dbgTextPrintf(kCol, row++, 0x08, "(read-only while playing)");
+    }
 
     row++;  // blank line
     return static_cast<uint16_t>(row - startRow);

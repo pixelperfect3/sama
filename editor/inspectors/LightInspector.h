@@ -30,7 +30,8 @@ public:
 
     bool canInspect(const ecs::Registry& reg, ecs::EntityID entity) const override;
 
-    uint16_t inspect(ecs::Registry& reg, ecs::EntityID entity, uint16_t startRow) override;
+    uint16_t inspect(ecs::Registry& reg, ecs::EntityID entity, const EditorState& state,
+                     uint16_t startRow) override;
 
 private:
     const IEditorWindow& window_;

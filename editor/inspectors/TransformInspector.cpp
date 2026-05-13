@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include "editor/EditorState.h"
 #include "editor/platform/IEditorWindow.h"
 #include "engine/ecs/Entity.h"
 #include "engine/ecs/Registry.h"
@@ -34,7 +35,8 @@ bool TransformInspector::canInspect(const Registry& reg, EntityID entity) const
     return reg.has<TransformComponent>(entity);
 }
 
-uint16_t TransformInspector::inspect(Registry& reg, EntityID entity, uint16_t startRow)
+uint16_t TransformInspector::inspect(Registry& reg, EntityID entity, const EditorState& state,
+                                     uint16_t startRow)
 {
     auto* tc = reg.get<TransformComponent>(entity);
     if (!tc)
@@ -59,6 +61,15 @@ uint16_t TransformInspector::inspect(Registry& reg, EntityID entity, uint16_t st
     const char* labels[3] = {"Pos", "Rot", "Scl"};
     const char* axes[3] = {"X", "Y", "Z"};
 
+    // Play-state gate: keyboard edits to TransformComponent would race
+    // PhysicsSystem::syncDynamicBodies during simulation. The gizmo and the
+    // hierarchy / properties callbacks already gate on `playState() != Editing`
+    // (see TransformGizmo.cpp:170, EditorApp.cpp:1421); the inspector keyboard
+    // path was the missing third entry-point. Field navigation is still
+    // allowed (read-only inspection during Play is useful), but value edits
+    // are suppressed.
+    const bool editsAllowed = state.playState() == EditorPlayState::Editing;
+
     // Handle keyboard input for field navigation and value editing.
     bool changed = false;
 
@@ -77,7 +88,7 @@ uint16_t TransformInspector::inspect(Registry& reg, EntityID entity, uint16_t st
 
     // Determine increment based on field type.
     float increment = 0.0f;
-    if (window_.isKeyPressed(kKeyRight) || window_.isKeyPressed(kKeyPlus))
+    if (editsAllowed && (window_.isKeyPressed(kKeyRight) || window_.isKeyPressed(kKeyPlus)))
     {
         if (activeField_ < 3)
             increment = 0.1f;  // position
@@ -86,7 +97,7 @@ uint16_t TransformInspector::inspect(Registry& reg, EntityID entity, uint16_t st
         else
             increment = 0.1f;  // scale
     }
-    if (window_.isKeyPressed(kKeyLeft) || window_.isKeyPressed(kKeyMinus))
+    if (editsAllowed && (window_.isKeyPressed(kKeyLeft) || window_.isKeyPressed(kKeyMinus)))
     {
         if (activeField_ < 3)
             increment = -0.1f;
@@ -126,6 +137,12 @@ uint16_t TransformInspector::inspect(Registry& reg, EntityID entity, uint16_t st
 
             bgfx::dbgTextPrintf(kCol, row++, color, "%s", buf);
         }
+    }
+
+    // Hint when edits are gated so the user understands the no-op.
+    if (!editsAllowed)
+    {
+        bgfx::dbgTextPrintf(kCol, row++, 0x08, "(read-only while playing)");
     }
 
     // Apply changes back to the component.

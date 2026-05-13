@@ -22,7 +22,8 @@ bool LightInspector::canInspect(const Registry& reg, EntityID entity) const
     return reg.has<DirectionalLightComponent>(entity) || reg.has<PointLightComponent>(entity);
 }
 
-uint16_t LightInspector::inspect(Registry& reg, EntityID entity, uint16_t startRow)
+uint16_t LightInspector::inspect(Registry& reg, EntityID entity, const EditorState& /*state*/,
+                                 uint16_t startRow)
 {
     constexpr uint16_t kCol = 55;
     uint16_t row = startRow;
