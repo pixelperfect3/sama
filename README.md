@@ -17,20 +17,21 @@ Built on bgfx (Metal / Vulkan), Jolt Physics, and SoLoud.
 | macOS | Metal | ✅ Primary development platform |
 | iOS Simulator | Metal | ✅ PBR + shadows + audio + touch + gyro + tier detection |
 | iOS Device | Metal | ⚠️ Builds; not yet tested on hardware (no IPA pipeline) |
-| Android | Vulkan | ✅ PBR + shadows + post-processing + ASTC + audio + ImGui + AAB asset packs (verified Pixel 9) |
+| Android | Vulkan | ✅ PBR + shadows + post-processing + ASTC + audio + ImGui + AAB asset packs + ProjectConfig load from APK + cross-launch save state (verified Pixel 9) |
 | Linux / Windows | OpenGL / DX | Untested — bgfx supports them; CMake doesn't gate them yet |
 
 The same `IGame` runs on every supported platform with no `#ifdef` in game code.
 
 ## Features
 
-- **PBR rendering** — cascaded shadow maps, clustered forward lighting, IBL, SSAO, bloom, FXAA
+- **PBR rendering** — cascaded shadow maps, clustered forward lighting, IBL, ACES tonemap, bloom, FXAA, SSAO; unified post-process pipeline writes the backbuffer via a single auto-submitted tonemap pass
 - **ECS** — sparse-set storage, compile-time DAG scheduler resolves system order at compile time
 - **Scene graph** — parent-child hierarchy as ECS components; dirty-flag world matrix updates
 - **Physics** — Jolt with rigid bodies, raycasting, fixed-timestep simulation, collision events
 - **Audio** — SoLoud with 3D spatial audio, mix categories, miniaudio backend per platform
 - **Skeletal animation** — GPU skinning, glTF import, clip blending, IK
-- **Asset pipeline** — glTF import, async loading, per-tier ASTC texture compression
+- **Text rendering** — three backends behind a common `IFont` interface: bitmap, MSDF (multi-channel signed distance fields), and a Slug-style vector renderer for extreme magnification
+- **Asset pipeline** — glTF / OBJ / PNG / JPG / HDR / KTX / WAV loaders, async loading, `sama-asset-tool` CLI bakes per-tier outputs from a JSON manifest: ASTC texture compression, mesh LOD chains (meshoptimizer), WAV → Opus transcoding (libopus)
 - **Editor** — native macOS scene/entity editor (see [Editor](#editor) section below)
 
 ## Quick start (macOS)
