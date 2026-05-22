@@ -95,9 +95,17 @@ void ShadowRenderer::beginCascade(uint32_t cascadeIdx, const math::Mat4& lightVi
         w = static_cast<uint16_t>(res / 2);
         x = static_cast<uint16_t>(i * (res / 2));
     }
-    else if (desc_.cascadeCount == 4)
+    else if (desc_.cascadeCount == 3 || desc_.cascadeCount == 4)
     {
-        // 2x2 grid.
+        // 2x2 grid.  cascadeCount == 3 uses the first three tiles of the
+        // same 2x2 layout (top-left, top-right, bottom-left); the fourth
+        // tile is unused.  Sharing the layout with cascadeCount == 4 keeps
+        // cascadeUvRect's math identical for both cases.  Previously
+        // cascadeCount == 3 fell through to the default (whole-atlas)
+        // branch while cascadeUvRect routed it into the 4-cascade UV path
+        // — result: depth was rendered at full-atlas scale but sampled at
+        // quarter-atlas UVs, and no shadow appeared on tier=high (which
+        // defaults to 3 cascades).
         w = static_cast<uint16_t>(res / 2);
         h = static_cast<uint16_t>(res / 2);
         x = static_cast<uint16_t>((i % 2) * (res / 2));
@@ -129,7 +137,8 @@ math::Vec4 ShadowRenderer::cascadeUvRect(uint32_t cascadeIdx) const
         return math::Vec4(x0, 0.0f, x0 + 0.5f, 1.0f);
     }
 
-    // 4 cascades — 2x2 grid.
+    // 3 or 4 cascades — 2x2 grid (cascadeCount == 3 uses the first three
+    // tiles, fourth unused).  Matches the beginCascade tile-layout branch.
     const float x0 = static_cast<float>(i % 2) * 0.5f;
     const float y0 = static_cast<float>(i / 2) * 0.5f;
     return math::Vec4(x0, y0, x0 + 0.5f, y0 + 0.5f);
