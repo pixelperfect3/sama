@@ -2015,6 +2015,40 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif()
 
+# --- perf_smoke app (macOS only) ---
+# Per-system CPU budget regression test.  Spins up ~700 entities (200 dynamic
+# Jolt boxes + 500 static walls + 16 point lights + a PBR cube + a ground
+# plane), drives the engine for a fixed number of frames, and exits 1 if any
+# per-system mean ms / frame-p99 exceeds the budget in PerfBudgets.  Run via
+#   build/perf_smoke           (default 600 frames, ~10 s)
+#   build/perf_smoke 1200      (override frame count)
+# Not wired into engine_tests because it needs a real GLFW window (the
+# whole point is to measure real bgfx submission cost), but cheap to run
+# manually before merging perf-sensitive changes.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(perf_smoke
+        apps/perf_smoke/main.mm
+        apps/perf_smoke/PerfSmokeGame.cpp
+    )
+
+    target_include_directories(perf_smoke PRIVATE ${SAMA_ROOT_DIR})
+    target_link_libraries(perf_smoke PRIVATE
+        engine_game
+        engine_physics
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework MetalKit"
+    )
+    target_compile_definitions(perf_smoke PRIVATE
+        GLM_FORCE_INTRINSICS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_FORCE_RADIANS
+        GLM_FORCE_XYZW_ONLY
+        GLM_ENABLE_EXPERIMENTAL
+    )
+endif()
+
 # --- audio_demo app (macOS only) ---
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(audio_demo apps/audio_demo/main.mm)
