@@ -2656,13 +2656,22 @@ what we want: cache-hit iff "nothing changed".
 
 ### Pixel 9 numbers
 
-Before: LightClusterBuilder mean 22.29 ms (3 × `bgfx::updateTexture2D`
-per frame even on idle frames, plus 3,456 AABB rebuilds from scratch).
-After: AABB rebuild fires once at startup and once per
-projection/resize change; texture uploads fire only on the frames whose
-data actually changed.  Static-camera `perf_smoke` drops to mean
-0.003 ms on desktop (M3) — a ~50× reduction from the desktop baseline
-that mirrors the Pixel 9's much larger absolute saving.
+Before (5-run mean on physical Pixel 9, Tensor G4, 1080×2424):
+LightClusterBuilder mean **22.29 ms** (3 × `bgfx::updateTexture2D` per
+frame even on idle frames, plus 3,456 AABB rebuilds from scratch);
+frame total mean **26.63 ms** — over the 16.67 ms 60-fps budget at p99.
+
+After (single run on the same device, same APK rebuilt with the fix):
+LightClusterBuilder mean **0.056 ms** (max 21.577 ms = one-time startup
+build amortised over 600 frames; p99 0.034 ms confirms ~599 / 600
+frames did zero work) — a **398× reduction**.  Frame total dropped to
+mean **4.175 ms** / p99 **5.7 ms** — comfortably inside the 16.67 ms
+60-fps budget, with ~10 ms headroom.
+
+Desktop M3 numbers tell the same shape: LightClusterBuilder **0.147 ms
+→ 0.003 ms** (~50× reduction).  The absolute saving on Pixel 9 is
+larger because the bgfx Vulkan upload path is per-call expensive on
+real driver — see "Tradeoff for moving-camera games" below.
 
 ### Tradeoff for moving-camera games
 
