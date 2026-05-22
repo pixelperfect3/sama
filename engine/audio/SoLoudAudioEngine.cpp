@@ -37,30 +37,16 @@ bool SoLoudAudioEngine::init(uint32_t sampleRate, uint32_t bufferSize, uint32_t 
         return false;
     }
 
-    // NOTE — do NOT call soloud_.setMaxActiveVoiceCount(maxVoices) here.
-    //
-    // On Android, SoLoud's miniaudio backend starts the AAudio playback
-    // callback thread inside Soloud::init() (after postinit_internal but
-    // before init() returns).  setMaxActiveVoiceCount internally does
-    // `delete[] mResampleData; mResampleData = new ...` (see SoLoud's
-    // soloud_core_setters.cpp:67-85).  Though that path takes the audio
-    // mutex, on Android the AAudio callback can race the realloc and
-    // SIGSEGV inside mapResampleBuffers_internal at 0x0 — reproduced
-    // 100% on Pixel 9 (Android 16, Tensor G4) with sample_game.  Stack:
-    //   mapResampleBuffers_internal +120 → mix_internal +516 →
-    //   ma_device__on_data → AAudio playback callback.
-    //
-    // SoLoud's default is 16 voices (soloud.cpp:165), sufficient for
-    // everything Sama has shipped.  If a future game needs more, the
-    // right path is to extend SoLoud's init() to allocate the arrays
-    // at the requested size during postinit_internal (before the device
-    // starts), not to mutate after the fact.
-    (void)maxVoices;
+    // maxVoices controls how many sounds can play simultaneously.  An
+    // earlier defensive removal of this call (commit 0a3d10c) targeted a
+    // suspected realloc race in mapResampleBuffers_internal on Android;
+    // the real fix landed at the miniaudio layer instead — we now force
+    // OpenSL ES on Android (see third_party/soloud_patches/soloud_miniaudio.cpp)
+    // which sidesteps the AAudio init-time callback race entirely, so
+    // setMaxActiveVoiceCount is safe to call again here.
+    soloud_.setMaxActiveVoiceCount(maxVoices);
 
-    // Play each category bus into the main mixer.  These take the audio
-    // mutex internally but only modify mVoice[] / mActiveVoice[] — not
-    // the mResampleData arrays the AAudio callback dereferences — so
-    // they do not trigger the same race as the realloc above.
+    // Play each category bus into the main mixer.
     for (size_t i = 0; i < kCategoryCount; ++i)
     {
         busHandles_[i] = soloud_.play(buses_[i]);
