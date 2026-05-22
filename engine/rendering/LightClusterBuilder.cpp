@@ -10,6 +10,30 @@
 namespace engine::rendering
 {
 
+namespace
+{
+
+// ---------------------------------------------------------------------------
+// 64-bit FNV-1a over a byte range.  Cheap, no allocations, good enough for
+// detecting any single-byte change in the live light buffer (max 16 KB).
+// ---------------------------------------------------------------------------
+uint64_t fnv1a64(const void* data, size_t bytes)
+{
+    constexpr uint64_t kOffsetBasis = 14695981039346656037ull;
+    constexpr uint64_t kPrime = 1099511628211ull;
+
+    uint64_t h = kOffsetBasis;
+    const auto* p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < bytes; ++i)
+    {
+        h ^= static_cast<uint64_t>(p[i]);
+        h *= kPrime;
+    }
+    return h;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // init / shutdown
 // ---------------------------------------------------------------------------
@@ -32,6 +56,16 @@ void LightClusterBuilder::init()
     lightIndexTex_ = bgfx::createTexture2D(static_cast<uint16_t>(kMaxLightIndices), 1, false, 1,
                                            bgfx::TextureFormat::R32F,
                                            BGFX_SAMPLER_POINT | BGFX_SAMPLER_UVW_CLAMP);
+
+    // First frame must upload everything regardless of cache state.
+    lightDataDirty_ = true;
+    lightGridDirty_ = true;
+    lightIndexDirty_ = true;
+    clusterCacheValid_ = false;
+    cachedLightHash_ = 0;
+    cachedLightCount_ = 0;
+    uploadCallCount_ = 0;
+    clusterGeometryRebuiltLastFrame_ = false;
 }
 
 void LightClusterBuilder::shutdown()
@@ -61,8 +95,42 @@ void LightClusterBuilder::update(ecs::Registry& reg, const math::Mat4& viewMatri
                                  const math::Mat4& projMatrix, float nearPlane, float farPlane,
                                  uint16_t screenWidth, uint16_t screenHeight)
 {
+    (void)screenWidth;
+    (void)screenHeight;
+
     lightCount_ = collectLights(reg, viewMatrix);
-    buildClusters(nearPlane, farPlane, screenWidth, screenHeight, projMatrix);
+
+    // Cluster AABBs depend only on (proj, near, far).  Rebuild on change.
+    const bool geometryRebuilt = rebuildClusterGeometryIfDirty(nearPlane, farPlane, projMatrix);
+    clusterGeometryRebuiltLastFrame_ = geometryRebuilt;
+
+    // Fingerprint the live portion of lights_[] and compare against the
+    // previous frame's fingerprint.  Hashing only the in-use range
+    // (lightCount_ * sizeof(LightEntry)) keeps the cost bounded by the
+    // actual light workload, not the kMaxLights ceiling.
+    const uint64_t lightHash =
+        (lightCount_ == 0) ? 0u : fnv1a64(lights_.data(), lightCount_ * sizeof(LightEntry));
+    const bool lightsChanged =
+        (lightHash != cachedLightHash_) || (lightCount_ != cachedLightCount_);
+    cachedLightHash_ = lightHash;
+    cachedLightCount_ = lightCount_;
+
+    if (lightsChanged)
+    {
+        lightDataDirty_ = true;
+    }
+
+    // grid_ + indices_ depend on lights AND cluster geometry.  Either trigger
+    // rebuilds both — and the two must be uploaded together to keep the GPU's
+    // view of (offset, indices) coherent (stale offsets pointing into fresh
+    // indices would mis-bind lights to clusters).
+    if (lightsChanged || geometryRebuilt)
+    {
+        assignLightsToClusters();
+        lightGridDirty_ = true;
+        lightIndexDirty_ = true;
+    }
+
     uploadTextures();
 }
 
@@ -166,28 +234,39 @@ uint32_t LightClusterBuilder::collectLights(ecs::Registry& reg, const math::Mat4
 }
 
 // ---------------------------------------------------------------------------
-// buildClusters
+// rebuildClusterGeometryIfDirty
 //
-// For each of the 3456 clusters, compute its view-space AABB and test it
-// against every light sphere.  Fills grid_[] and indices_[].
+// Compute the 3,456 cluster AABBs in view space.  Skipped entirely when the
+// (projMatrix, nearPlane, farPlane) tuple is bit-identical to the cached
+// values — which is the common case for any game with a static camera
+// matrix between frames.
 //
 // X/Y cluster extents are derived from NDC tile boundaries un-projected via
-// the inverse projection matrix.
-// Z slices use exponential (log-depth) partitioning.
+// the inverse projection matrix.  Z slices use exponential (log-depth)
+// partitioning.
 // ---------------------------------------------------------------------------
 
-void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_t screenWidth,
-                                        uint16_t screenHeight, const math::Mat4& projMatrix)
+bool LightClusterBuilder::rebuildClusterGeometryIfDirty(float nearPlane, float farPlane,
+                                                        const math::Mat4& projMatrix)
 {
-    // --- Zero the grid ---
-    for (auto& g : grid_)
+    // Cheap path: identical inputs to last frame → reuse cached AABBs.
+    // memcmp gives us exact bitwise equality, which is what we want — the
+    // same camera produces bit-identical matrices, and the cluster math is
+    // sensitive to subtle epsilon differences (an "almost equal" comparison
+    // would cache-miss on perfectly stable cameras and silently cache-hit
+    // on cameras that wobble below the epsilon).
+    if (clusterCacheValid_ &&
+        std::memcmp(cachedProjMatrix_, &projMatrix[0][0], sizeof(cachedProjMatrix_)) == 0 &&
+        cachedNearPlane_ == nearPlane && cachedFarPlane_ == farPlane)
     {
-        g.offset = 0;
-        g.count = 0;
+        return false;
     }
 
-    if (lightCount_ == 0)
-        return;
+    // Cache miss — recompute and stash the fingerprint.
+    std::memcpy(cachedProjMatrix_, &projMatrix[0][0], sizeof(cachedProjMatrix_));
+    cachedNearPlane_ = nearPlane;
+    cachedFarPlane_ = farPlane;
+    clusterCacheValid_ = true;
 
     // Inverse projection matrix — used to unproject NDC corners to view space.
     math::Mat4 invProj = glm::inverse(projMatrix);
@@ -208,14 +287,6 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
         float t = targetZ / v.z;
         return v * t;
     };
-
-    // --- Precompute cluster AABBs once (used by both count and fill passes) ---
-    struct ClusterAABB
-    {
-        math::Vec3 aabbMin;
-        math::Vec3 aabbMax;
-    };
-    std::array<ClusterAABB, kClusterCount> clusterAABBs{};
 
     for (uint32_t z = 0; z < kClusterZ; ++z)
     {
@@ -264,17 +335,39 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
                 }
 
                 uint32_t clusterIdx = z * (kClusterX * kClusterY) + y * kClusterX + x;
-                clusterAABBs[clusterIdx] = {aabbMin, aabbMax};
+                clusterAABBs_[clusterIdx] = {aabbMin, aabbMax};
             }
         }
     }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// assignLightsToClusters
+//
+// Using the cached cluster AABBs, test each light sphere against each cluster
+// and produce the (offset, count) grid plus the flat index list.
+// ---------------------------------------------------------------------------
+
+void LightClusterBuilder::assignLightsToClusters()
+{
+    // --- Zero the grid ---
+    for (auto& g : grid_)
+    {
+        g.offset = 0;
+        g.count = 0;
+    }
+
+    if (lightCount_ == 0)
+        return;
 
     // --- Count pass: count lights per cluster ---
     uint32_t totalIndices = 0;
 
     for (uint32_t ci = 0; ci < kClusterCount; ++ci)
     {
-        const auto& aabb = clusterAABBs[ci];
+        const auto& aabb = clusterAABBs_[ci];
         uint32_t count = 0;
         for (uint32_t li = 0; li < lightCount_; ++li)
         {
@@ -310,7 +403,7 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
     // --- Fill pass: write actual indices (reusing cached AABBs) ---
     for (uint32_t ci = 0; ci < kClusterCount; ++ci)
     {
-        const auto& aabb = clusterAABBs[ci];
+        const auto& aabb = clusterAABBs_[ci];
         uint32_t base = grid_[ci].offset;
 
         for (uint32_t li = 0; li < lightCount_; ++li)
@@ -331,13 +424,14 @@ void LightClusterBuilder::buildClusters(float nearPlane, float farPlane, uint16_
             }
         }
     }
-
-    (void)screenWidth;
-    (void)screenHeight;
 }
 
 // ---------------------------------------------------------------------------
 // uploadTextures
+//
+// Each texture has its own dirty bit set by update().  Only the dirty ones
+// are pushed to the GPU; the bit is cleared on success.  bgfx::isValid()
+// guards survive the headless / shutdown paths.
 // ---------------------------------------------------------------------------
 
 void LightClusterBuilder::uploadTextures()
@@ -349,6 +443,7 @@ void LightClusterBuilder::uploadTextures()
     // Row 2: spotDir.xyz,  cosOuter
     // Row 3: cosInner, 0, 0, 0
     // -----------------------------------------------------------------------
+    if (lightDataDirty_)
     {
         static float buf[kMaxLights * 4 * 4];
         std::memset(buf, 0, sizeof(buf));
@@ -387,13 +482,16 @@ void LightClusterBuilder::uploadTextures()
         {
             bgfx::updateTexture2D(lightDataTex_, 0, 0, 0, 0, static_cast<uint16_t>(kMaxLights), 4,
                                   bgfx::copy(buf, sizeof(buf)));
+            ++uploadCallCount_;
         }
+        lightDataDirty_ = false;
     }
 
     // -----------------------------------------------------------------------
     // Grid texture: kClusterCount × 1 RGBA32F
     // .x = offset, .y = count, .z = 0, .w = 0
     // -----------------------------------------------------------------------
+    if (lightGridDirty_)
     {
         static float gridBuf[kClusterCount * 4];
         for (uint32_t i = 0; i < kClusterCount; ++i)
@@ -408,12 +506,15 @@ void LightClusterBuilder::uploadTextures()
         {
             bgfx::updateTexture2D(lightGridTex_, 0, 0, 0, 0, static_cast<uint16_t>(kClusterCount),
                                   1, bgfx::copy(gridBuf, sizeof(gridBuf)));
+            ++uploadCallCount_;
         }
+        lightGridDirty_ = false;
     }
 
     // -----------------------------------------------------------------------
     // Index texture: kMaxLightIndices × 1 R32F
     // -----------------------------------------------------------------------
+    if (lightIndexDirty_)
     {
         static float idxBuf[kMaxLightIndices];
         for (uint32_t i = 0; i < kMaxLightIndices; ++i)
@@ -424,7 +525,9 @@ void LightClusterBuilder::uploadTextures()
             bgfx::updateTexture2D(lightIndexTex_, 0, 0, 0, 0,
                                   static_cast<uint16_t>(kMaxLightIndices), 1,
                                   bgfx::copy(idxBuf, sizeof(idxBuf)));
+            ++uploadCallCount_;
         }
+        lightIndexDirty_ = false;
     }
 }
 

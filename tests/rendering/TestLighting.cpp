@@ -208,3 +208,202 @@ TEST_CASE("LightClusterBuilder: 300 point lights are capped at kMaxLights (256)"
 
     builder.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// Caching / dirty-flag tests for the Pixel 9 perf fix.
+//
+// Helper: spawn one point light at the given world position.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+engine::ecs::EntityID spawnPointLight(engine::ecs::Registry& reg, const engine::math::Vec3& pos,
+                                      float radius = 3.0f)
+{
+    engine::ecs::EntityID e = reg.createEntity();
+
+    engine::rendering::WorldTransformComponent xform{};
+    xform.matrix = engine::math::Mat4(1.0f);
+    xform.matrix[3] = engine::math::Vec4(pos, 1.0f);
+    reg.emplace<engine::rendering::WorldTransformComponent>(e, xform);
+
+    engine::rendering::PointLightComponent pl{};
+    pl.color = engine::math::Vec3(1.0f, 1.0f, 1.0f);
+    pl.intensity = 1.0f;
+    pl.radius = radius;
+    reg.emplace<engine::rendering::PointLightComponent>(e, pl);
+
+    return e;
+}
+
+engine::math::Mat4 testView()
+{
+    return glm::lookAt(engine::math::Vec3(0.0f, 0.0f, 0.0f), engine::math::Vec3(0.0f, 0.0f, -1.0f),
+                       engine::math::Vec3(0.0f, 1.0f, 0.0f));
+}
+
+engine::math::Mat4 testProj()
+{
+    return glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
+}
+
+}  // namespace
+
+TEST_CASE("LightClusterBuilder: identical inputs across frames issue zero uploads on 2nd call",
+          "[lighting][cluster][cache]")
+{
+    HeadlessBgfx bgfxCtx;
+
+    engine::ecs::Registry reg;
+    spawnPointLight(reg, engine::math::Vec3(0.0f, 0.0f, -5.0f));
+
+    engine::rendering::LightClusterBuilder builder;
+    builder.init();
+
+    const engine::math::Mat4 view = testView();
+    const engine::math::Mat4 proj = testProj();
+
+    // First call: full upload (3 textures).  Cluster geometry must be built
+    // from scratch.
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.uploadCallCount() == 3u);
+    REQUIRE(builder.clusterGeometryRebuiltLastFrame());
+
+    // Second call with bit-identical inputs: zero new uploads, no AABB rebuild.
+    const uint32_t baseline = builder.uploadCallCount();
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.uploadCallCount() == baseline);
+    REQUIRE_FALSE(builder.clusterGeometryRebuiltLastFrame());
+
+    // Repeat once more to be sure the cache stays warm.
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.uploadCallCount() == baseline);
+
+    builder.shutdown();
+}
+
+TEST_CASE("LightClusterBuilder: moving one light triggers exactly 3 uploads (data+grid+index)",
+          "[lighting][cluster][cache]")
+{
+    HeadlessBgfx bgfxCtx;
+
+    engine::ecs::Registry reg;
+    engine::ecs::EntityID light = spawnPointLight(reg, engine::math::Vec3(0.0f, 0.0f, -5.0f));
+
+    engine::rendering::LightClusterBuilder builder;
+    builder.init();
+
+    const engine::math::Mat4 view = testView();
+    const engine::math::Mat4 proj = testProj();
+
+    // First call: 3 uploads to prime.
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.uploadCallCount() == 3u);
+
+    // Move the light.
+    auto* xform = reg.get<engine::rendering::WorldTransformComponent>(light);
+    REQUIRE(xform != nullptr);
+    xform->matrix[3] = engine::math::Vec4(1.5f, 0.5f, -6.0f, 1.0f);
+
+    const uint32_t baseline = builder.uploadCallCount();
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+
+    // Expect exactly 3 new uploads: lightData (light moved), lightGrid +
+    // lightIndex (must stay coherent).  Cluster geometry unchanged.
+    REQUIRE(builder.uploadCallCount() - baseline == 3u);
+    REQUIRE_FALSE(builder.clusterGeometryRebuiltLastFrame());
+
+    builder.shutdown();
+}
+
+TEST_CASE("LightClusterBuilder: projection change triggers AABB rebuild + grid/index re-upload",
+          "[lighting][cluster][cache]")
+{
+    HeadlessBgfx bgfxCtx;
+
+    engine::ecs::Registry reg;
+    spawnPointLight(reg, engine::math::Vec3(0.0f, 0.0f, -5.0f));
+
+    engine::rendering::LightClusterBuilder builder;
+    builder.init();
+
+    const engine::math::Mat4 view = testView();
+    const engine::math::Mat4 proj1 = testProj();
+
+    builder.update(reg, view, proj1, 0.1f, 100.0f, 1280, 720);
+    const uint32_t afterFirst = builder.uploadCallCount();
+    REQUIRE(afterFirst == 3u);
+
+    // Same proj → no rebuild.
+    builder.update(reg, view, proj1, 0.1f, 100.0f, 1280, 720);
+    REQUIRE_FALSE(builder.clusterGeometryRebuiltLastFrame());
+    REQUIRE(builder.uploadCallCount() == afterFirst);
+
+    // New projection (different FOV) → AABB rebuild + grid/index re-upload.
+    // lightData stays clean because lights didn't move.
+    const engine::math::Mat4 proj2 =
+        glm::perspective(glm::radians(75.0f), 16.0f / 9.0f, 0.1f, 100.0f);
+    const uint32_t baseline = builder.uploadCallCount();
+    builder.update(reg, view, proj2, 0.1f, 100.0f, 1280, 720);
+
+    REQUIRE(builder.clusterGeometryRebuiltLastFrame());
+    // lightGrid + lightIndex must re-upload; lightData should NOT
+    // (lights didn't move).
+    REQUIRE(builder.uploadCallCount() - baseline == 2u);
+
+    builder.shutdown();
+}
+
+TEST_CASE("LightClusterBuilder: near/far change invalidates the cluster cache",
+          "[lighting][cluster][cache]")
+{
+    HeadlessBgfx bgfxCtx;
+
+    engine::ecs::Registry reg;
+    spawnPointLight(reg, engine::math::Vec3(0.0f, 0.0f, -5.0f));
+
+    engine::rendering::LightClusterBuilder builder;
+    builder.init();
+
+    const engine::math::Mat4 view = testView();
+    const engine::math::Mat4 proj = testProj();
+
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.clusterGeometryRebuiltLastFrame());
+
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE_FALSE(builder.clusterGeometryRebuiltLastFrame());
+
+    // Change just the far plane.
+    builder.update(reg, view, proj, 0.1f, 200.0f, 1280, 720);
+    REQUIRE(builder.clusterGeometryRebuiltLastFrame());
+
+    builder.shutdown();
+}
+
+TEST_CASE("LightClusterBuilder: zero lights — first frame uploads, subsequent frames don't",
+          "[lighting][cluster][cache]")
+{
+    HeadlessBgfx bgfxCtx;
+
+    engine::ecs::Registry reg;  // no lights
+
+    engine::rendering::LightClusterBuilder builder;
+    builder.init();
+
+    const engine::math::Mat4 view = testView();
+    const engine::math::Mat4 proj = testProj();
+
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.activeLightCount() == 0u);
+    // First frame uploads everything to seed the GPU (grid must be zeroed).
+    REQUIRE(builder.uploadCallCount() == 3u);
+
+    const uint32_t baseline = builder.uploadCallCount();
+    builder.update(reg, view, proj, 0.1f, 100.0f, 1280, 720);
+    REQUIRE(builder.activeLightCount() == 0u);
+    REQUIRE(builder.uploadCallCount() == baseline);
+
+    builder.shutdown();
+}

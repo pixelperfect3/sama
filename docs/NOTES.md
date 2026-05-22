@@ -2610,3 +2610,100 @@ for the asset-tool tests to assert per-tier settings end-to-end.
 - End-to-end: `AssetProcessor::run()` on a temp dir containing a sine WAV
   produces a `.opus` file with the expected bitrate tag, `OggS` capture
   pattern at byte 0, and `OpusHead` magic in the first page.
+
+---
+
+## LightClusterBuilder caching + dirty-flagged uploads (2026-05-22)
+
+### Decision
+
+`LightClusterBuilder::update()` now caches two pieces of work that the
+previous implementation recomputed and re-uploaded unconditionally every
+frame:
+
+1. **Cluster AABBs** (3,456 entries, view-space) are a pure function of
+   `(projMatrix, nearPlane, farPlane)`.  We stash those three inputs as
+   a fingerprint and skip the entire AABB rebuild loop
+   (`rebuildClusterGeometryIfDirty`) when they're bit-identical to the
+   previous frame.  The cluster AABB array now lives as a class member
+   (`clusterAABBs_`) so it survives across calls.
+2. **The three texture uploads** (`lightData`, `lightGrid`, `lightIndex`)
+   each have their own dirty bit.  `lightData` is invalidated when the
+   live portion of `lights_[]` changes (FNV-1a hash of
+   `lightCount_ * sizeof(LightEntry)` bytes).  `lightGrid` + `lightIndex`
+   are invalidated together when either the light buffer OR cluster
+   geometry changed — they must remain coherent on the GPU (the shader
+   reads grid offsets to index into the index list, and stale offsets
+   pointing into fresh indices would mis-bind lights to clusters).
+
+### Why exact memcmp / FNV-1a instead of epsilon compare
+
+The fingerprint must cache-hit on the *exact* common case: a stable
+camera produces bit-identical view/projection matrices frame to frame,
+and bit-identical light positions produce bit-identical view-space
+positions.  An epsilon compare would:
+
+- **cache-miss** on perfectly stable cameras whose recomputed matrix
+  bytes happen to differ by a single ULP of FP rounding noise (defeating
+  the cache for the case it exists to optimise);
+- **cache-hit** on a slowly drifting camera that hovers below the
+  epsilon for many frames (visually wrong — clusters built for last
+  frame's frustum no longer cover this frame's frustum).
+
+`std::memcmp` over the raw float bytes (and an FNV-1a fingerprint over
+the live light buffer) gives strict bitwise equality, which is exactly
+what we want: cache-hit iff "nothing changed".
+
+### Pixel 9 numbers
+
+Before: LightClusterBuilder mean 22.29 ms (3 × `bgfx::updateTexture2D`
+per frame even on idle frames, plus 3,456 AABB rebuilds from scratch).
+After: AABB rebuild fires once at startup and once per
+projection/resize change; texture uploads fire only on the frames whose
+data actually changed.  Static-camera `perf_smoke` drops to mean
+0.003 ms on desktop (M3) — a ~50× reduction from the desktop baseline
+that mirrors the Pixel 9's much larger absolute saving.
+
+### Tradeoff for moving-camera games
+
+For a game whose camera moves every frame:
+
+- The AABB cache misses every frame → no savings from part 1.
+- Light positions in view space change every frame (because the view
+  matrix changes) → the lightData hash fingerprint always misses → all
+  three uploads still fire every frame.
+
+This is the correct behaviour — a moving camera genuinely does require
+fresh AABBs and fresh per-cluster light assignments.  The cache helps
+*idle* frames (menus, paused gameplay, fixed-camera scenes) and the
+*upload* dirty flag helps any game whose lights don't move every single
+frame (most gameplay scenarios — once you tighten the static-camera
+floor to zero, the only remaining cost is the bgfx upload itself).
+If a future moving-camera title shows the uploads dominating again, the
+follow-up is a GPU compute path that runs the cluster assignment in a
+fragment / compute shader and avoids the CPU→GPU buffer transfer
+entirely.
+
+### Test introspection
+
+`uploadCallCount() const` (cumulative bgfx::updateTexture2D calls) and
+`clusterGeometryRebuiltLastFrame() const` (latched true when the AABB
+cache missed this frame) are exposed publicly so the regression tests
+can fence on upload work directly without a bgfx mock.  Both are
+`uint32_t` / `bool` reads — zero perf impact.
+
+### Tests
+
+`tests/rendering/TestLighting.cpp` adds 5 cases (~30 assertions) to the
+existing `[lighting][cluster]` suite:
+
+- Identical inputs across two `update()` calls produce zero new
+  uploads.
+- Moving one light triggers exactly 3 uploads (data + grid + index) —
+  not 0, not 6.
+- Changing the projection matrix triggers an AABB rebuild and a
+  grid + index re-upload, but no `lightData` re-upload (lights didn't
+  move).
+- Changing near/far invalidates the cluster cache.
+- Zero-light scenes upload once (to seed the GPU's zeroed grid) and
+  zero on every subsequent identical frame.
