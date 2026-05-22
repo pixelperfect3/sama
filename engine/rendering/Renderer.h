@@ -18,6 +18,20 @@ struct RendererDesc
     bool headless;  // if true, use RendererType::Noop (for unit tests)
 };
 
+// Per-frame timing snapshot collected by Renderer::endFrame.  All values are
+// wall-clock milliseconds for the most recent frame.  Read after the engine's
+// endFrame returns.  Two values are interesting on Android single-threaded
+// bgfx: postProcessSubmitMs (the auto tonemap pass added in Phase 7) and
+// bgfxFrameMs (the bgfx::frame() call — which on single-threaded mode
+// includes command-buffer recording AND vsync / GPU wait, both charged to the
+// game thread).
+struct RendererFrameStats
+{
+    float postProcessSubmitMs = 0.0F;  // Auto tonemap chain in endFrame.
+    float bgfxFrameMs = 0.0F;          // bgfx::frame() — includes vsync wait
+                                       // when single-threaded mode is active.
+};
+
 class Renderer
 {
 public:
@@ -48,6 +62,14 @@ public:
     [[nodiscard]] const RenderSettings& renderSettings() const
     {
         return renderSettings_;
+    }
+
+    // Per-frame timing snapshot from the most recent endFrame call.  Updated
+    // every frame; zero-cost when not read.  See RendererFrameStats above
+    // for what each field measures.
+    [[nodiscard]] const RendererFrameStats& frameStats() const
+    {
+        return frameStats_;
     }
 
     // Access the shared uniform handles (created once during init).
@@ -93,6 +115,7 @@ private:
     ShaderUniforms uniforms_;
     PostProcessSystem postProcess_;
     RenderSettings renderSettings_ = makeDefaultSettings();
+    RendererFrameStats frameStats_;
 };
 
 }  // namespace engine::rendering

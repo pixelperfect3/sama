@@ -225,6 +225,9 @@ bool Engine::beginFrame(float& outDt)
     if (window_->shouldClose())
         return false;
 
+    // Frame-stats begin marker — pairs with endFrameStart_ in endFrame.
+    frameBeginTime_ = std::chrono::steady_clock::now();
+
     // -- Timing -----------------------------------------------------------
     double now = glfwGetTime();
     outDt = static_cast<float>(std::min(now - prevTime_, 0.05));
@@ -299,12 +302,26 @@ bool Engine::beginFrame(float& outDt)
 
 void Engine::endFrame()
 {
+    endFrameStart_ = std::chrono::steady_clock::now();
+
     imguiEndFrame();
 
     if (frameArena_)
         frameArena_->reset();
 
     renderer_.endFrame();
+
+    // Frame-stats: see EngineFrameStats in Engine.h for what each field
+    // measures.  Renderer publishes postProcessSubmitMs / bgfxFrameMs via
+    // its own frameStats() snapshot — pull them up here so callers only
+    // need one accessor.
+    using FloatMs = std::chrono::duration<float, std::milli>;
+    const auto frameEnd = std::chrono::steady_clock::now();
+    frameStats_.endFrameMs = std::chrono::duration_cast<FloatMs>(frameEnd - endFrameStart_).count();
+    frameStats_.fullFrameMs =
+        std::chrono::duration_cast<FloatMs>(frameEnd - frameBeginTime_).count();
+    frameStats_.postProcessSubmitMs = renderer_.frameStats().postProcessSubmitMs;
+    frameStats_.bgfxFrameMs = renderer_.frameStats().bgfxFrameMs;
 }
 
 bool Engine::imguiWantsMouse() const
@@ -704,6 +721,9 @@ void Engine::shutdown()
 
 bool Engine::beginFrame(float& outDt)
 {
+    // Frame-stats begin marker — see EngineFrameStats in Engine.h.
+    frameBeginTime_ = std::chrono::steady_clock::now();
+
     // -- Poll Android events ----------------------------------------------
     int events;
     struct android_poll_source* source;
@@ -795,17 +815,35 @@ bool Engine::beginFrame(float& outDt)
     bgfx::setViewRect(0, 0, 0, fbW_, fbH_);
     bgfx::touch(0);
 
+    // Frame-stats: beginFrame body done — IGame work fills the gap until
+    // endFrame.  See EngineFrameStats in Engine.h.
+    using FloatMs = std::chrono::duration<float, std::milli>;
+    frameStats_.beginFrameMs =
+        std::chrono::duration_cast<FloatMs>(std::chrono::steady_clock::now() - frameBeginTime_)
+            .count();
+
     return true;
 }
 
 void Engine::endFrame()
 {
+    endFrameStart_ = std::chrono::steady_clock::now();
+
     imguiEndFrame();
 
     if (frameArena_)
         frameArena_->reset();
 
     renderer_.endFrame();
+
+    // Frame-stats — see EngineFrameStats in Engine.h.
+    using FloatMs = std::chrono::duration<float, std::milli>;
+    const auto frameEnd = std::chrono::steady_clock::now();
+    frameStats_.endFrameMs = std::chrono::duration_cast<FloatMs>(frameEnd - endFrameStart_).count();
+    frameStats_.fullFrameMs =
+        std::chrono::duration_cast<FloatMs>(frameEnd - frameBeginTime_).count();
+    frameStats_.postProcessSubmitMs = renderer_.frameStats().postProcessSubmitMs;
+    frameStats_.bgfxFrameMs = renderer_.frameStats().bgfxFrameMs;
 }
 
 bool Engine::imguiWantsMouse() const
@@ -1002,6 +1040,9 @@ void Engine::shutdown()
 
 bool Engine::beginFrame(float& outDt)
 {
+    // Frame-stats begin marker — see EngineFrameStats in Engine.h.
+    frameBeginTime_ = std::chrono::steady_clock::now();
+
     // -- Surface readiness ------------------------------------------------
     // The IosApp delegate pauses the CADisplayLink while in the background;
     // by the time we get here the layer is generally valid.  Defensive check
@@ -1050,11 +1091,19 @@ bool Engine::beginFrame(float& outDt)
     bgfx::setViewRect(0, 0, 0, fbW_, fbH_);
     bgfx::touch(0);
 
+    // Frame-stats: see EngineFrameStats in Engine.h.
+    using FloatMs = std::chrono::duration<float, std::milli>;
+    frameStats_.beginFrameMs =
+        std::chrono::duration_cast<FloatMs>(std::chrono::steady_clock::now() - frameBeginTime_)
+            .count();
+
     return true;
 }
 
 void Engine::endFrame()
 {
+    endFrameStart_ = std::chrono::steady_clock::now();
+
     // Mirror the Android per-frame contract: clear edge flags / promote
     // touches now that the game has consumed them.  IosTouchInput owns the
     // promotion logic; call it before the bgfx submit so InputState is
@@ -1068,6 +1117,15 @@ void Engine::endFrame()
         frameArena_->reset();
 
     renderer_.endFrame();
+
+    // Frame-stats — see EngineFrameStats in Engine.h.
+    using FloatMs = std::chrono::duration<float, std::milli>;
+    const auto frameEnd = std::chrono::steady_clock::now();
+    frameStats_.endFrameMs = std::chrono::duration_cast<FloatMs>(frameEnd - endFrameStart_).count();
+    frameStats_.fullFrameMs =
+        std::chrono::duration_cast<FloatMs>(frameEnd - frameBeginTime_).count();
+    frameStats_.postProcessSubmitMs = renderer_.frameStats().postProcessSubmitMs;
+    frameStats_.bgfxFrameMs = renderer_.frameStats().bgfxFrameMs;
 }
 
 bool Engine::imguiWantsMouse() const

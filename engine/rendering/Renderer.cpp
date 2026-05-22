@@ -7,6 +7,7 @@
 #include <android/native_window.h>
 #endif
 
+#include <chrono>
 #include <cstdio>
 
 #include "engine/rendering/RenderPass.h"
@@ -183,12 +184,27 @@ void Renderer::endFrame()
     // Auto-submit the post-process chain.  The PBR shader (fs_pbr.sc) writes
     // linear HDR; the tonemap pass converts to sRGB-gamma LDR for the
     // backbuffer.  Skip in headless mode (Noop renderer has no shaders).
+    //
+    // Each phase is timed separately so games and the perf overlay can
+    // distinguish "post-process CPU cost" from "bgfx::frame() wait" — on
+    // single-threaded bgfx (the default on Sama today) the latter includes
+    // command-buffer recording AND vsync / GPU fence wait, all charged to
+    // the game thread.  Cost of the chrono calls is ~50 ns each on M-series;
+    // not measurable on a real-world frame budget.
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
     if (!headless_)
     {
         postProcess_.submit(renderSettings_.postProcess, uniforms_);
     }
+    const auto t1 = Clock::now();
 
     bgfx::frame();
+    const auto t2 = Clock::now();
+
+    using FloatMs = std::chrono::duration<float, std::milli>;
+    frameStats_.postProcessSubmitMs = std::chrono::duration_cast<FloatMs>(t1 - t0).count();
+    frameStats_.bgfxFrameMs = std::chrono::duration_cast<FloatMs>(t2 - t1).count();
 }
 
 RenderSettings Renderer::makeDefaultSettings()

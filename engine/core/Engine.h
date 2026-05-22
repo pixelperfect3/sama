@@ -8,6 +8,7 @@
 #include <TargetConditionals.h>
 #endif
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -71,6 +72,59 @@ class IAudioEngine;
 
 namespace engine::core
 {
+
+// ---------------------------------------------------------------------------
+// EngineFrameStats -- per-frame wall-clock CPU timings, updated by the
+// Engine each frame.  Reads bgfx-level timings via the rendering::FrameStats
+// API; this is the *outer* layer (everything the game thread spends between
+// IGame callbacks, including bgfx::frame()'s vsync / GPU fence wait).
+//
+// All values are milliseconds for the most recent completed frame.  Cost of
+// gathering these is ~5 chrono::steady_clock calls per frame — not
+// measurable on a real-world frame budget.  Zero cost when not read.
+//
+// Reading: after Engine::endFrame returns, call engine.frameStats().  All
+// fields refer to the frame that just ended.
+//
+// Common uses:
+//   - HUD overlay (game logs "frame total = beginFrame + endFrame + ..."
+//     so the user can see exactly where their 16.67 ms went).
+//   - Regression detection (perf_smoke-style asserts).
+//   - Bug reports — paste the breakdown directly into a perf ticket.
+// ---------------------------------------------------------------------------
+
+struct EngineFrameStats
+{
+    // Wall time for Engine::beginFrame() to run (input poll, ImGui begin,
+    // view 0 clear/touch, lifecycle handling on Android, etc.).  Does NOT
+    // include any IGame work, only engine plumbing.
+    float beginFrameMs = 0.0F;
+
+    // Wall time for Engine::endFrame() to run (ImGui end, frame arena
+    // reset, then renderer_.endFrame()).  Includes postProcessSubmitMs and
+    // bgfxFrameMs below — those are the two dominant sub-phases.
+    float endFrameMs = 0.0F;
+
+    // Subset of endFrameMs — Renderer's auto post-process / tonemap submit.
+    // Cheap on a default-render-settings game (~50 us on Pixel 9); larger
+    // when bloom / SSAO / FXAA are enabled in RenderSettings.
+    float postProcessSubmitMs = 0.0F;
+
+    // Subset of endFrameMs — bgfx::frame() wall time.  On single-threaded
+    // bgfx (the Sama default — see Renderer.cpp:50 calling
+    // bgfx::renderFrame() before bgfx::init), this includes command-buffer
+    // recording AND vsync / GPU fence wait, all charged to the game thread.
+    // The dominant cost on Pixel 9 today; documented as a follow-up in
+    // docs/ANDROID_SUPPORT.md under "bgfx forced single-threaded mode".
+    float bgfxFrameMs = 0.0F;
+
+    // Wall time from Engine::beginFrame entry → Engine::endFrame exit.
+    // Useful as a sanity check vs the sum of the other fields, and as the
+    // denominator for FPS math.  Game-side IGame::onFixedUpdate, onUpdate,
+    // onRender all run between begin/end so their cost is INCLUDED here
+    // (subtract the begin / end values to isolate the game-side budget).
+    float fullFrameMs = 0.0F;
+};
 
 // ---------------------------------------------------------------------------
 // EngineDesc -- configuration for Engine::init().
@@ -243,6 +297,14 @@ public:
         return fbH_;
     }
 
+    // Per-frame wall-clock timings for the most recent completed frame.
+    // See EngineFrameStats above for the field semantics.  Updated each
+    // call to endFrame; zero-cost when not read.
+    [[nodiscard]] const EngineFrameStats& frameStats() const
+    {
+        return frameStats_;
+    }
+
 #ifdef __ANDROID__
     // ----- Save / restore state (Android only) -----
     //
@@ -403,6 +465,13 @@ private:
     double prevTime_ = 0.0;
     uint16_t fbW_ = 0;
     uint16_t fbH_ = 0;
+
+    // Per-frame timings; populated by beginFrame / endFrame.  See
+    // EngineFrameStats at the top of this header for what each field
+    // measures.  Public via frameStats() accessor.
+    EngineFrameStats frameStats_;
+    std::chrono::steady_clock::time_point frameBeginTime_;
+    std::chrono::steady_clock::time_point endFrameStart_;
 
 #ifdef __ANDROID__
     // Android command/input callbacks (static, forwarded to Engine via userData)
