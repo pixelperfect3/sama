@@ -32,7 +32,29 @@ bool AndroidGyro::init(ALooper* looper)
     // Create event queue on the provided looper
     eventQueue_ = ASensorManager_createEventQueue(sensorManager_, looper, ALOOPER_POLL_CALLBACK,
                                                   nullptr, nullptr);
-    return (eventQueue_ != nullptr);
+    if (!eventQueue_)
+        return false;
+
+    // Resume-before-init race fix: NativeActivity can fire APP_CMD_RESUME
+    // before Engine::initAndroid reaches the gyro-init section.  The
+    // resume handler calls setEnabled(true) on the AndroidGyro object —
+    // which exists (it was constructed at the top of initAndroid) but
+    // its eventQueue_ / gyroscope_ / accelerometer_ pointers are still
+    // null.  setEnabled flips enabled_ = true and silently no-ops on the
+    // null pointers.  Then by the time initAndroid eventually calls
+    // setEnabled(true), the early-return `enabled == enabled_` check
+    // fires and the sensors are never actually enabled.  Net: gyro
+    // reports avail=1 but pitch/yaw/roll all stuck at 0 forever.
+    //
+    // Fix: latch the desired state before init, apply it here once the
+    // sensor handles are real.
+    if (enabled_)
+    {
+        const bool desired = true;
+        enabled_ = false;       // force setEnabled to apply, not no-op
+        setEnabled(desired);
+    }
+    return true;
 }
 
 void AndroidGyro::shutdown()
@@ -50,6 +72,14 @@ void AndroidGyro::setEnabled(bool enabled)
     if (enabled == enabled_)
         return;
     enabled_ = enabled;
+
+    // Defensive: if init() hasn't run yet, eventQueue_ is null and we
+    // can't actually toggle the sensors.  Leave enabled_ latched to the
+    // requested value — init() reads it after creating the queue and
+    // applies the deferred state.  See "Resume-before-init race fix" in
+    // init() for the full story.
+    if (!eventQueue_)
+        return;
 
     if (enabled)
     {
