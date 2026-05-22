@@ -2757,3 +2757,86 @@ yet another follow-up.
 still takes `bgfx::ProgramHandle spriteProgram` + `bgfx::UniformHandle
 s_texture`.  Same shape of issue, narrower blast radius (one caller in
 `tests/screenshot/TestSsUi.cpp`).  Worth a separate small commit.
+
+## Android audio: race-safe AAudio gate (2026-05-22)
+
+`third_party/soloud_patches/soloud_miniaudio.cpp` now gates the
+SoLoud-callback wrapper on a `std::atomic<bool> gAudioReady` flag —
+publishing-store after `postinit_internal` returns, acquire-load on
+every callback.  This replaces the OpenSL-ES-only `ma_context` we
+landed in 46b4ec1 and re-enables AAudio for the ~20 ms latency win.
+
+### The race we're closing
+
+SoLoud's `Soloud::init` runs in this order:
+
+```
+ma_device_init(NULL, &config, &gDevice);     // <-- AAudio backend starts
+                                              //     the playback callback
+                                              //     thread BEFORE this
+                                              //     function returns
+aSoloud->postinit_internal(...);             // allocates mResampleData[]
+                                              // and mResampleDataOwner[]
+ma_device_start(&gDevice);                   // intended-but-irrelevant
+                                              // start point
+```
+
+On Pixel 9 / Android 16 with miniaudio's AAudio backend, the AAudio
+callback fires within microseconds of `ma_device_init` returning —
+before `postinit_internal` allocates the arrays.  The first callback
+calls `Soloud::mix` → `mapResampleBuffers_internal` → null-deref at
++120 (mResampleDataOwner[i]).  100% reproducible on Pixel 9 with
+sample_game's audio integration.
+
+OpenSL ES doesn't have this behaviour (it waits for `ma_device_start`
+before kicking off the callback) — which is why 46b4ec1's
+"force OpenSL ES" workaround stopped the crash.  But OpenSL ES is the
+older Android audio API; typical output latency ~30 ms vs AAudio's
+~10 ms.  For a rhythm game or a tactile-feedback shooter that
+matters; for the rolling-ball-and-coins use case it doesn't, but
+there's no reason to pay it if we don't have to.
+
+### Why the gate is the right fix
+
+`gAudioReady` is `false` at process start.  `miniaudio_init` runs
+`ma_device_init` (AAudio callback may fire immediately), then
+`postinit_internal` (allocates arrays), then `gAudioReady.store(true,
+release)`.  The callback wrapper reads `gAudioReady.load(acquire)` on
+every iteration; while it's `false`, it `memset`s the output buffer
+to zero and returns without entering SoLoud.
+
+`release/acquire` ordering guarantees every prior store in
+`postinit_internal` is visible to any callback that observes
+`gAudioReady = true` — i.e. when the gate flips, all of SoLoud's
+internal pointers / arrays / counters are fully published.  Standard
+one-shot publisher/consumer pattern.
+
+Cost: one atomic load per audio callback (~1 ns on ARM with `ldar`).
+The silence-output window is the few ms between `ma_device_init` and
+`postinit_internal`; inaudible at app startup (no sounds are loaded
+that early, and even if a clip was queued the first few ms would just
+be silent).
+
+### Bonus: backend-agnostic
+
+The gate runs on every backend, not just AAudio.  If a future
+miniaudio backend ever pre-starts its callback the same way (current
+candidate: WASAPI exclusive-mode on Windows), the same code catches
+it without a per-backend `#ifdef`.
+
+### Deinit re-arms the gate
+
+`soloud_miniaudio_deinit` stores `false` BEFORE `ma_device_uninit`, so
+a re-init (e.g. game resets the audio engine) starts from a clean
+state.  `ma_device_uninit` joins the callback thread synchronously,
+so the store can't race a final in-flight callback.
+
+### Why not fix this in SoLoud upstream
+
+Cleanest "real" fix would be to reorder `Soloud::init` so
+`postinit_internal` runs before the backend init at all — then no
+backend's eager-callback behaviour matters.  Requires either patching
+SoLoud's 2k-line `soloud.cpp` (we'd carry a vendored fork forever) or
+upstreaming to a maintainer-quiet project.  The wrapper-side gate is
+small, contained, and lives in a file we already own — better
+maintenance ergonomics for the same correctness.
