@@ -13,6 +13,10 @@ set -euo pipefail
 ABI=${1:-arm64-v8a}
 BUILD_TYPE=${2:-Release}
 ANDROID_NDK=${ANDROID_NDK:-$HOME/Android/Sdk/ndk/26.1.10909125}
+# Which apps/ subdir to compile as the game inside libsama_android.so.
+# Plumbed through to the CMake cache var SAMA_ANDROID_APP.  Default
+# matches the historic behaviour (apps/android_test).
+SAMA_ANDROID_APP=${SAMA_ANDROID_APP:-android_test}
 
 # Validate ABI
 VALID_ABIS="arm64-v8a armeabi-v7a x86 x86_64"
@@ -58,6 +62,7 @@ cmake -S "${PROJECT_ROOT}" -B "${PROJECT_ROOT}/build/android/${ABI}" \
     -DANDROID_STL=c++_shared \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DSAMA_ANDROID=ON \
+    -DSAMA_ANDROID_APP="${SAMA_ANDROID_APP}" \
     "${DEBUG_LAYERS_OPT}"
 
 cmake --build "${PROJECT_ROOT}/build/android/${ABI}" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu)"

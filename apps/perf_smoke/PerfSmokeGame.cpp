@@ -1,7 +1,9 @@
 #define GLFW_INCLUDE_NONE
 #include "PerfSmokeGame.h"
 
+#ifndef __ANDROID__
 #include <GLFW/glfw3.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +23,37 @@
 #include "engine/rendering/RenderPass.h"
 #include "engine/rendering/ViewIds.h"
 #include "engine/scene/TransformSystem.h"
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <cstdarg>
+#include <cstring>
+#endif
+
+namespace
+{
+// On desktop, write to stdout. On Android, route through logcat under the
+// "PerfSmoke" tag (printf goes nowhere on NativeActivity), stripping any
+// trailing newline so logcat doesn't blank-line every row.  Used by
+// reportAndCheckBudgets() so the budget table is visible via
+// `adb logcat | grep PerfSmoke`.
+void perfLog(const char* fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+#ifdef __ANDROID__
+    const size_t len = std::strlen(buf);
+    if (len > 0 && buf[len - 1] == '\n')
+        buf[len - 1] = '\0';
+    __android_log_print(ANDROID_LOG_INFO, "PerfSmoke", "%s", buf);
+#else
+    std::fputs(buf, stdout);
+#endif
+}
+}  // namespace
 
 using namespace engine::ecs;
 using namespace engine::physics;
@@ -210,6 +243,13 @@ void PerfSmokeGame::spawnScene(engine::core::Engine& /*engine*/, Registry& reg)
 
 void PerfSmokeGame::onFixedUpdate(engine::core::Engine& /*engine*/, Registry& reg, float fixedDt)
 {
+    // After the budget run completes, skip all per-system measurement +
+    // submission.  On desktop the GLFW window-close request terminates the
+    // loop one frame after done_ flips; on Android NativeActivity keeps
+    // running until the user closes the app, so we early-out everywhere to
+    // avoid re-printing the budget table on every subsequent frame.
+    if (done_)
+        return;
     auto t0 = Clock::now();
     physicsSys_.update(reg, physics_, fixedDt);
     samples_.physics.push_back(msSince(t0));
@@ -217,6 +257,8 @@ void PerfSmokeGame::onFixedUpdate(engine::core::Engine& /*engine*/, Registry& re
 
 void PerfSmokeGame::onUpdate(engine::core::Engine& engine, Registry& reg, float /*dt*/)
 {
+    if (done_)
+        return;
     frameStart_ = Clock::now();
 
     // GameRunner::runLoop calls transformSys.update() after onUpdate but
@@ -245,7 +287,7 @@ void PerfSmokeGame::onRender(engine::core::Engine& engine)
     const glm::mat4 viewMat = glm::lookAt(camPos, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
     const glm::mat4 projMat = glm::perspective(glm::radians(45.f), fbW / fbH, 0.1f, 200.f);
 
-    if (registry_ == nullptr)
+    if (registry_ == nullptr || done_)
         return;
 
     // -- FrustumCullSystem --------------------------------------------------
@@ -300,9 +342,15 @@ void PerfSmokeGame::onRender(engine::core::Engine& engine)
     {
         reportAndCheckBudgets();
         done_ = true;
+#ifndef __ANDROID__
         // Tell GLFW to close the window so the GameRunner::runLoop while()
-        // terminates on the next iteration.
+        // terminates on the next iteration.  Android NativeActivity has no
+        // equivalent "exit the app from native code" hook — the budget
+        // table just lands in logcat and subsequent frames are no-ops.
         glfwSetWindowShouldClose(engine.glfwHandle(), GLFW_TRUE);
+#else
+        (void)engine;
+#endif
     }
 }
 
@@ -320,15 +368,15 @@ void PerfSmokeGame::reportAndCheckBudgets()
         const float p99Ms = percentile(s, 0.99f);
         const float maxMs = maxOf(s);
         const bool ok = (meanMs <= budget);
-        std::printf("  %-22s | %7.3f | %7.3f | %7.3f | budget %.2f %s\n", name, meanMs, p99Ms,
-                    maxMs, budget, ok ? "OK" : "FAIL");
+        perfLog("  %-22s | %7.3f | %7.3f | %7.3f | budget %.2f %s\n", name, meanMs, p99Ms,
+                maxMs, budget, ok ? "OK" : "FAIL");
         return ok;
     };
 
-    std::printf("\n=== perf_smoke: %d frames, %zu entities ===\n", framesToRun_,
-                samples_.draw.size() ? size_t{702} : size_t{0});
-    std::printf("  %-22s | %7s | %7s | %7s |\n", "system", "mean ms", "p99 ms", "max ms");
-    std::printf("  -----------------------+---------+---------+---------+\n");
+    perfLog("\n=== perf_smoke: %d frames, %zu entities ===\n", framesToRun_,
+            samples_.draw.size() ? size_t{702} : size_t{0});
+    perfLog("  %-22s | %7s | %7s | %7s |\n", "system", "mean ms", "p99 ms", "max ms");
+    perfLog("  -----------------------+---------+---------+---------+\n");
     bool ok = true;
     ok &= row("PhysicsSystem", samples_.physics, budgets_.physicsMeanMs);
     ok &= row("TransformSystem", samples_.transform, budgets_.transformMeanMs);
@@ -339,13 +387,48 @@ void PerfSmokeGame::reportAndCheckBudgets()
 
     const float frameP99 = percentile(samples_.frame, 0.99f);
     const bool frameBudgetOk = (frameP99 <= budgets_.frameP99Ms);
-    std::printf("  %-22s | %7.3f | %7.3f | %7.3f | budget p99 %.2f %s\n", "frame total",
-                mean(samples_.frame), frameP99, maxOf(samples_.frame), budgets_.frameP99Ms,
-                frameBudgetOk ? "OK" : "FAIL");
+    perfLog("  %-22s | %7.3f | %7.3f | %7.3f | budget p99 %.2f %s\n", "frame total",
+            mean(samples_.frame), frameP99, maxOf(samples_.frame), budgets_.frameP99Ms,
+            frameBudgetOk ? "OK" : "FAIL");
     ok &= frameBudgetOk;
 
-    std::printf("=== %s ===\n", ok ? "PASS" : "FAIL — budget exceeded; investigate before merge");
+    perfLog("=== %s ===\n", ok ? "PASS" : "FAIL — budget exceeded; investigate before merge");
     exitCode_ = ok ? 0 : 1;
 }
 
 }  // namespace perf_smoke
+
+#ifdef __ANDROID__
+// Android entry point — Sama's NativeActivity glue (AndroidApp.cpp) calls
+// samaCreateGame() to obtain the IGame to drive.  Selected when sama_android
+// is built with -DSAMA_ANDROID_APP=perf_smoke (see top-level CMakeLists.txt).
+//
+// Run for 600 frames (~10 s @ 60 Hz nominal); on a Pixel 9 with the current
+// engine that's enough samples to hit a representative p99.  After the
+// budget table is logged the game keeps running (no clean native-exit
+// from NativeActivity), and subsequent frames are no-ops — just close the
+// app from the launcher when you're done reading logcat.
+namespace
+{
+perf_smoke::PerfBudgets g_androidBudgets{};
+// Phone budgets are roughly 2x desktop to start; tighten as the runtime
+// improves.  These are wall-clock per-system mean ms / frame.
+[[maybe_unused]] const auto kInitAndroidBudgets = []
+{
+    g_androidBudgets.physicsMeanMs = 1.60f;
+    g_androidBudgets.transformMeanMs = 0.40f;
+    g_androidBudgets.frustumCullMeanMs = 0.30f;
+    g_androidBudgets.drawCallMeanMs = 2.00f;  // the suspect; 4x desktop budget
+    g_androidBudgets.shadowSubmitMeanMs = 0.50f;
+    g_androidBudgets.lightClusterMeanMs = 1.00f;
+    g_androidBudgets.frameP99Ms = 16.67f;  // 60 fps target
+    return 0;
+}();
+perf_smoke::PerfSmokeGame g_perfSmokeGame{600, g_androidBudgets};
+}  // namespace
+
+engine::game::IGame* samaCreateGame()
+{
+    return &g_perfSmokeGame;
+}
+#endif  // __ANDROID__

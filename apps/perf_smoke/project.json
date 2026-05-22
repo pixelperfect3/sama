@@ -1,0 +1,39 @@
+{
+    "_comment": "perf_smoke — fixed-tier ProjectConfig so the CPU budget table is comparable run-to-run. activeTier locked to 'mid' (rather than 'auto') because perf_smoke is a regression test, not a game — tier flicker between runs would invalidate the per-system budgets in PerfSmokeGame.h. To measure low or high tier, change this line and rebuild the APK.",
+
+    "name": "Sama perf_smoke",
+    "activeTier": "mid",
+
+    "tiers": {
+        "low": {
+            "maxTextureSize": 512,
+            "shadowMapSize": 512,
+            "shadowCascades": 1,
+            "enableIBL": false,
+            "enableSSAO": false,
+            "enableBloom": false,
+            "renderScale": 0.75,
+            "targetFPS": 60
+        },
+        "mid": {
+            "maxTextureSize": 1024,
+            "shadowMapSize": 1024,
+            "shadowCascades": 2,
+            "enableIBL": false,
+            "enableSSAO": false,
+            "enableBloom": false,
+            "renderScale": 1.0,
+            "targetFPS": 60
+        },
+        "high": {
+            "maxTextureSize": 2048,
+            "shadowMapSize": 2048,
+            "shadowCascades": 3,
+            "enableIBL": false,
+            "enableSSAO": false,
+            "enableBloom": false,
+            "renderScale": 1.0,
+            "targetFPS": 60
+        }
+    }
+}

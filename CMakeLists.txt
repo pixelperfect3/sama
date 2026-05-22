@@ -1727,8 +1727,21 @@ if(SAMA_ANDROID)
     set_target_properties(sama_android PROPERTIES
         LINK_FLAGS "-u ANativeActivity_onCreate"
     )
-    # On Android, link the test game into sama_android.
-    target_sources(sama_android PRIVATE apps/android_test/AndroidTestGame.cpp)
+    # On Android, link the selected game into sama_android.  Switch app via
+    # `cmake -DSAMA_ANDROID_APP=perf_smoke ...` (default: android_test).
+    # `build_apk.sh --app perf_smoke` plumbs this flag through automatically.
+    set(SAMA_ANDROID_APP "android_test" CACHE STRING
+        "Which apps/ subdir to compile as the Android game (android_test | perf_smoke).")
+    if(SAMA_ANDROID_APP STREQUAL "android_test")
+        target_sources(sama_android PRIVATE apps/android_test/AndroidTestGame.cpp)
+    elseif(SAMA_ANDROID_APP STREQUAL "perf_smoke")
+        target_sources(sama_android PRIVATE apps/perf_smoke/PerfSmokeGame.cpp)
+        target_include_directories(sama_android PRIVATE apps/perf_smoke)
+    else()
+        message(FATAL_ERROR
+            "SAMA_ANDROID_APP='${SAMA_ANDROID_APP}' not recognised. "
+            "Use 'android_test' or 'perf_smoke'.")
+    endif()
 
 endif()  # SAMA_ANDROID
 

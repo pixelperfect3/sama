@@ -51,6 +51,10 @@ OUTPUT=""
 INSTALL=false
 APP_NAME="Sama Game"
 PACKAGE_ID="com.sama.game"
+# Which app under apps/ to compile into libsama_android.so.  Maps to the
+# CMake cache var SAMA_ANDROID_APP and also selects which project.json gets
+# bundled.  Supported: android_test (default) | perf_smoke.
+APP="android_test"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -70,6 +74,7 @@ while [[ $# -gt 0 ]]; do
         --install)           INSTALL=true;           shift ;;
         --app-name)          APP_NAME="$2";          shift 2 ;;
         --package)           PACKAGE_ID="$2";        shift 2 ;;
+        --app)               APP="$2";               shift 2 ;;
         -h|--help)
             head -34 "$0" | tail -33
             exit 0
@@ -232,8 +237,8 @@ echo ""
 echo "[0/7] Compiling shaders to SPIRV for Android..."
 "${PROJECT_ROOT}/android/compile_shaders.sh"
 
-echo "[1/7] Building native library..."
-"${PROJECT_ROOT}/android/build_android.sh" "$ABI" "$BUILD_TYPE"
+echo "[1/7] Building native library (app=${APP})..."
+SAMA_ANDROID_APP="${APP}" "${PROJECT_ROOT}/android/build_android.sh" "$ABI" "$BUILD_TYPE"
 
 SO_PATH="${PROJECT_ROOT}/build/android/${ABI}/libsama_android.so"
 if [ ! -f "$SO_PATH" ]; then
@@ -297,9 +302,12 @@ fi
 # alongside their APK. The android_test app's project.json demonstrates
 # Phase E's "activeTier": "auto" sentinel; future runAndroid wiring through
 # AndroidFileSystem will load this file at runtime.
-if [ -f "${PROJECT_ROOT}/apps/android_test/project.json" ]; then
+if [ -f "${PROJECT_ROOT}/apps/${APP}/project.json" ]; then
+    cp "${PROJECT_ROOT}/apps/${APP}/project.json" "${ASSETS_OUTPUT}/project.json"
+    echo "  Copied apps/${APP}/project.json"
+elif [ -f "${PROJECT_ROOT}/apps/android_test/project.json" ]; then
     cp "${PROJECT_ROOT}/apps/android_test/project.json" "${ASSETS_OUTPUT}/project.json"
-    echo "  Copied project.json"
+    echo "  Copied apps/android_test/project.json (fallback for app=${APP})"
 fi
 
 # ── Step 3: Create APK staging directory ────────────────────────────────────
