@@ -165,8 +165,8 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     shadow.beginCascade(0, lightView, lightProj);
 
     DrawCallBuildSystem drawCallSys;
-    drawCallSys.submitShadowDrawCalls(reg, res, bgfx::ProgramHandle{shadowProg.idx}, 0);
-    drawCallSys.submitSkinnedShadowDrawCalls(reg, res, bgfx::ProgramHandle{skinnedShadowProg.idx},
+    drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
+    drawCallSys.submitSkinnedShadowDrawCalls(reg, res, skinnedShadowProg,
                                              0, bones);
 
     // -----------------------------------------------------------------------
@@ -198,8 +198,8 @@ void renderFoxAtTime(uint32_t clipId, float playbackTime, const char* goldenName
     frame.camPos[1] = camPos.y;
     frame.camPos[2] = camPos.z;
 
-    drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, uniforms, frame);
-    drawCallSys.updateSkinned(reg, res, bgfx::ProgramHandle{skinnedPbrProg.idx}, uniforms, frame,
+    drawCallSys.update(reg, res, pbrProg, uniforms, frame);
+    drawCallSys.updateSkinned(reg, res, skinnedPbrProg, uniforms, frame,
                               bones);
 
     fx.runTonemap(engine::rendering::kViewPostProcessBase);

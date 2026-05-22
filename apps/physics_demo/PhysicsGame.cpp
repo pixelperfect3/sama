@@ -517,7 +517,7 @@ void PhysicsGame::onRender(Engine& engine)
     if (registry_)
     {
         drawCallSys_.submitShadowDrawCalls(*registry_, engine.resources(),
-                                           bgfx::ProgramHandle{engine.shadowProgram().idx}, 0);
+                                           engine.shadowProgram(), 0);
 
         // Opaque pass
         const auto W = engine.fbWidth();
@@ -546,7 +546,7 @@ void PhysicsGame::onRender(Engine& engine)
             frame.brdfLut = ibl_.brdfLut();
         }
         drawCallSys_.update(*registry_, engine.resources(),
-                            bgfx::ProgramHandle{engine.pbrProgram().idx}, engine.uniforms(), frame);
+                            engine.pbrProgram(), engine.uniforms(), frame);
     }
 
     // -- HUD --------------------------------------------------------------

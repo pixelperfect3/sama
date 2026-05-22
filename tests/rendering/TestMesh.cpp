@@ -284,7 +284,7 @@ TEST_CASE("DrawCallBuildSystem: smoke test with headless renderer", "[mesh]")
 
     engine::rendering::DrawCallBuildSystem dcbs;
     // Should not crash whether program is valid or not.
-    REQUIRE_NOTHROW(dcbs.update(reg, res, bgfx::ProgramHandle{program.idx}));
+    REQUIRE_NOTHROW(dcbs.update(reg, res, program));
 
     bgfxCtx.renderer.endFrame();
 

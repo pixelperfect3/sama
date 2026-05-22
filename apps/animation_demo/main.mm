@@ -674,12 +674,12 @@ int main()
         // Shadow pass
         eng.shadow().beginCascade(0, lightView, lightProj);
         drawCallSys.submitShadowDrawCalls(reg, eng.resources(),
-                                          bgfx::ProgramHandle{eng.shadowProgram().idx}, 0);
+                                          eng.shadowProgram(), 0);
         const engine::math::Mat4* shadowBones = animSys.boneBuffer();
         if (shadowBones)
         {
             drawCallSys.submitSkinnedShadowDrawCalls(
-                reg, eng.resources(), bgfx::ProgramHandle{eng.skinnedShadowProgram().idx}, 0,
+                reg, eng.resources(), eng.skinnedShadowProgram(), 0,
                 shadowBones);
         }
 
@@ -709,14 +709,14 @@ int main()
             frame.brdfLut = ibl.brdfLut();
         }
 
-        drawCallSys.update(reg, eng.resources(), bgfx::ProgramHandle{eng.pbrProgram().idx},
+        drawCallSys.update(reg, eng.resources(), eng.pbrProgram(),
                            eng.uniforms(), frame);
 
         const engine::math::Mat4* boneBuffer = animSys.boneBuffer();
         if (boneBuffer)
         {
             drawCallSys.updateSkinned(reg, eng.resources(),
-                                      bgfx::ProgramHandle{eng.skinnedPbrProgram().idx},
+                                      eng.skinnedPbrProgram(),
                                       eng.uniforms(), frame, boneBuffer);
         }
 

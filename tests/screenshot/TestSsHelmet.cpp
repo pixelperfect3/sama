@@ -115,7 +115,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     shadow.beginCascade(0, lightView, lightProj);
 
     DrawCallBuildSystem drawCallSys;
-    drawCallSys.submitShadowDrawCalls(reg, res, bgfx::ProgramHandle{shadowProg.idx}, 0);
+    drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
 
     // -----------------------------------------------------------------------
     // Opaque pass (view 9) → off-screen capture framebuffer
@@ -148,7 +148,7 @@ TEST_CASE("screenshot: damaged helmet PBR", "[screenshot]")
     frame.camPos[1] = camPos.y;
     frame.camPos[2] = camPos.z;
 
-    drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, uniforms, frame);
+    drawCallSys.update(reg, res, pbrProg, uniforms, frame);
 
     // -----------------------------------------------------------------------
     // Capture, compare, cleanup

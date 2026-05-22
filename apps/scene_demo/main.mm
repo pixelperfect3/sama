@@ -341,7 +341,7 @@ int main()
         // sets the shadow atlas dimensions (2048×2048) which must not be
         // overridden later in the frame.
         shadow.beginCascade(0, lightView, lightProj);
-        drawCallSys.submitShadowDrawCalls(reg, res, bgfx::ProgramHandle{shadowProg.idx}, 0);
+        drawCallSys.submitShadowDrawCalls(reg, res, shadowProg, 0);
 
         // -- Opaque pass (view 9) —  render to backbuffer --------------------
         const auto W = static_cast<uint16_t>(fbW);
@@ -360,7 +360,7 @@ int main()
         const PbrFrameParams frame{
             lightData, glm::value_ptr(shadowMat), shadow.atlasTexture(), W, H, 0.1f, 200.f,
         };
-        drawCallSys.update(reg, res, bgfx::ProgramHandle{pbrProg.idx}, renderer.uniforms(), frame);
+        drawCallSys.update(reg, res, pbrProg, renderer.uniforms(), frame);
 
         // -- HUD (debug text overlay) -----------------------------------------
         // Do NOT set setViewRect(0, ...) here — that would override the shadow

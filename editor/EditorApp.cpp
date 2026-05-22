@@ -4116,7 +4116,14 @@ void EditorApp::run()
             frame.camPos[1] = camPos.y;
             frame.camPos[2] = camPos.z;
 
-            impl_->drawCallSys.update(impl_->registry, impl_->resources, impl_->pbrProgram,
+            // The editor's Impl stores programs as bgfx::ProgramHandle (it
+            // owns destruction via bgfx::destroy and uses them in stencil
+            // outline submits below).  DrawCallBuildSystem's API now takes
+            // engine::rendering::ProgramHandle (no bgfx in the game-facing
+            // surface), so wrap at the call site.  Migrating Impl's storage
+            // to the wrapper is a separate cleanup.
+            impl_->drawCallSys.update(impl_->registry, impl_->resources,
+                                      engine::rendering::ProgramHandle{impl_->pbrProgram.idx},
                                       impl_->uniforms, frame);
 
             // -- Skinned PBR pass (skeletal animation)
@@ -4124,9 +4131,10 @@ void EditorApp::run()
             const auto* boneBuffer = impl_->animationSystem.boneBuffer();
             if (boneBuffer)
             {
-                impl_->drawCallSys.updateSkinned(impl_->registry, impl_->resources,
-                                                 impl_->skinnedPbrProgram, impl_->uniforms, frame,
-                                                 boneBuffer);
+                impl_->drawCallSys.updateSkinned(
+                    impl_->registry, impl_->resources,
+                    engine::rendering::ProgramHandle{impl_->skinnedPbrProgram.idx}, impl_->uniforms,
+                    frame, boneBuffer);
             }
 
             // -- Selection outline (single-pass stencil) --------------------------

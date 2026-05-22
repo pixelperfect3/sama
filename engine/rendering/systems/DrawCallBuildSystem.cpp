@@ -15,8 +15,7 @@ namespace engine::rendering
 namespace
 {
 
-void submitMeshDraw(const Mesh& mesh, const WorldTransformComponent& wtc,
-                    bgfx::ProgramHandle program)
+void submitMeshDraw(const Mesh& mesh, const WorldTransformComponent& wtc, ProgramHandle program)
 {
     // Upload the world-space transform matrix.
     // bgfx expects column-major float[16]; GLM Mat4 is column-major.
@@ -35,7 +34,7 @@ void submitMeshDraw(const Mesh& mesh, const WorldTransformComponent& wtc,
     // Default render state: depth test + write, RGB + alpha write, no culling override.
     bgfx::setState(BGFX_STATE_DEFAULT);
 
-    bgfx::submit(kViewOpaque, program);
+    bgfx::submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
 }
 
 }  // anonymous namespace
@@ -45,9 +44,9 @@ void submitMeshDraw(const Mesh& mesh, const WorldTransformComponent& wtc,
 // ---------------------------------------------------------------------------
 
 void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
-                                 bgfx::ProgramHandle program)
+                                 ProgramHandle program)
 {
-    if (!bgfx::isValid(program))
+    if (!isValid(program))
         return;
 
     auto visibleView = reg.view<VisibleTag, WorldTransformComponent, MeshComponent>();
@@ -69,9 +68,9 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 // ---------------------------------------------------------------------------
 
 void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
-                                 bgfx::ProgramHandle program, ShaderUniforms* uniforms)
+                                 ProgramHandle program, ShaderUniforms* uniforms)
 {
-    if (!bgfx::isValid(program))
+    if (!isValid(program))
         return;
 
     // Fall back to the unlit path when no uniforms object is provided.
@@ -119,10 +118,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 // ---------------------------------------------------------------------------
 
 void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
-                                 bgfx::ProgramHandle program, const ShaderUniforms& uniforms,
+                                 ProgramHandle program, const ShaderUniforms& uniforms,
                                  const PbrFrameParams& frame)
 {
-    if (!bgfx::isValid(program))
+    if (!isValid(program))
         return;
 
     bgfx::TextureHandle whiteTex = bgfx::TextureHandle{res.whiteTexture().idx};
@@ -243,12 +242,12 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                                BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
                                BGFX_STATE_BLEND_ALPHA);
-                bgfx::submit(kViewTransparent, program);
+                bgfx::submit(kViewTransparent, bgfx::ProgramHandle{program.idx});
             }
             else
             {
                 bgfx::setState(BGFX_STATE_DEFAULT);
-                bgfx::submit(kViewOpaque, program);
+                bgfx::submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
             }
         });
 }
@@ -258,10 +257,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 // ---------------------------------------------------------------------------
 
 void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
-                                                bgfx::ProgramHandle shadowProgram,
+                                                ProgramHandle shadowProgram,
                                                 uint32_t cascadeIndex)
 {
-    if (!bgfx::isValid(shadowProgram))
+    if (!isValid(shadowProgram))
         return;
 
     const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
@@ -294,7 +293,7 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
             // facing the light write correct shadow depth.
             bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
 
-            bgfx::submit(shadowView, shadowProgram);
+            bgfx::submit(shadowView, bgfx::ProgramHandle{shadowProgram.idx});
         });
 }
 
@@ -304,11 +303,11 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
 
 void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(ecs::Registry& reg,
                                                        const RenderResources& res,
-                                                       bgfx::ProgramHandle skinnedShadowProgram,
+                                                       ProgramHandle skinnedShadowProgram,
                                                        uint32_t cascadeIndex,
                                                        const math::Mat4* boneBuffer)
 {
-    if (!bgfx::isValid(skinnedShadowProgram) || !boneBuffer)
+    if (!isValid(skinnedShadowProgram) || !boneBuffer)
         return;
 
     const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
@@ -342,7 +341,7 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(ecs::Registry& reg,
 
             bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
 
-            bgfx::submit(shadowView, skinnedShadowProgram);
+            bgfx::submit(shadowView, bgfx::ProgramHandle{skinnedShadowProgram.idx});
         });
 }
 
@@ -351,11 +350,11 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(ecs::Registry& reg,
 // ---------------------------------------------------------------------------
 
 void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResources& res,
-                                        bgfx::ProgramHandle skinnedProgram,
+                                        ProgramHandle skinnedProgram,
                                         const ShaderUniforms& uniforms, const PbrFrameParams& frame,
                                         const math::Mat4* boneBuffer)
 {
-    if (!bgfx::isValid(skinnedProgram) || !boneBuffer)
+    if (!isValid(skinnedProgram) || !boneBuffer)
         return;
 
     bgfx::TextureHandle whiteTex = bgfx::TextureHandle{res.whiteTexture().idx};
@@ -463,12 +462,12 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
                 bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                                BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
                                BGFX_STATE_BLEND_ALPHA);
-                bgfx::submit(kViewTransparent, skinnedProgram);
+                bgfx::submit(kViewTransparent, bgfx::ProgramHandle{skinnedProgram.idx});
             }
             else
             {
                 bgfx::setState(BGFX_STATE_DEFAULT);
-                bgfx::submit(kViewOpaque, skinnedProgram);
+                bgfx::submit(kViewOpaque, bgfx::ProgramHandle{skinnedProgram.idx});
             }
         });
 }

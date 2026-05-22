@@ -307,7 +307,7 @@ void PerfSmokeGame::onRender(engine::core::Engine& engine)
     // -- Shadow submit ------------------------------------------------------
     auto t1 = Clock::now();
     drawSys_.submitShadowDrawCalls(*registry_, engine.resources(),
-                                   bgfx::ProgramHandle{engine.shadowProgram().idx}, 0);
+                                   engine.shadowProgram(), 0);
     samples_.shadow.push_back(msSince(t1));
 
     // -- LightClusterBuilder (latent cost — not currently consumed by
@@ -331,7 +331,7 @@ void PerfSmokeGame::onRender(engine::core::Engine& engine)
     frame.camPos[2] = camPos.z;
 
     auto t3 = Clock::now();
-    drawSys_.update(*registry_, engine.resources(), bgfx::ProgramHandle{engine.pbrProgram().idx},
+    drawSys_.update(*registry_, engine.resources(), engine.pbrProgram(),
                     engine.uniforms(), frame);
     samples_.draw.push_back(msSince(t3));
 

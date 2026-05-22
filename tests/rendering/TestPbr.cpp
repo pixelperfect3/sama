@@ -182,7 +182,7 @@ TEST_CASE("DrawCallBuildSystem: PBR overload smoke test with headless renderer",
 
     engine::rendering::DrawCallBuildSystem dcbs;
     // Must not crash — the Noop renderer ignores all draw calls.
-    REQUIRE_NOTHROW(dcbs.update(reg, res, bgfx::ProgramHandle{program.idx}, &uniforms));
+    REQUIRE_NOTHROW(dcbs.update(reg, res, program, &uniforms));
 
     bgfxCtx.renderer.endFrame();
 

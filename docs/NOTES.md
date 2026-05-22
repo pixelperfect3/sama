@@ -2716,3 +2716,44 @@ existing `[lighting][cluster]` suite:
 - Changing near/far invalidates the cluster cache.
 - Zero-light scenes upload once (to seed the GPU's zeroed grid) and
   zero on every subsequent identical frame.
+
+## DrawCallBuildSystem accepts the bgfx-free ProgramHandle (2026-05-22)
+
+Continuation of the ab3c9c5 / b635de0 / 2fb051b lineage that wrapped
+bgfx handle types behind `engine::rendering::*Handle` aliases so game
+code wouldn't need `<bgfx/bgfx.h>`.
+
+`Engine::pbrProgram()` / `shadowProgram()` / `skinnedPbrProgram()` /
+`skinnedShadowProgram()` already returned the bgfx-free
+`rendering::ProgramHandle`, but `DrawCallBuildSystem`'s six method
+signatures (`update` × 3 overloads + `submitShadowDrawCalls` +
+`updateSkinned` + `submitSkinnedShadowDrawCalls`) still took
+`bgfx::ProgramHandle`.  Every caller — and the rolling-ball sample
+game in `pixelperfect3/sample_game` — bridged with
+`bgfx::ProgramHandle{handle.idx}`, which forced an `<bgfx/bgfx.h>`
+include just for that bridge.  An incomplete migration on Sama's side,
+explicitly flagged by sample-game's `SampleGame.cpp:30-32`.
+
+### Change
+
+Switched all six `DrawCallBuildSystem` signatures to
+`engine::rendering::ProgramHandle`.  The conversion to bgfx happens
+once inside the implementation at the `bgfx::submit` call sites
+(`bgfx::submit(viewId, bgfx::ProgramHandle{program.idx})`).  Header
+still pulls `<bgfx/bgfx.h>` because `PbrFrameParams` carries
+`bgfx::TextureHandle` fields for `shadowAtlas` + IBL slots — that's a
+separate, larger wrap pass and not in scope here.
+
+Updated every caller (14 desktop demos + tests + the editor) to drop
+the `bgfx::ProgramHandle{...}` wrap.  Editor still stores its own
+programs as `bgfx::ProgramHandle` because it manages destruction +
+uses them in stencil-outline submits directly, so it wraps INWARD at
+the drawCallSys call sites; cleaning up the editor's storage type is
+yet another follow-up.
+
+### Follow-up still open
+
+`UiRenderSystem::update` (`engine/rendering/systems/UiRenderSystem.h`)
+still takes `bgfx::ProgramHandle spriteProgram` + `bgfx::UniformHandle
+s_texture`.  Same shape of issue, narrower blast radius (one caller in
+`tests/screenshot/TestSsUi.cpp`).  Worth a separate small commit.

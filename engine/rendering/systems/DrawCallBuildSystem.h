@@ -65,34 +65,34 @@ class DrawCallBuildSystem
 {
 public:
     // Phase 2 — unlit.
-    void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program);
+    void update(ecs::Registry& reg, const RenderResources& res, ProgramHandle program);
 
     // Phase 3 — PBR, per-draw u_material only.
     // Caller must set frame-level uniforms (u_dirLight) before this call.
-    void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program,
+    void update(ecs::Registry& reg, const RenderResources& res, ProgramHandle program,
                 ShaderUniforms* uniforms);
 
     // Phase 3 — PBR + directional shadow.
     // Sets all required per-draw state: material, light, shadow matrix, and
     // all texture slots.  No caller pre-setup needed.
-    void update(ecs::Registry& reg, const RenderResources& res, bgfx::ProgramHandle program,
+    void update(ecs::Registry& reg, const RenderResources& res, ProgramHandle program,
                 const ShaderUniforms& uniforms, const PbrFrameParams& frame);
 
     // Phase 4 — depth-only shadow pass.
     void submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
-                               bgfx::ProgramHandle shadowProgram, uint32_t cascadeIndex);
+                               ProgramHandle shadowProgram, uint32_t cascadeIndex);
 
     // PBR + skeletal animation: submit skinned entities.
     // boneBuffer points to the AnimationSystem's per-frame bone matrix array.
     // skinnedProgram is the PBR vertex shader with GPU skinning support.
     void updateSkinned(ecs::Registry& reg, const RenderResources& res,
-                       bgfx::ProgramHandle skinnedProgram, const ShaderUniforms& uniforms,
+                       ProgramHandle skinnedProgram, const ShaderUniforms& uniforms,
                        const PbrFrameParams& frame, const math::Mat4* boneBuffer);
 
     // Shadow pass for skinned entities — uses bone matrices for correct
     // animated shadow depth.
     void submitSkinnedShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
-                                      bgfx::ProgramHandle skinnedShadowProgram,
+                                      ProgramHandle skinnedShadowProgram,
                                       uint32_t cascadeIndex, const math::Mat4* boneBuffer);
 };
 

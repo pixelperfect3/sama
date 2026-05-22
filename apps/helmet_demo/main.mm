@@ -259,7 +259,7 @@ int main()
         // Shadow pass
         eng.shadow().beginCascade(0, lightView, lightProj);
         drawCallSys.submitShadowDrawCalls(reg, eng.resources(),
-                                          bgfx::ProgramHandle{eng.shadowProgram().idx}, 0);
+                                          eng.shadowProgram(), 0);
 
         // Opaque pass
         const auto W = eng.fbWidth();
@@ -290,7 +290,7 @@ int main()
             frame.prefiltered = ibl.prefiltered();
             frame.brdfLut = ibl.brdfLut();
         }
-        drawCallSys.update(reg, eng.resources(), bgfx::ProgramHandle{eng.pbrProgram().idx},
+        drawCallSys.update(reg, eng.resources(), eng.pbrProgram(),
                            eng.uniforms(), frame);
 
         // -- HUD --------------------------------------------------------------
