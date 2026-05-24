@@ -12,13 +12,23 @@ namespace engine::platform
 
 bool AndroidGyro::init(ALooper* looper)
 {
+    // Clear any pre-init enabled_ latch on every failure path so a retry-init
+    // on the same object starts from a clean state.  Without this, a failed
+    // init followed by another setEnabled(true) → init() pair would skip the
+    // latch-apply path because enabled_ was still true from the prior attempt.
+    auto failInit = [this]() -> bool
+    {
+        enabled_ = false;
+        return false;
+    };
+
 #if __ANDROID_API__ >= 26
     sensorManager_ = ASensorManager_getInstanceForPackage("");
 #else
     sensorManager_ = ASensorManager_getInstance();
 #endif
     if (!sensorManager_)
-        return false;
+        return failInit();
 
     gyroscope_ = ASensorManager_getDefaultSensor(sensorManager_, ASENSOR_TYPE_GYROSCOPE);
     accelerometer_ = ASensorManager_getDefaultSensor(sensorManager_, ASENSOR_TYPE_ACCELEROMETER);
@@ -27,13 +37,13 @@ bool AndroidGyro::init(ALooper* looper)
     accelAvailable_ = (accelerometer_ != nullptr);
 
     if (!gyroAvailable_ && !accelAvailable_)
-        return false;
+        return failInit();
 
     // Create event queue on the provided looper
     eventQueue_ = ASensorManager_createEventQueue(sensorManager_, looper, ALOOPER_POLL_CALLBACK,
                                                   nullptr, nullptr);
     if (!eventQueue_)
-        return false;
+        return failInit();
 
     // Resume-before-init race fix: NativeActivity can fire APP_CMD_RESUME
     // before Engine::initAndroid reaches the gyro-init section.  The
@@ -51,7 +61,7 @@ bool AndroidGyro::init(ALooper* looper)
     if (enabled_)
     {
         const bool desired = true;
-        enabled_ = false;       // force setEnabled to apply, not no-op
+        enabled_ = false;  // force setEnabled to apply, not no-op
         setEnabled(desired);
     }
     return true;
