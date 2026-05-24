@@ -53,8 +53,9 @@ bool Renderer::init(const RendererDesc& desc)
     // Without that pre-init call, bgfx spawns a separate render thread and
     // bgfx::frame() becomes an asynchronous hand-off via a lock-free ring,
     // returning as soon as the queue accepts the frame.  See
-    // docs/NOTES.md "bgfx multi-threaded mode" for the measurement story
-    // (Pixel 9 saves ~10 ms/frame on the game thread going multi-threaded).
+    // docs/NOTES.md "bgfx threading mode — multi-threaded default" for the
+    // measurement story (Pixel 9 saves ~20 ms/frame on the game thread
+    // going multi-threaded).
     //
     // The headless / Noop renderer ignores threading mode; the early-out
     // matches the previous behaviour for the Noop unit-test path.
