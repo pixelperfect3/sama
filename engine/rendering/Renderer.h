@@ -16,6 +16,21 @@ struct RendererDesc
     uint32_t width;
     uint32_t height;
     bool headless;  // if true, use RendererType::Noop (for unit tests)
+
+    // Threading mode for bgfx.
+    //   false (default): bgfx spawns its own render thread; bgfx::frame()
+    //                    returns once the recorded command buffer is handed
+    //                    off, so the game thread can start the next frame
+    //                    while the render thread submits + waits for vsync.
+    //                    On Android this typically saves 10-20 ms/frame of
+    //                    wall time on the game thread.
+    //   true           : single-threaded — Renderer::init calls
+    //                    bgfx::renderFrame() exactly once before bgfx::init,
+    //                    which keeps everything on the calling thread.
+    //                    Required by code that needs deterministic readback
+    //                    on the calling thread between bgfx::frame() calls
+    //                    (e.g. screenshot fixture's blit-and-readback flow).
+    bool singleThreaded = false;
 };
 
 // Per-frame timing snapshot collected by Renderer::endFrame.  All values are

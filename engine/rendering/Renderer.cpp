@@ -45,10 +45,23 @@ bool Renderer::init(const RendererDesc& desc)
         init.platformData.ndt = desc.nativeDisplayHandle;
     }
 
-    // Single-threaded mode: bgfx::renderFrame() must be called exactly once
-    // before bgfx::init() to prevent bgfx from spawning its own render thread.
-    if (!desc.headless)
+    // Threading mode selection.
+    //
+    // bgfx::renderFrame() called BEFORE bgfx::init() forces single-threaded
+    // mode — the render thread is never spawned and the calling thread does
+    // command-buffer encoding, submit, GPU wait, and present serially.
+    // Without that pre-init call, bgfx spawns a separate render thread and
+    // bgfx::frame() becomes an asynchronous hand-off via a lock-free ring,
+    // returning as soon as the queue accepts the frame.  See
+    // docs/NOTES.md "bgfx multi-threaded mode" for the measurement story
+    // (Pixel 9 saves ~10 ms/frame on the game thread going multi-threaded).
+    //
+    // The headless / Noop renderer ignores threading mode; the early-out
+    // matches the previous behaviour for the Noop unit-test path.
+    if (!desc.headless && desc.singleThreaded)
+    {
         bgfx::renderFrame();
+    }
 
     init.resolution.width = desc.width;
     init.resolution.height = desc.height;

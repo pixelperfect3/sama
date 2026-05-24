@@ -127,6 +127,7 @@ bool Engine::init(const EngineDesc& desc)
         rd.width = desc.windowWidth;
         rd.height = desc.windowHeight;
         rd.headless = false;
+        rd.singleThreaded = desc.singleThreaded;
         if (!renderer_.init(rd))
             return false;
     }
@@ -567,6 +568,7 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
         rd.width = androidWindow_->width();
         rd.height = androidWindow_->height();
         rd.headless = false;
+        rd.singleThreaded = desc.singleThreaded;
         if (!renderer_.init(rd))
         {
             LOGE("Renderer init failed");
@@ -916,6 +918,7 @@ bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchIn
         rd.width = iosWindow_->width();
         rd.height = iosWindow_->height();
         rd.headless = false;
+        rd.singleThreaded = desc.singleThreaded;
         if (!renderer_.init(rd))
         {
             return false;

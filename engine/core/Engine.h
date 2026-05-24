@@ -110,12 +110,15 @@ struct EngineFrameStats
     // when bloom / SSAO / FXAA are enabled in RenderSettings.
     float postProcessSubmitMs = 0.0F;
 
-    // Subset of endFrameMs — bgfx::frame() wall time.  On single-threaded
-    // bgfx (the Sama default — see Renderer.cpp:50 calling
-    // bgfx::renderFrame() before bgfx::init), this includes command-buffer
-    // recording AND vsync / GPU fence wait, all charged to the game thread.
-    // The dominant cost on Pixel 9 today; documented as a follow-up in
-    // docs/ANDROID_SUPPORT.md under "bgfx forced single-threaded mode".
+    // Subset of endFrameMs — bgfx::frame() wall time.  Meaning depends on
+    // EngineDesc::singleThreaded:
+    //   * Multi-threaded (the Sama default): asynchronous hand-off to the
+    //     render thread via a lock-free ring; bgfx::frame() returns once the
+    //     queue accepts the encoded frame.  Typically ~0.1 ms on Pixel 9.
+    //   * Single-threaded: includes command-buffer recording AND vsync /
+    //     GPU fence wait, all charged to the calling thread.  Typically
+    //     ~10-20 ms on Pixel 9 — this is the cost that drove the move to
+    //     multi-threaded as the default.
     float bgfxFrameMs = 0.0F;
 
     // Wall time from Engine::beginFrame entry → Engine::endFrame exit.
@@ -138,6 +141,15 @@ struct EngineDesc
     uint32_t shadowResolution = 2048;
     uint32_t shadowCascades = 1;
     size_t frameArenaSize = 2 * 1024 * 1024;  // 2 MB
+
+    // bgfx threading mode.  Default is multi-threaded (false) — bgfx spawns
+    // its own render thread and bgfx::frame() is an asynchronous hand-off,
+    // saving ~10-20 ms/frame on the game thread on Android (the dominant
+    // cost in single-threaded mode is the GPU-fence/vsync wait charged to
+    // the calling thread).  Set true for code paths that need to do work
+    // (e.g. blit-and-readback) on the calling thread between frames, like
+    // the screenshot fixture.  Forwarded to RendererDesc::singleThreaded.
+    bool singleThreaded = false;
 };
 
 // ---------------------------------------------------------------------------

@@ -1231,6 +1231,7 @@ add_executable(engine_tests
     tests/math/TestFrustum.cpp
     tests/math/TestTransform.cpp
     tests/rendering/TestRenderer.cpp
+    tests/rendering/TestThreadingMode.cpp
     tests/rendering/TestRenderSettings.cpp
     tests/rendering/TestRenderSettingsJson.cpp
     tests/rendering/TestMesh.cpp
