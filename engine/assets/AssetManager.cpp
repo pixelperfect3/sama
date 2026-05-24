@@ -29,11 +29,63 @@ AssetManager::AssetManager(threading::ThreadPool& pool, IFileSystem& fs) : pool_
     records_.emplace_back();
 }
 
+// Release the bgfx GPU handles attached to a Record's std::any payload.
+// Called on the main thread (the bgfx submission thread per the
+// class-level threading contract — see docs/NOTES.md "bgfx threading
+// mode — multi-threaded default" for why that contract is now
+// load-bearing for correctness, not just convention).
+//
+// std::any erases the payload type, so we have to peek at each known
+// payload type by pointer-cast.
+//
+// Standalone Texture payloads: AssetManager is the sole owner of the
+// bgfx::TextureHandle, so destroy() is safe and required (without this
+// call the handle leaks across the entire app lifetime).
+//
+// GltfAsset payloads are deliberately NOT destroyed here.  GltfAsset has
+// a split ownership model (engine/assets/GltfSceneSpawner.cpp:31): mesh
+// handles are MOVED into RenderResources via addMesh() (RenderResources
+// destroys them on destroyAll()), but texture handles are referenced
+// non-owningly via addTexture().  Calling GltfAsset::destroy() here
+// would double-free the mesh handles and (correctly) destroy the
+// textures — the asymmetry makes the call unsafe in aggregate.  The
+// existing "texture leak on GltfAsset release" is therefore a known
+// limitation, not regressed by this change.  Fixing it requires a
+// separate refactor of the addMesh / addTexture ownership API so both
+// sides agree (tracked as a follow-up under ANDROID_SUPPORT.md
+// Deferred Work).  Standalone Texture loads (the common path for
+// game-side textures) are the immediate win.
+//
+// Adding a new payload type that owns bgfx handles uniquely: add a
+// branch here AND a matching upload() overload above — keep them in
+// sync.
+static void destroyPayload(std::any& payload)
+{
+    if (auto* tex = std::any_cast<Texture>(&payload))
+    {
+        tex->destroy();
+    }
+    // No-op for GltfAsset, non-GPU payloads, and empty std::any.
+}
+
 AssetManager::~AssetManager()
 {
     // Drain any pending uploads so workers don't reference freed memory.
     pool_.waitAll();
     processUploads();
+
+    // Release GPU handles attached to any records that the game never
+    // explicitly release()d.  Without this, bgfx::shutdown() (called by
+    // Renderer::shutdown after AssetManager destructs) tears down the
+    // device while textures / vertex buffers are still alive — bgfx prints
+    // "GraphicsDebug: Texture x is still alive!" warnings, and on Vulkan
+    // the validation layer flags the leaked memory blocks.  Index 0 is the
+    // invalid sentinel and skipped.
+    for (size_t i = 1; i < records_.size(); ++i)
+    {
+        destroyPayload(records_[i].payload);
+        records_[i].payload.reset();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,11 +188,18 @@ void AssetManager::processUploads()
     // Free slots from last frame's releases.
     // Bump generation here so any existing handles immediately become stale —
     // even if the slot is not yet reused. allocSlot() then preserves this value.
+    // destroyPayload() releases bgfx GPU handles BEFORE the std::any reset —
+    // skipping it would silently leak texture / vertex-buffer / index-buffer
+    // handles on every release() call, because Texture and GltfAsset have
+    // explicit destroy() methods rather than RAII destructors (the structs
+    // need to be trivially copyable for the std::any payload to round-trip).
     for (uint32_t idx : pendingFree_)
     {
-        records_[idx].generation++;
-        records_[idx].payload.reset();
-        records_[idx].state = AssetState::Pending;
+        Record& rec = records_[idx];
+        destroyPayload(rec.payload);
+        rec.generation++;
+        rec.payload.reset();
+        rec.state = AssetState::Pending;
         freeList_.push_back(idx);
     }
     pendingFree_.clear();

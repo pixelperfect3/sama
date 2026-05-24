@@ -219,6 +219,34 @@ TEST_CASE("AssetManager — release() nullifies the handle", "[assets][manager]"
     CHECK_FALSE(h.isValid());
 }
 
+TEST_CASE("AssetManager — release of Failed asset drives destroy dispatch safely",
+          "[assets][manager]")
+{
+    // After release, processUploads() walks pendingFree_ and dispatches on
+    // each Record's std::any payload type to call .destroy() on the bgfx
+    // handles inside.  This test exercises the dispatch path on a Failed
+    // asset (payload is an empty std::any), which is the case the prior
+    // code silently relied on for correctness — without the new
+    // destroyPayload() wiring it would still pass, but with the wiring it
+    // must keep passing (no crash, no exception on the empty-payload
+    // branch).  The GPU-handle-destroy path is covered by the screenshot
+    // tests, which load real textures and rely on this same path during
+    // AssetManager shutdown.
+    ThreadPool pool(1);
+    FakeFileSystem fs;
+    AssetManager am(pool, fs);
+    am.registerLoader(std::make_unique<FakeEmptyLoader>());
+
+    fs.put("rel.faketex", {0x00});
+    auto h = am.load<Texture>("rel.faketex");
+    drainUntilDone(am, h);
+    REQUIRE(am.state(h) == AssetState::Failed);
+
+    am.release(h);                       // queues slot into pendingFree_
+    CHECK_NOTHROW(am.processUploads());  // exercises destroyPayload dispatch
+    CHECK_NOTHROW(am.processUploads());  // second tick: slot is now in freeList_
+}
+
 TEST_CASE("AssetManager — duplicate load() returns same slot", "[assets][manager]")
 {
     ThreadPool pool(1);
