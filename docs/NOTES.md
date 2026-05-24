@@ -284,6 +284,29 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
 
 ---
 
+### bgfx threading mode — multi-threaded default (2026-05-24)
+
+**Decision:** `EngineDesc::singleThreaded` defaults to `false` (multi-threaded bgfx).  `Renderer::init` only calls `bgfx::renderFrame()` before `bgfx::init()` when `desc.singleThreaded == true`; without that pre-init call, bgfx spawns its own render thread and `bgfx::frame()` becomes an asynchronous hand-off through a lock-free ring buffer.
+
+**Why we changed it.** The previous "always single-threaded" choice (committed during scene_demo bring-up — see the older "`bgfx::renderFrame()` belongs in `Renderer::init()`" entry above) was the right *default* for the screenshot fixture (it needs deterministic blit-and-readback on the calling thread) but the *wrong* default for shipping games.  On Pixel 9, a reporter's rolling-ball game (1080×2424, ~2.6 MP fragment work) measured `bgfx::frame()` at 20.5 ms of a 21.2 ms total frame — pure swapchain wait charged to the game thread.  perf_smoke had not been measuring `bgfx::frame()` wall time so the regression had been invisible to the budget table.  Flipping the default to multi-threaded moves that wait onto the render thread, where the GPU work runs in parallel with the next frame's CPU work.
+
+**Why a flag and not a hard switch.**
+- The screenshot fixture (`tests/screenshot/ScreenshotFixture.cpp`) does its own `bgfx::init` (outside `Renderer`) and continues to use single-threaded mode so the per-test capture flow stays deterministic.  It doesn't go through the new flag at all.
+- A future test or tool (e.g. a one-shot frame-dump) might still need synchronous frame submission on the calling thread.  Keeping the flag makes that a one-line opt-in instead of a fork of `Renderer::init`.
+
+**Tradeoffs accepted.**
+- *AssetManager:* worker threads only produce CPU bytes (`CpuAssetData`); every `bgfx::*` call lives inside `processUploads()`, which the header has always pinned to the main / bgfx-submission thread.  No marshalling changes were required — but the contract is now load-bearing for correctness, not just convention.  Future asset code that wants to call `bgfx::*` from a worker MUST queue a CPU payload and let `processUploads()` issue the GPU call.
+- *Latency / determinism:* `bgfx::frame()` no longer represents "GPU done with frame N when this returns."  Game-side code that needed that semantics (none today, but worth flagging) must either flip the flag back to single-threaded or use bgfx's explicit fence APIs.
+- *Frame stats:* `EngineFrameStats::bgfxFrameMs` now means two different things depending on the flag — `~0.1 ms` (hand-off) vs `~10-20 ms` (full submit + wait).  The field comment in `engine/core/Engine.h` documents both interpretations so a future reader doesn't mistake the multi-threaded number for "the engine got faster."
+
+**Verification.**
+- Unit-level: `tests/rendering/TestThreadingMode.cpp` (4 cases) covers default values + headless init/shutdown in both modes.  The headless path can't exercise the real `bgfx::renderFrame()` gate (Noop renderer skips it regardless), so this is plumbing-only coverage.
+- Integration-level: `apps/perf_smoke/run_both.sh` runs perf_smoke twice (one process per mode — `bgfx::init` is one-per-process in this codebase) and prints two budget tables; the `bgfx::frame()` row is the headline cell.  On the Pixel 9 sample game the expected delta is ~20 ms → ~0.1 ms on the game thread.
+
+**Not done (deliberate):** per-thread command recording via `bgfx::Encoder`.  That is a much larger refactor (every system that calls `bgfx::submit` would need to take an encoder), and the multi-threaded-default win alone closes the Pixel 9 frame-budget gap with margin.
+
+---
+
 ## Physics
 
 ### Decisions
