@@ -2,9 +2,14 @@
 // with 0 on success, 1 if any per-system budget was exceeded.
 //
 // Run: build/perf_smoke                 (default: 600 frames, multi-threaded)
-//      build/perf_smoke 1200            (override frame count)
+//      build/perf_smoke 1200            (override frame count via positional)
+//      build/perf_smoke --frames=1200   (override frame count via long-form)
 //      build/perf_smoke 600 --single    (single-threaded bgfx)
 //      build/perf_smoke 600 --multi     (multi-threaded bgfx, the default)
+//
+// Unknown / misspelled flags print a warning to stderr and the binary
+// continues with defaults — catches typos like --singel without breaking
+// existing wrappers that pass positional args.
 //
 // To compare both modes in one go, run the wrapper script:
 //      apps/perf_smoke/run_both.sh
@@ -43,12 +48,39 @@ int main(int argc, char** argv)
         {
             singleThreaded = false;
         }
+        else if (std::strncmp(arg, "--frames=", 9) == 0)
+        {
+            const int parsed = std::atoi(arg + 9);
+            if (parsed > 0)
+            {
+                frames = parsed;
+            }
+            else
+            {
+                std::fprintf(stderr, "perf_smoke: ignoring invalid --frames value '%s'\n", arg + 9);
+            }
+        }
+        else if (arg[0] == '-')
+        {
+            // Looks like a flag but isn't one we recognise — most likely a
+            // typo (e.g. --singel).  Warn so wrappers don't silently miss
+            // an intended mode change.
+            std::fprintf(stderr, "perf_smoke: warning: ignoring unknown flag '%s'\n", arg);
+        }
         else
         {
             // Positional integer: frame count.
             const int parsed = std::atoi(arg);
             if (parsed > 0)
+            {
                 frames = parsed;
+            }
+            else
+            {
+                std::fprintf(stderr,
+                             "perf_smoke: warning: ignoring unrecognised positional arg '%s'\n",
+                             arg);
+            }
         }
     }
 

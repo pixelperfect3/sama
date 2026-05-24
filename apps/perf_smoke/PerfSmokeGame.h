@@ -65,8 +65,11 @@ public:
     // singleThreaded labels the budget table heading so the two modes are
     // distinguishable when run back-to-back.  It does NOT itself flip
     // EngineDesc::singleThreaded — main.mm owns that decision and the label
-    // is informational only.
-    explicit PerfSmokeGame(int framesToRun, const PerfBudgets& budgets, bool singleThreaded = true);
+    // is informational only.  Default matches EngineDesc::singleThreaded
+    // (false = multi-threaded) so callers that omit the arg get a label
+    // consistent with the engine default.
+    explicit PerfSmokeGame(int framesToRun, const PerfBudgets& budgets,
+                           bool singleThreaded = false);
 
     void onInit(engine::core::Engine& engine, engine::ecs::Registry& reg) override;
     void onFixedUpdate(engine::core::Engine& engine, engine::ecs::Registry& reg,
