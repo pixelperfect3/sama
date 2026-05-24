@@ -62,7 +62,11 @@ struct PerfBudgets
 class PerfSmokeGame : public engine::game::IGame
 {
 public:
-    explicit PerfSmokeGame(int framesToRun, const PerfBudgets& budgets);
+    // singleThreaded labels the budget table heading so the two modes are
+    // distinguishable when run back-to-back.  It does NOT itself flip
+    // EngineDesc::singleThreaded — main.mm owns that decision and the label
+    // is informational only.
+    explicit PerfSmokeGame(int framesToRun, const PerfBudgets& budgets, bool singleThreaded = true);
 
     void onInit(engine::core::Engine& engine, engine::ecs::Registry& reg) override;
     void onFixedUpdate(engine::core::Engine& engine, engine::ecs::Registry& reg,
@@ -91,6 +95,7 @@ private:
 
     int framesToRun_;
     PerfBudgets budgets_;
+    bool singleThreaded_ = true;  // label only; see ctor comment.
     int frameIndex_ = 0;
     bool done_ = false;
     int exitCode_ = 0;
@@ -121,6 +126,16 @@ private:
         std::vector<float> shadow;
         std::vector<float> lightCluster;
         std::vector<float> frame;
+
+        // Engine-reported timings sampled from Engine::frameStats() at the
+        // start of each frame (so they describe the PREVIOUS frame, which
+        // is fine for aggregate mean/p99 stats).  The bgfx::frame() value
+        // is the headline number for comparing single- vs multi-threaded
+        // mode: it drops from ~10 ms (single) to ~0.1 ms (multi) when the
+        // render thread takes over the vsync / GPU wait.
+        std::vector<float> bgfxFrame;
+        std::vector<float> postProcess;
+        std::vector<float> endFrame;
     } samples_;
 
     std::mt19937 rng_{42};

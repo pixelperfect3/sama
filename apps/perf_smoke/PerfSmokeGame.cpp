@@ -26,6 +26,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+
 #include <cstdarg>
 #include <cstring>
 #endif
@@ -98,8 +99,8 @@ float maxOf(const std::vector<float>& v)
 namespace perf_smoke
 {
 
-PerfSmokeGame::PerfSmokeGame(int framesToRun, const PerfBudgets& budgets)
-    : framesToRun_(framesToRun), budgets_(budgets)
+PerfSmokeGame::PerfSmokeGame(int framesToRun, const PerfBudgets& budgets, bool singleThreaded)
+    : framesToRun_(framesToRun), budgets_(budgets), singleThreaded_(singleThreaded)
 {
     // Pre-allocate so push_back never reallocates inside the measurement loop.
     const auto reserve = [&](std::vector<float>& v) { v.reserve(framesToRun_); };
@@ -110,6 +111,9 @@ PerfSmokeGame::PerfSmokeGame(int framesToRun, const PerfBudgets& budgets)
     reserve(samples_.shadow);
     reserve(samples_.lightCluster);
     reserve(samples_.frame);
+    reserve(samples_.bgfxFrame);
+    reserve(samples_.postProcess);
+    reserve(samples_.endFrame);
 }
 
 void PerfSmokeGame::onInit(engine::core::Engine& engine, Registry& reg)
@@ -259,6 +263,20 @@ void PerfSmokeGame::onUpdate(engine::core::Engine& engine, Registry& reg, float 
 {
     if (done_)
         return;
+
+    // engine.frameStats() reflects the PREVIOUS endFrame, so the very first
+    // onUpdate has stale (zeroed) data — skip on frameIndex_ == 0.  After
+    // that the values track frame N-1, which is fine for aggregate stats.
+    // The interesting comparison is bgfxFrameMs: drops from ~10 ms
+    // (single-threaded) to ~0.1 ms (multi-threaded) on Pixel 9.
+    if (frameIndex_ > 0)
+    {
+        const auto& fs = engine.frameStats();
+        samples_.endFrame.push_back(fs.endFrameMs);
+        samples_.postProcess.push_back(fs.postProcessSubmitMs);
+        samples_.bgfxFrame.push_back(fs.bgfxFrameMs);
+    }
+
     frameStart_ = Clock::now();
 
     // GameRunner::runLoop calls transformSys.update() after onUpdate but
@@ -306,8 +324,7 @@ void PerfSmokeGame::onRender(engine::core::Engine& engine)
 
     // -- Shadow submit ------------------------------------------------------
     auto t1 = Clock::now();
-    drawSys_.submitShadowDrawCalls(*registry_, engine.resources(),
-                                   engine.shadowProgram(), 0);
+    drawSys_.submitShadowDrawCalls(*registry_, engine.resources(), engine.shadowProgram(), 0);
     samples_.shadow.push_back(msSince(t1));
 
     // -- LightClusterBuilder (latent cost — not currently consumed by
@@ -331,8 +348,7 @@ void PerfSmokeGame::onRender(engine::core::Engine& engine)
     frame.camPos[2] = camPos.z;
 
     auto t3 = Clock::now();
-    drawSys_.update(*registry_, engine.resources(), engine.pbrProgram(),
-                    engine.uniforms(), frame);
+    drawSys_.update(*registry_, engine.resources(), engine.pbrProgram(), engine.uniforms(), frame);
     samples_.draw.push_back(msSince(t3));
 
     samples_.frame.push_back(msSince(frameStart_));
@@ -368,12 +384,23 @@ void PerfSmokeGame::reportAndCheckBudgets()
         const float p99Ms = percentile(s, 0.99f);
         const float maxMs = maxOf(s);
         const bool ok = (meanMs <= budget);
-        perfLog("  %-22s | %7.3f | %7.3f | %7.3f | budget %.2f %s\n", name, meanMs, p99Ms,
-                maxMs, budget, ok ? "OK" : "FAIL");
+        perfLog("  %-22s | %7.3f | %7.3f | %7.3f | budget %.2f %s\n", name, meanMs, p99Ms, maxMs,
+                budget, ok ? "OK" : "FAIL");
         return ok;
     };
 
-    perfLog("\n=== perf_smoke: %d frames, %zu entities ===\n", framesToRun_,
+    // Informational row — no budget check; meaningful comparison is across
+    // the two threading-mode runs side-by-side.
+    auto infoRow = [&](const char* name, const std::vector<float>& s)
+    {
+        const float meanMs = mean(s);
+        const float p99Ms = percentile(s, 0.99f);
+        const float maxMs = maxOf(s);
+        perfLog("  %-22s | %7.3f | %7.3f | %7.3f | (info)\n", name, meanMs, p99Ms, maxMs);
+    };
+
+    const char* threadLabel = singleThreaded_ ? "single-threaded" : "multi-threaded";
+    perfLog("\n=== perf_smoke [%s]: %d frames, %zu entities ===\n", threadLabel, framesToRun_,
             samples_.draw.size() ? size_t{702} : size_t{0});
     perfLog("  %-22s | %7s | %7s | %7s |\n", "system", "mean ms", "p99 ms", "max ms");
     perfLog("  -----------------------+---------+---------+---------+\n");
@@ -385,6 +412,14 @@ void PerfSmokeGame::reportAndCheckBudgets()
     ok &= row("Shadow submit", samples_.shadow, budgets_.shadowSubmitMeanMs);
     ok &= row("LightClusterBuilder", samples_.lightCluster, budgets_.lightClusterMeanMs);
 
+    // Engine-reported phase timings — informational only.  bgfxFrame is the
+    // headline cell when comparing the two threading modes back-to-back:
+    // single-threaded charges vsync / GPU wait to the game thread, while
+    // multi-threaded should report a sub-ms value.
+    infoRow("postProcess submit", samples_.postProcess);
+    infoRow("bgfx::frame()", samples_.bgfxFrame);
+    infoRow("endFrame total", samples_.endFrame);
+
     const float frameP99 = percentile(samples_.frame, 0.99f);
     const bool frameBudgetOk = (frameP99 <= budgets_.frameP99Ms);
     perfLog("  %-22s | %7.3f | %7.3f | %7.3f | budget p99 %.2f %s\n", "frame total",
@@ -392,7 +427,8 @@ void PerfSmokeGame::reportAndCheckBudgets()
             frameBudgetOk ? "OK" : "FAIL");
     ok &= frameBudgetOk;
 
-    perfLog("=== %s ===\n", ok ? "PASS" : "FAIL — budget exceeded; investigate before merge");
+    perfLog("=== %s [%s] ===\n", ok ? "PASS" : "FAIL — budget exceeded; investigate before merge",
+            threadLabel);
     exitCode_ = ok ? 0 : 1;
 }
 
@@ -424,7 +460,12 @@ perf_smoke::PerfBudgets g_androidBudgets{};
     g_androidBudgets.frameP99Ms = 16.67f;  // 60 fps target
     return 0;
 }();
-perf_smoke::PerfSmokeGame g_perfSmokeGame{600, g_androidBudgets};
+// singleThreaded=false matches the EngineDesc default (multi-threaded bgfx)
+// which AndroidApp.cpp uses today.  The label is informational; flip the
+// constructor arg here if you also flip EngineDesc::singleThreaded on
+// Android for a comparison run.
+perf_smoke::PerfSmokeGame g_perfSmokeGame{600, g_androidBudgets,
+                                          /*singleThreaded=*/false};
 }  // namespace
 
 engine::game::IGame* samaCreateGame()
