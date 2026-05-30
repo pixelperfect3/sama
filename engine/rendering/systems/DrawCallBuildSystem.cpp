@@ -10,31 +10,41 @@ namespace engine::rendering
 
 // ---------------------------------------------------------------------------
 // Helper — binds mesh streams and submits one draw call.
+//
+// Every overload below acquires a bgfx::Encoder once at function entry and
+// releases it at exit.  With bgfx in multi-threaded mode (the Sama default
+// since the EngineDesc::singleThreaded flip — see docs/NOTES.md "bgfx
+// threading mode"), every implicit-main-encoder set*/submit call grabs the
+// bgfx command-list mutex (~1-2 μs on Pixel 5a-class CPUs).  Routing
+// through an Encoder makes all calls thread-local: ~50 ns each.  Per
+// 100-entity frame that's roughly 1000 mutex grabs eliminated.
+// Measurement gate: see docs/PERF_AUDIT_2026-05-25.md item #R1.
 // ---------------------------------------------------------------------------
 
 namespace
 {
 
-void submitMeshDraw(const Mesh& mesh, const WorldTransformComponent& wtc, ProgramHandle program)
+void submitMeshDraw(bgfx::Encoder* enc, const Mesh& mesh, const WorldTransformComponent& wtc,
+                    ProgramHandle program)
 {
     // Upload the world-space transform matrix.
     // bgfx expects column-major float[16]; GLM Mat4 is column-major.
-    bgfx::setTransform(&wtc.matrix[0][0]);
+    enc->setTransform(&wtc.matrix[0][0]);
 
     // Stream 0 — positions.
-    bgfx::setVertexBuffer(0, mesh.positionVbh);
+    enc->setVertexBuffer(0, mesh.positionVbh);
 
     // Stream 1 — surface attributes (optional).
     if (bgfx::isValid(mesh.surfaceVbh))
-        bgfx::setVertexBuffer(1, mesh.surfaceVbh);
+        enc->setVertexBuffer(1, mesh.surfaceVbh);
 
     // Index buffer.
-    bgfx::setIndexBuffer(mesh.ibh);
+    enc->setIndexBuffer(mesh.ibh);
 
     // Default render state: depth test + write, RGB + alpha write, no culling override.
-    bgfx::setState(BGFX_STATE_DEFAULT);
+    enc->setState(BGFX_STATE_DEFAULT);
 
-    bgfx::submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
+    enc->submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
 }
 
 }  // anonymous namespace
@@ -49,6 +59,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     if (!isValid(program))
         return;
 
+    bgfx::Encoder* enc = bgfx::begin();
+    if (enc == nullptr)
+        return;
+
     auto visibleView = reg.view<VisibleTag, WorldTransformComponent, MeshComponent>();
 
     visibleView.each(
@@ -59,8 +73,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             if (!mesh || !mesh->isValid())
                 return;
 
-            submitMeshDraw(*mesh, wtc, program);
+            submitMeshDraw(enc, *mesh, wtc, program);
         });
+
+    bgfx::end(enc);
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +95,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
         update(reg, res, program);
         return;
     }
+
+    bgfx::Encoder* enc = bgfx::begin();
+    if (enc == nullptr)
+        return;
 
     // Iterate entities that have all three required components.
     auto visibleView =
@@ -106,10 +126,12 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
                 mat->metallic, mat->emissiveScale, mat->albedo.w, 0.0f,
             };
-            bgfx::setUniform(uniforms->u_material, materialData, 2);
+            enc->setUniform(uniforms->u_material, materialData, 2);
 
-            submitMeshDraw(*mesh, wtc, program);
+            submitMeshDraw(enc, *mesh, wtc, program);
         });
+
+    bgfx::end(enc);
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +146,10 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     if (!isValid(program))
         return;
 
+    bgfx::Encoder* enc = bgfx::begin();
+    if (enc == nullptr)
+        return;
+
     bgfx::TextureHandle whiteTex = bgfx::TextureHandle{res.whiteTexture().idx};
     bgfx::TextureHandle whiteCubeTex = bgfx::TextureHandle{res.whiteCubeTexture().idx};
     // Neutral normal map: (128, 128, 255) → tangent-space (0, 0, 1) → N = Ngeom.
@@ -134,7 +160,15 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             : whiteTex;
 
     // Frame-level uniforms — must be re-uploaded before every submit() because
-    // bgfx resets all per-draw state after each submit().
+    // bgfx resets all per-draw state after each submit().  Hoisting these
+    // calls outside the loop with BGFX_DISCARD_NONE submit flags was
+    // considered (see docs/PERF_AUDIT_2026-05-25.md item #R1) but rejected:
+    // bgfx captures [m_uniformBegin, m_uniformEnd] per draw, so a "preserved"
+    // range grows unboundedly across the loop and the backend re-walks the
+    // entire range per submit — O(N²) GPU-side uniform processing for an N-
+    // entity frame.  The actual CPU win comes from routing every set*/submit
+    // through this Encoder instead of the implicit main-encoder path (~1-2 μs
+    // mutex grab → ~50 ns thread-local recording).
     const float frameW = static_cast<float>(frame.viewportW);
     const float frameH = static_cast<float>(frame.viewportH);
 
@@ -151,6 +185,14 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     // u_iblParams = {maxMipLevels, iblEnabled, 0, 0}
     const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
                                     frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
+
+    // Resolve IBL textures once — the active triple is constant for the loop.
+    const bool iblActive = frame.iblEnabled && bgfx::isValid(frame.brdfLut);
+    const bgfx::TextureHandle cubeFallback = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
+    const bgfx::TextureHandle iblIrradiance = iblActive ? frame.irradiance : cubeFallback;
+    const bgfx::TextureHandle iblPrefiltered = iblActive ? frame.prefiltered : cubeFallback;
+    const bgfx::TextureHandle iblBrdfLut = iblActive ? frame.brdfLut : whiteTex;
+    const bool hasShadowAtlas = bgfx::isValid(frame.shadowAtlas);
 
     const Material defaultMat2{};
 
@@ -178,16 +220,16 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
                 mat->metallic, mat->emissiveScale, mat->albedo.w, 0.0f,
             };
-            bgfx::setUniform(uniforms.u_material, materialData, 2);
+            enc->setUniform(uniforms.u_material, materialData, 2);
 
             // Per-draw: directional light + shadow matrix
-            bgfx::setUniform(uniforms.u_dirLight, frame.lightData, 2);
-            bgfx::setUniform(uniforms.u_shadowMatrix, frame.shadowMatrix, 4);
+            enc->setUniform(uniforms.u_dirLight, frame.lightData, 2);
+            enc->setUniform(uniforms.u_shadowMatrix, frame.shadowMatrix, 4);
 
             // Per-draw: frame / cluster / IBL uniforms
-            bgfx::setUniform(uniforms.u_frameParams, frameParamsData, 2);
-            bgfx::setUniform(uniforms.u_lightParams, lightParamsData);
-            bgfx::setUniform(uniforms.u_iblParams, iblParamsData);
+            enc->setUniform(uniforms.u_frameParams, frameParamsData, 2);
+            enc->setUniform(uniforms.u_lightParams, lightParamsData);
+            enc->setUniform(uniforms.u_iblParams, iblParamsData);
 
             // Per-draw: bind all texture slots declared in fs_pbr.sc.
             // Material texture IDs reference RenderResources; fall back to
@@ -202,54 +244,44 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 }
                 return whiteTex;
             };
-            bgfx::setTexture(0, uniforms.s_albedo, resolveOrWhite(mat->albedoMapId));
-            bgfx::setTexture(1, uniforms.s_normal,
-                             mat->normalMapId ? resolveOrWhite(mat->normalMapId) : normalFallback);
-            bgfx::setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
-            bgfx::setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
-            bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
-            bgfx::setTexture(12, uniforms.s_lightData, whiteTex);
-            bgfx::setTexture(13, uniforms.s_lightGrid, whiteTex);
-            bgfx::setTexture(14, uniforms.s_lightIndex, whiteTex);
-            if (bgfx::isValid(frame.shadowAtlas))
-                bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
-            // IBL textures: use real IBL when enabled, otherwise fall back to
-            // white/whiteCube placeholders.
-            if (frame.iblEnabled && bgfx::isValid(frame.brdfLut))
-            {
-                bgfx::setTexture(6, uniforms.s_irradiance, frame.irradiance);
-                bgfx::setTexture(7, uniforms.s_prefiltered, frame.prefiltered);
-                bgfx::setTexture(8, uniforms.s_brdfLut, frame.brdfLut);
-            }
-            else
-            {
-                bgfx::TextureHandle cube = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
-                bgfx::setTexture(6, uniforms.s_irradiance, cube);
-                bgfx::setTexture(7, uniforms.s_prefiltered, cube);
-                bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
-            }
+            enc->setTexture(0, uniforms.s_albedo, resolveOrWhite(mat->albedoMapId));
+            enc->setTexture(1, uniforms.s_normal,
+                            mat->normalMapId ? resolveOrWhite(mat->normalMapId) : normalFallback);
+            enc->setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
+            enc->setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
+            enc->setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
+            enc->setTexture(12, uniforms.s_lightData, whiteTex);
+            enc->setTexture(13, uniforms.s_lightGrid, whiteTex);
+            enc->setTexture(14, uniforms.s_lightIndex, whiteTex);
+            if (hasShadowAtlas)
+                enc->setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+            enc->setTexture(6, uniforms.s_irradiance, iblIrradiance);
+            enc->setTexture(7, uniforms.s_prefiltered, iblPrefiltered);
+            enc->setTexture(8, uniforms.s_brdfLut, iblBrdfLut);
 
-            bgfx::setTransform(&wtc.matrix[0][0]);
-            bgfx::setVertexBuffer(0, mesh->positionVbh);
+            enc->setTransform(&wtc.matrix[0][0]);
+            enc->setVertexBuffer(0, mesh->positionVbh);
             if (bgfx::isValid(mesh->surfaceVbh))
-                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
-            bgfx::setIndexBuffer(mesh->ibh);
+                enc->setVertexBuffer(1, mesh->surfaceVbh);
+            enc->setIndexBuffer(mesh->ibh);
 
             // Transparent materials: alpha-blend, no depth write, submit to
             // transparent view (rendered after opaque, depth-tested against opaque).
             if (mat->transparent)
             {
-                bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
-                               BGFX_STATE_BLEND_ALPHA);
-                bgfx::submit(kViewTransparent, bgfx::ProgramHandle{program.idx});
+                enc->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                              BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
+                              BGFX_STATE_BLEND_ALPHA);
+                enc->submit(kViewTransparent, bgfx::ProgramHandle{program.idx});
             }
             else
             {
-                bgfx::setState(BGFX_STATE_DEFAULT);
-                bgfx::submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
+                enc->setState(BGFX_STATE_DEFAULT);
+                enc->submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
             }
         });
+
+    bgfx::end(enc);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,10 +289,13 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
 // ---------------------------------------------------------------------------
 
 void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const RenderResources& res,
-                                                ProgramHandle shadowProgram,
-                                                uint32_t cascadeIndex)
+                                                ProgramHandle shadowProgram, uint32_t cascadeIndex)
 {
     if (!isValid(shadowProgram))
+        return;
+
+    bgfx::Encoder* enc = bgfx::begin();
+    if (enc == nullptr)
         return;
 
     const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
@@ -283,18 +318,20 @@ void DrawCallBuildSystem::submitShadowDrawCalls(ecs::Registry& reg, const Render
             if (!mesh || !bgfx::isValid(mesh->positionVbh) || !bgfx::isValid(mesh->ibh))
                 return;
 
-            bgfx::setTransform(&wtc.matrix[0][0]);
+            enc->setTransform(&wtc.matrix[0][0]);
 
             // Stream 0 only — no surface attributes needed for depth-only pass.
-            bgfx::setVertexBuffer(0, mesh->positionVbh);
-            bgfx::setIndexBuffer(mesh->ibh);
+            enc->setVertexBuffer(0, mesh->positionVbh);
+            enc->setIndexBuffer(mesh->ibh);
 
             // Depth write + depth test + cull back faces (CW) so front faces
             // facing the light write correct shadow depth.
-            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
+            enc->setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
 
-            bgfx::submit(shadowView, bgfx::ProgramHandle{shadowProgram.idx});
+            enc->submit(shadowView, bgfx::ProgramHandle{shadowProgram.idx});
         });
+
+    bgfx::end(enc);
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +345,10 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(ecs::Registry& reg,
                                                        const math::Mat4* boneBuffer)
 {
     if (!isValid(skinnedShadowProgram) || !boneBuffer)
+        return;
+
+    bgfx::Encoder* enc = bgfx::begin();
+    if (enc == nullptr)
         return;
 
     const uint8_t cascadeBit = static_cast<uint8_t>(1u << cascadeIndex);
@@ -328,21 +369,23 @@ void DrawCallBuildSystem::submitSkinnedShadowDrawCalls(ecs::Registry& reg,
 
             // Upload bone matrices (already in world space from AnimationSystem).
             const math::Mat4* bones = boneBuffer + skin.boneMatrixOffset;
-            bgfx::setTransform(&bones[0][0][0], skin.boneCount);
+            enc->setTransform(&bones[0][0][0], skin.boneCount);
 
-            bgfx::setVertexBuffer(0, mesh->positionVbh);
+            enc->setVertexBuffer(0, mesh->positionVbh);
             // Bind surface stream even though shadow shader doesn't use it —
             // ensures stream indices are contiguous for Metal backend.
             if (bgfx::isValid(mesh->surfaceVbh))
-                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+                enc->setVertexBuffer(1, mesh->surfaceVbh);
             if (bgfx::isValid(mesh->skinningVbh))
-                bgfx::setVertexBuffer(2, mesh->skinningVbh);
-            bgfx::setIndexBuffer(mesh->ibh);
+                enc->setVertexBuffer(2, mesh->skinningVbh);
+            enc->setIndexBuffer(mesh->ibh);
 
-            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
+            enc->setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
 
-            bgfx::submit(shadowView, bgfx::ProgramHandle{skinnedShadowProgram.idx});
+            enc->submit(shadowView, bgfx::ProgramHandle{skinnedShadowProgram.idx});
         });
+
+    bgfx::end(enc);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +398,10 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
                                         const math::Mat4* boneBuffer)
 {
     if (!isValid(skinnedProgram) || !boneBuffer)
+        return;
+
+    bgfx::Encoder* enc = bgfx::begin();
+    if (enc == nullptr)
         return;
 
     bgfx::TextureHandle whiteTex = bgfx::TextureHandle{res.whiteTexture().idx};
@@ -374,6 +421,15 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
     const float lightParamsData[4] = {0.0f, frameW, frameH, 0.0f};
     const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
                                     frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
+
+    // Resolve IBL textures once — see the static-mesh overload for the
+    // rationale behind hoisting these (cube fallback when IBL disabled).
+    const bool iblActive = frame.iblEnabled && bgfx::isValid(frame.brdfLut);
+    const bgfx::TextureHandle cubeFallback = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
+    const bgfx::TextureHandle iblIrradiance = iblActive ? frame.irradiance : cubeFallback;
+    const bgfx::TextureHandle iblPrefiltered = iblActive ? frame.prefiltered : cubeFallback;
+    const bgfx::TextureHandle iblBrdfLut = iblActive ? frame.brdfLut : whiteTex;
+    const bool hasShadowAtlas = bgfx::isValid(frame.shadowAtlas);
 
     const Material skinnedDefaultMat{};
 
@@ -398,16 +454,16 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
                 mat->albedo.x, mat->albedo.y,      mat->albedo.z, mat->roughness,
                 mat->metallic, mat->emissiveScale, mat->albedo.w, 0.0f,
             };
-            bgfx::setUniform(uniforms.u_material, materialData, 2);
+            enc->setUniform(uniforms.u_material, materialData, 2);
 
             // Per-draw: directional light + shadow matrix
-            bgfx::setUniform(uniforms.u_dirLight, frame.lightData, 2);
-            bgfx::setUniform(uniforms.u_shadowMatrix, frame.shadowMatrix, 4);
+            enc->setUniform(uniforms.u_dirLight, frame.lightData, 2);
+            enc->setUniform(uniforms.u_shadowMatrix, frame.shadowMatrix, 4);
 
             // Per-draw: frame / cluster / IBL uniforms
-            bgfx::setUniform(uniforms.u_frameParams, frameParamsData, 2);
-            bgfx::setUniform(uniforms.u_lightParams, lightParamsData);
-            bgfx::setUniform(uniforms.u_iblParams, iblParamsData);
+            enc->setUniform(uniforms.u_frameParams, frameParamsData, 2);
+            enc->setUniform(uniforms.u_lightParams, lightParamsData);
+            enc->setUniform(uniforms.u_iblParams, iblParamsData);
 
             // Per-draw: textures
             auto resolveOrWhite = [&](uint32_t texId) -> bgfx::TextureHandle
@@ -420,56 +476,48 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
                 }
                 return whiteTex;
             };
-            bgfx::setTexture(0, uniforms.s_albedo, resolveOrWhite(mat->albedoMapId));
-            bgfx::setTexture(1, uniforms.s_normal,
-                             mat->normalMapId ? resolveOrWhite(mat->normalMapId) : normalFallback);
-            bgfx::setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
-            bgfx::setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
-            bgfx::setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
-            bgfx::setTexture(12, uniforms.s_lightData, whiteTex);
-            bgfx::setTexture(13, uniforms.s_lightGrid, whiteTex);
-            bgfx::setTexture(14, uniforms.s_lightIndex, whiteTex);
-            if (bgfx::isValid(frame.shadowAtlas))
-                bgfx::setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
-            if (frame.iblEnabled && bgfx::isValid(frame.brdfLut))
-            {
-                bgfx::setTexture(6, uniforms.s_irradiance, frame.irradiance);
-                bgfx::setTexture(7, uniforms.s_prefiltered, frame.prefiltered);
-                bgfx::setTexture(8, uniforms.s_brdfLut, frame.brdfLut);
-            }
-            else
-            {
-                bgfx::TextureHandle cube = bgfx::isValid(whiteCubeTex) ? whiteCubeTex : whiteTex;
-                bgfx::setTexture(6, uniforms.s_irradiance, cube);
-                bgfx::setTexture(7, uniforms.s_prefiltered, cube);
-                bgfx::setTexture(8, uniforms.s_brdfLut, whiteTex);
-            }
+            enc->setTexture(0, uniforms.s_albedo, resolveOrWhite(mat->albedoMapId));
+            enc->setTexture(1, uniforms.s_normal,
+                            mat->normalMapId ? resolveOrWhite(mat->normalMapId) : normalFallback);
+            enc->setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
+            enc->setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
+            enc->setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
+            enc->setTexture(12, uniforms.s_lightData, whiteTex);
+            enc->setTexture(13, uniforms.s_lightGrid, whiteTex);
+            enc->setTexture(14, uniforms.s_lightIndex, whiteTex);
+            if (hasShadowAtlas)
+                enc->setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+            enc->setTexture(6, uniforms.s_irradiance, iblIrradiance);
+            enc->setTexture(7, uniforms.s_prefiltered, iblPrefiltered);
+            enc->setTexture(8, uniforms.s_brdfLut, iblBrdfLut);
 
-            // Upload bone matrices via bgfx::setTransform with count > 1.
+            // Upload bone matrices via setTransform with count > 1.
             const math::Mat4* bones = boneBuffer + skin.boneMatrixOffset;
-            bgfx::setTransform(&bones[0][0][0], skin.boneCount);
+            enc->setTransform(&bones[0][0][0], skin.boneCount);
 
             // Bind vertex streams.
-            bgfx::setVertexBuffer(0, mesh->positionVbh);
+            enc->setVertexBuffer(0, mesh->positionVbh);
             if (bgfx::isValid(mesh->surfaceVbh))
-                bgfx::setVertexBuffer(1, mesh->surfaceVbh);
+                enc->setVertexBuffer(1, mesh->surfaceVbh);
             if (bgfx::isValid(mesh->skinningVbh))
-                bgfx::setVertexBuffer(2, mesh->skinningVbh);
-            bgfx::setIndexBuffer(mesh->ibh);
+                enc->setVertexBuffer(2, mesh->skinningVbh);
+            enc->setIndexBuffer(mesh->ibh);
 
             if (mat->transparent)
             {
-                bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
-                               BGFX_STATE_BLEND_ALPHA);
-                bgfx::submit(kViewTransparent, bgfx::ProgramHandle{skinnedProgram.idx});
+                enc->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                              BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
+                              BGFX_STATE_BLEND_ALPHA);
+                enc->submit(kViewTransparent, bgfx::ProgramHandle{skinnedProgram.idx});
             }
             else
             {
-                bgfx::setState(BGFX_STATE_DEFAULT);
-                bgfx::submit(kViewOpaque, bgfx::ProgramHandle{skinnedProgram.idx});
+                enc->setState(BGFX_STATE_DEFAULT);
+                enc->submit(kViewOpaque, bgfx::ProgramHandle{skinnedProgram.idx});
             }
         });
+
+    bgfx::end(enc);
 }
 
 }  // namespace engine::rendering

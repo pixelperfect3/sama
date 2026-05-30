@@ -1,0 +1,172 @@
+# Sama Engine — Low-Tier Mobile Perf + Power Audit (2026-05-25)
+
+Source: deep audit run on commit `e5cc7a0` (HEAD of `main` at audit time).
+Target tier: lower-tier Android phones (Cortex-A78 / A510 little cores,
+Mali-G57 / G610-class GPUs, 3-4 GB RAM, 1080p, often thermal-throttled).
+
+Status legend:
+- `[ ]` not started
+- `[~]` in progress
+- `[x]` landed (link commit hash + measured delta when known)
+- `[skip]` rejected after investigation (with reason)
+
+Every item is `file:line — what — why — expected impact — risk/scope`.
+Risk: trivial / low / medium / high refactor.
+Items are ranked by impact-per-risk inside each section; ⭐ marks the
+suggested first-sprint quick wins.
+
+---
+
+## Headline (suggested first sprint)
+
+1. [x] `DrawCallBuildSystem` re-uploads 5 frame-constant uniforms per draw — biggest CPU win (#R1) — see commit log for landed mechanism (Encoder route, not uniform-hoist)
+2. [ ] No tier-gating for `BGFX_CONFIG_MAX_BONES=128` wastes uniform space on low tier (#T2)
+3. [ ] Mobile preset still ships `depthPrepassEnabled = true` default in `RenderSettings` — anti-pattern on TBDR (#R-audit)
+4. [ ] `Frustum` ctor calls `glm::length` (sqrt) + division per plane every frame (#C-frustum)
+5. [ ] `Joint` is 80 B (one cache line) but only 4 B is hot per frame in skinning (#M1)
+6. [ ] Recursive `TransformSystem` traversal still visits *clean* descendants every frame (#C-xform)
+7. [ ] `ThreadPool::submit` uses `std::function` + `std::deque` + double-lock — every task allocates (#H1)
+8. [ ] `AndroidGyro` runs at 60 Hz unconditionally, never disabled when game doesn't use gyro (#P1)
+9. [ ] Bloom defaults to 5 downsample steps on Mid tier — 10 fullscreen passes; Mid should cap at 3 (#T3)
+10. [ ] PBR fragment shader uses 7+ `texture2D` indirections per clustered light with no `lowp/mediump` (#S1)
+
+---
+
+## CPU hot loops
+
+- [ ] **TransformSystem.cpp:69-77, 102-115** — recurse into clean subtrees. Add hierarchical dirty bit (set on any descendant dirty, propagated up on mark-dirty); whole subtree can be skipped. **Saves 30-60% of TransformSystem on static scenes.** *risk: low*.
+- [ ] **TransformSystem.cpp:15-21** — `composeLocal` does `translate * mat4_cast(quat) * scale` (~152 muls/call). Direct TRS matrix build (`r = quat_to_mat3*scale; m = {r[0],r[1],r[2],pos}`) drops to ~30 muls. **Saves ~50% of TransformSystem CPU; halves L1 misses.** *low*.
+- [ ] **TransformSystem.cpp:51-72** — `reg.has<WorldTransform>` + `reg.get<WorldTransform>` + `reg.emplace<WorldTransform>` = three sparse-set lookups per child. Cache the `WorldTransform*` from a single `get` and treat `nullptr` as "create". **Halves ECS hash-map traffic; saves ~0.02 ms / 1000 entities.** *trivial*.
+- [ ] **FrustumCullSystem.cpp:41-43 + ShadowCullSystem.cpp:42-44** — `glm::abs` on `Vec4` then `Mat3` ctor copies 12 floats per entity. Replace with `fabsf` on the 9 used floats. **Saves ~30 ns per entity.** *trivial*.
+- [ ] **FrustumCullSystem.cpp:50-55** — `reg.has<VisibleTag>` followed by `emplace/remove` is two sparse-set hits. Common case is "still visible" — store previous result in a parallel bit and only flip on change. **Saves ~40 ns × entity count.** *low*.
+- [ ] **ShadowCullSystem.cpp:24-29, 51-69** — walks all mesh entities per cascade; 3 cascades = 3× iteration. Build single pass that tests all cascade frustums per entity. **Cuts shadow cull cost ~66% with 3 cascades.** *medium*.
+- [ ] **DrawCallBuildSystem.cpp:165** — `reg.has<animation::SkinComponent>(entity)` per visible entity in the static-mesh loop just to skip skinned ones. Build view with explicit exclude (or a `StaticMeshTag`). **Saves ~25 ns × visible count.** *low*.
+- [ ] **AnimationSystem.cpp:43-44, 318-319, 155, 337** — `std::pmr::vector<Mat4>(jointCount, Mat4(1.0f), alloc)` zero-fills bytes the inner loop overwrites immediately. Use uninitialised resize or skip fill. **Saves jointCount*16 stores per skinned entity.** *low*.
+- [ ] **AnimationSystem.cpp:156-164** — `worldTransforms[i] = worldTransforms[parent] * local` full mat4*mat4. For pure TRS bones, concatenate in TRS-space then convert once = ~3× cheaper. **Big win with multiple characters.** *medium*.
+- [ ] **AnimationSampler.cpp:79-93** — `sampleClip` re-initialises *every* joint to its rest pose, even joints not animated. Track which joints the clip touches and reset only those. **Saves jointCount*40 bytes write per frame per skinned entity.** *low*.
+- [ ] **AnimationSampler.cpp:31-42, 58-67** — `glm::mix(Vec3,Vec3,t)` + `glm::slerp(Quat,Quat,t)` per channel. Skip channels whose two keyframes equal cached previous-frame result. *medium*.
+- [ ] **PhysicsSystem.cpp:71-75, 137-138, 176-185** — `glm::decompose` does polar decomposition (QR iteration!) 3× per kinematic + 1× per parented dynamic per frame. Pass TRS directly via a `WorldTrsComponent` or cache decomposed-TRS alongside `WorldTransform`. **Saves 1-2 μs per physics entity.** *medium*.
+- [ ] **PhysicsSystem.cpp:172** — `glm::inverse(parentWtc->matrix)` for every dynamic-body child every frame. Cache `inverseWorldMatrix` on `WorldTransformComponent`. **Saves ~80 muls per parented dynamic body.** *medium*.
+- [ ] **AudioSystem.cpp:54-82** — `engine_.isPlaying()` round-trips into SoLoud's thread-locked voice table per entity. Batch: query live voice set once per frame, then iterate. **Avoids per-source mutex; halves audio update cost.** *medium*.
+
+## Memory layout & cache
+
+- [ ] **Skeleton.h:19-26** — `Joint` is 80 B (64 B `inverseBindMatrix`), but parent-chain walk only reads `parentIndex` (4 B). Split into hot (`parentIndex[]`) and cold (`inverseBindMatrix[]`) arrays. **Halves L1 misses in parent walk; ~10% skinning speedup with 64-128 bones.** *medium*.
+- [ ] **HierarchyComponents.h:17** — `ChildrenComponent` uses `InlinedVector<EntityID, 8>` (32 B inline). A parent with 9+ children spills to heap; bump to 16 or make tier-aware. *trivial*.
+- [ ] **SparseSet.h:136-138** — current layout is right for iteration (`entities()` span is the fast outer loop in `View`); flag only if profiling shows `contains()` thrash. *medium (needs measurement)*.
+- [ ] **EcsComponents.h:142-148** — `TransformComponent` = 44 B (cross-cacheline for 60% of entities at 64 B lines). Pad to 48 B + `alignas(16)` to keep position+quat in one half-line. **Saves one cache line per ~5 entities.** *trivial*.
+- [ ] **Registry.h:178** — `componentStores_` is `unordered_dense::map<type_index, unique_ptr<ISparseSetBase>>`. Every `findStore<T>` is hash + pointer chase + virtual dispatch. Cache `SparseSet<T>*` in per-T thread-local. **Removes one indirection per ECS access.** *medium*.
+- [ ] **LightClusterBuilder.h:119-121, 133** — `lights_[256]` + `grid_[3456]` + `indices_[8192]` + `clusterAABBs_[3456]` ≈ **150 KB** always-resident. Gate the 16×9×24 cluster grid on tier — low could ship 8×4×8 = 256 clusters (12× less data). *medium*.
+- [ ] **LightClusterBuilder.cpp:448, 496, 519** — `static float buf[…]` are 16/55/32 KB BSS arrays kept forever. Move to FrameArena. *low*.
+- [ ] **Pose.h:18** — `InlinedVector<JointPose, 128>` = 5 KB inline per `Pose`; transient poses created in `computeBoneMatrices`. Drop to 32 inline. *low*.
+
+## Allocations on the hot path
+
+- [ ] **ThreadPool.cpp:31** — `queue_.push_back(std::move(task))` may heap-allocate `std::function` closure. Fixed-size SPSC/MPMC ring of POD tasks. **Eliminates per-task allocation; cuts mutex hold time.** *medium*.
+- [ ] **AnimationSystem.cpp:298-299** — `alloc->allocate(sizeof(Pose), alignof(Pose))` + placement-new per skinned entity per frame. Reuse existing `PoseComponent::pose` when size matches. *low*.
+- [ ] **InstanceBufferBuildSystem.cpp:98** — `ankerl::unordered_dense::map<uint32_t, GroupData> groups` on default heap every frame; pass pmr allocator. *low*.
+- [ ] **SpriteBatcher.cpp:80-86** — `std::sort` on 96 B entries; sort uint32_t index array instead. **Big win on UI-heavy scenes.** *low*.
+- [ ] **LightClusterBuilder.cpp:147-157** — lambda-comparator `std::sort` on candidates; radix-style partition (split spot/point, partial_sort). *low (only matters if >50 lights)*.
+- [ ] **DebugHud.cpp:28-31** — `new UiRenderer` + `new UiDrawList` in `init()`; allocate inline via pImpl. *trivial*.
+- [ ] **AnimationSystem.cpp:43-44, 318-319** — `std::pmr::vector<Mat4>` constructed every `update()` even with zero skinned entities. Early-out before allocator. *trivial*.
+- [ ] **ProjectConfig.cpp:14-72** — `defaultTiers()` returns `unordered_map<std::string,…>`; constexpr table + string_view keyed lookup. *trivial*.
+
+## Threading
+
+- [ ] **ThreadPool.cpp:27-41** — `submit()`/`waitAll()` both take a single mutex. Per-worker queues + work-stealing or MPMC bounded queue + futex-based wait. **Cuts task dispatch latency 5 μs → <0.5 μs.** *high refactor*.
+- [ ] **ThreadPool.cpp:67-70** — `--activeTasks_` inside lock then `doneCv_.notify_one()` always wakes the waiter. Use atomic `activeTasks_` + notify only on zero transition. *low*.
+- [ ] **ThreadPool.cpp:54-61** — workers `wait` on `workCv_` with mutex held; on low-power little cores serialises wakeups. Use `counting_semaphore<>` (C++20). *medium*.
+- [ ] **No usage of `ThreadPool` for per-frame work** — `TransformSystem`, `FrustumCullSystem`, `DrawCallBuildSystem`, `ShadowCullSystem`, `LightClusterBuilder` all run single-threaded. After fixing pool overhead, splitting cull + draw-call build across 2 worker threads on a 6-core phone could double game-thread throughput. *high refactor (experiment)*.
+
+## Rendering / bgfx
+
+- [x] ⭐ **(#R1) DrawCallBuildSystem.cpp:181-190, 401-410** — `u_dirLight`, `u_shadowMatrix`, `u_frameParams`, `u_lightParams`, `u_iblParams` are all **frame-constant** but uploaded *per draw call*. **Landed via Encoder route, not uniform-hoist.** Investigation: the audit suggested using `BGFX_DISCARD_NONE`-style submit flags to preserve uniforms across draws, but bgfx captures `[m_uniformBegin, m_uniformEnd]` per draw and the kept range grows unboundedly — O(N²) GPU-side uniform processing per N-entity frame, which is *worse* than the original. The actual win comes from acquiring `bgfx::begin()` once per system call: every set*/submit then runs thread-local (~50 ns) instead of grabbing the bgfx command-list mutex (~1-2 μs on Pixel 5a-class CPUs). For ~1000 set/submit calls per frame in `DrawCallBuildSystem` + `submitShadowDrawCalls` + skinned variants, expected saving on Android ~1-2 ms / frame. **Desktop M-series shows no measurable delta** (mutex is uncontested locally on MoltenVK). Also fixed: hoisted IBL fallback texture resolution outside the loop (was 3 `bgfx::isValid` checks per draw). Tests: 716 unit + 22 screenshot still pass — Encoder API is functionally identical. *low.*
+- [ ] **DrawCallBuildSystem.cpp:205-230, 423-446** — 10 `setTexture` calls per draw. Slots 6/7/8 (IBL) and 12/13/14 (light data) are frame-constant; bind once. **Cuts API cost ~30%.** *low*.
+- [x] **DrawCallBuildSystem.cpp:18-38** — non-Encoder `bgfx::setTransform/setVertexBuffer/setIndexBuffer/submit`. *Landed together with #R1 — see above. All four overloads + the two shadow paths use Encoder.*
+- [ ] **DrawCallBuildSystem.cpp:243-244, 462-464** — Transparent state includes `BGFX_STATE_MSAA` (ignored on Mali HDR FB, pollutes sort key). Strip it. *trivial*.
+- [ ] **Renderer.cpp:155-167** — `setViewName` called with `snprintf` at init; inline static strings. *trivial*.
+- [ ] **PostProcessSystem.cpp:293-294, 322-323** — `snprintf("Bloom Down %u")` every frame in bloom loop; set view name once at init. **Saves 5-10 snprintf/frame.** *trivial*.
+- [ ] **PostProcessSystem.cpp:339, 358-360** — when bloom disabled, still samples `s_bloomTex` and multiplies by 0. Add `fs_tonemap_nobloom` variant. **Saves one fullscreen sample at 1080p when bloom off.** *low*.
+- [ ] **SpriteBatcher.cpp:163-169** — `bgfx::TextureHandle invalid = BGFX_INVALID_HANDLE`; `setTexture(0, …, invalid)` trips Vulkan validator on Android. *low (correctness)*.
+- [ ] **Renderer.cpp:69, 262** — `BGFX_RESET_VSYNC` hardcoded. Hook `Surface.setFrameRate` to `TierConfig::targetFPS` for 30 Hz tier. *medium*.
+- [ ] **Renderer.cpp:129** — `setViewClear(0, COLOR|DEPTH, …)` — COLOR clear on HDR FB wasted on Mali TBDR. Use DEPTH-only when geometry covers screen. *low*.
+- [ ] **PostProcessSystem.cpp:155-163** — `fsTriVb_` rebound per fullscreen pass; use `setViewMode(Sequential)` and bind VB at view level. *trivial*.
+
+## Shaders
+
+- [ ] ⭐ **(#S1) fs_pbr.sc:228-249** — clustered light loop samples `s_lightGrid` + `s_lightIndex` + `s_lightData` ×4 per light, all RGBA32F. Low tier with 0-1 lights = pure waste. Add `LOW_TIER` variant that skips cluster loop. **Halves fragment cost on no-lights scenes.** *low*.
+- [ ] **fs_pbr.sc:51-79** — full GGX + Smith + Fresnel per fragment per light; `pow(x, 5.0)` chokes Mali-G57. Schlick polynomial approximation. **Saves one `pow` per light.** *trivial*.
+- [ ] **fs_pbr.sc:218-220** — `log(viewZ/nearPlane) / logRatio` per fragment; `logRatio` constant per frame — bake into uniform. *trivial*.
+- [ ] **fs_pbr.sc:108-119** — `normalize(v_tangent/v_bitangent/v_normal)` triple-normalize; bitangent was `cross(N,T)*sign` in VS so it's near-orthonormal — Gram-Schmidt T against N, skip explicit bitangent normalize. Saves 2 `rsqrt`. *trivial*.
+- [ ] **fs_pbr.sc (overall)** — no `precision mediump float`. Mali Bifrost/Valhall doubles fp16 throughput. Add `precision mediump float;` at top, `highp` only on `v_worldPos`, `v_viewPos`, shadow coords. **Massive Mali win — 1.5-2× FS throughput on Mali-G57/G68.** *medium (test for banding)*.
+- [ ] **fs_pbr.sc:166-186** — PCF 2x2 shadow filter unconditional; low tier should use 1-tap hard PCF. **Saves 3 texture samples per fragment.** *low*.
+- [ ] **fs_fxaa.sc + ProjectConfig.cpp:29** — FXAA on for low tier; flip off. *trivial*.
+- [ ] **fs_ssao.sc:93-118** — 16-sample SSAO loop; consider 8 samples on Adreno <740. *low*.
+- [ ] **fs_tonemap.sc:24** — `pow(color, 1/2.2)` is the slowest sRGB approximation. `sqrt(color)` is within 0.005 of gamma 2.0 and 2-3× faster on Mali, OR use `BGFX_TEXTURE_FORMAT_SRGB` on the LDR FB and skip the gamma pass entirely. **Saves one `pow` per pixel × screen.** *trivial*.
+- [ ] **vs_pbr.sc:43-44** — bake `u_viewProj_model` server-side for static path to save one mat4*vec4 per vertex. *trivial*.
+- [ ] **vs_pbr_skinned.sc:26-34 + CMakeLists.txt:1131** — bone matrix loads bounded by `BGFX_CONFIG_MAX_BONES=128` even when low tier `maxBones=64`. Compile separate `vs_pbr_skinned_64.sc` variant. *medium*.
+
+## Asset pipeline
+
+- [ ] **Skeleton.h:38** — verify `debugJointNames` is `#if !defined(NDEBUG)` and Release builds actually set `NDEBUG` on Android. *trivial*.
+- [ ] **AnimationSampler.cpp:19-67** — template specialization in anonymous namespace suppresses inlining across loaders. Move to `.inl` and explicitly instantiate. *low*.
+- [ ] **ProjectConfig.cpp:272-289** — `unordered_map<std::string,TierConfig>` parse cost on cold start; measure first. *low*.
+
+## Tier-aware settings (low-tier specific)
+
+- [ ] ⭐ **(#T3) ProjectConfig.cpp:21-33** — low tier `enableFXAA = true`. FXAA on 720p Mali-G57 ~0.8 ms. Drop. *trivial*.
+- [ ] **(#T2) ProjectConfig.cpp:25 + CMakeLists.txt:1131** — `maxBones=64` for low, but shader declares `u_model[128]` (global `BGFX_CONFIG_MAX_BONES=128`). Per-tier shader variant. *medium*.
+- [ ] **ProjectConfig.cpp:34-51** — Mid tier `BloomSettings.downsampleSteps = 5` (10 fullscreen passes). Cap mid at 3, low at 0. **Saves ~1-1.5 ms on mid-tier devices.** *low*.
+- [ ] ⭐ **(#P2) ProjectConfig.cpp + Android** — `targetFPS=30` for low/mid but no plumbing actually caps frame rate on Android (only iOS uses it per `IosApp.mm:127,141`). Add `Surface.setFrameRate(targetFPS)` or `eglSwapInterval(2)`. **Halves GPU work + power on 60 Hz panels.** *medium*.
+- [ ] ⭐ **(#R-audit) RenderSettings.h:102** — `depthPrepassEnabled = true` default in global struct; only `renderSettingsMobile()` flips off — verify low/mid actually call `tierToRenderSettings` and not default ctor. *trivial (audit)*.
+- [ ] **RenderSettings.h:108** — `anisotropicFiltering = 8` default; low tier cap at 1-2. *low*.
+- [ ] **ShadowRenderer.cpp:42-56** — verify `desc.resolution=512` honoured on low tier. *trivial (audit)*.
+- [ ] **No tier-gating for `maxActiveLights`** (default 256). Low tier <8 lights — gate cluster grid + light data sizing. *low*.
+
+## Android power
+
+- [ ] ⭐ **(#P1) AndroidGyro.cpp:99,104** — `sampleRateUs_ = 16667` (60 Hz) hardcoded. Drop to 30 Hz default + disable when no game system subscribes. **Saves ~5-10 mW continuously.** *low*.
+- [ ] **Engine.cpp:619-622** — `androidGyro_->setEnabled(true)` unconditionally at startup; game should opt in. *trivial*.
+- [ ] **SoLoudAudioEngine.cpp:24-25** — `SoLoud::init(…, AUTO, AUTO, 2)`. AUTO bufferSize = ~4096 samples (92 ms) on Android. Target 1024 (23 ms) + explicit 48000 Hz to avoid AudioFlinger resample. **Saves ~3-5% audio CPU.** *low*.
+- [ ] **SoLoudAudioEngine.cpp:47** — `setMaxActiveVoiceCount=32` default; low tier 16. *trivial*.
+- [ ] **Engine.cpp:411-428** — `frameArena_->reset()` still runs while paused; trivial CPU/sleep effect. *trivial*.
+- [ ] **No `PowerManager.LOW_POWER_STANDBY` hooks, no `ACTION_BATTERY_LOW` listener** for dynamic tier drop. *medium (feature request)*.
+
+## Frame pacing & vsync
+
+- [ ] **Renderer.cpp:69, 262** — `Choreographer` not used by bgfx Vulkan backend on Android. Use Swappy (Android Game SDK) or `Surface.setFrameRate(30, CHANGE_IF_SEAMLESS)` to actually cap at 30 fps. *medium*.
+- [ ] **Renderer.cpp:62-65** — single-thread may outperform multi-thread on slow little cores (lock contention dominates); per-tier benchmark in perf_smoke. *medium*.
+- [ ] **Engine.cpp:778** — 4-frame moving average on `outDt` for fixed-step accumulator stability on jittery thermals. *low*.
+- [ ] **Renderer.cpp:69** — try `BGFX_RESET_FLUSH_AFTER_RENDER` on Android Vulkan — reduces GPU idle bubbles. *medium (experiment)*.
+
+## Binary size / cold-start power
+
+- [ ] **CMakeLists.txt:1115, 1133** — verify bgfx built without OpenGL ES / D3D / Metal-on-Android backends (`BGFX_CONFIG_RENDERER_*=0` for non-Vulkan). *low*.
+- [ ] **PostProcessSystem.cpp:31-56** — `#if !TARGET_OS_IPHONE` covers Android too (Android falls into `loadXProgram()` from disk). Verify. *none (informational)*.
+- [ ] **AnimationSampler.cpp** — template instantiations per channel type; `[[gnu::always_inline]]` or single typed function. *trivial*.
+- [ ] **Json.h** — verify rapidjson template instantiations aren't re-emitted across TUs. *medium (build-time)*.
+- [ ] **Verify Release strips symbols (`-s` linker flag) on Android NDK.** *trivial*.
+
+## Debug / editor code in release
+
+- [ ] **Renderer.cpp:85-92** — `SAMA_ANDROID_DEBUG_LAYERS` gate; verify build script never sets for Play Store release. *trivial*.
+- [ ] **Engine.cpp:603-615** — `imguiCreate(16.f)` unconditional on Android. Gate behind `SAMA_ANDROID_DEBUG_HUD`. **Saves ~500 KB binary + one bgfx draw + uniform set per frame.** *medium*.
+- [ ] **DebugHud.cpp:71, 96** — `vsnprintf(buf, 512, …)` per call ~1 μs; tier-gate. *trivial*.
+- [ ] **Renderer.cpp:96-122** — Android startup logs at `INFO`; consider `VERBOSE`. *trivial*.
+
+## Suggested next experiments (need measurement before committing)
+
+- NEON-vectorise the AABB-rotate inner loop in FrustumCull/ShadowCull (known TODO).
+- Move ECS view iteration to archetype tables (measure first).
+- Single- vs multi-thread bgfx benchmark on Pixel 4a-class hardware.
+- Combined per-cascade cull with `cascadeMask` test.
+- `setViewMode(viewId, ViewMode::DepthAscending)` for opaque on Adreno/PowerVR.
+- Move TransformSystem + FrustumCullSystem to a worker thread parallel with AnimationSystem (after dirty-tracking refactor).
+- `VK_EXT_shader_tile_image` SSAO rewrite (long-term).
+
+---
+
+## Change log
+
+- 2026-05-25: initial audit landed.
+- 2026-05-29: #R1 + #R3 landed — `DrawCallBuildSystem` (all 5 overloads) routed through `bgfx::Encoder`. Investigated and rejected the uniform-hoist approach (O(N²) GPU-side regression). Texture fallback for IBL hoisted out of inner loop. Tests green; perf delta will show on Android (mutex-bound), not on M-series desktop.
