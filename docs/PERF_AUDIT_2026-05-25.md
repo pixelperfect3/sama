@@ -21,7 +21,7 @@ suggested first-sprint quick wins.
 
 1. [x] `DrawCallBuildSystem` re-uploads 5 frame-constant uniforms per draw — biggest CPU win (#R1) — see commit log for landed mechanism (Encoder route, not uniform-hoist)
 2. [ ] No tier-gating for `BGFX_CONFIG_MAX_BONES=128` wastes uniform space on low tier (#T2)
-3. [ ] Mobile preset still ships `depthPrepassEnabled = true` default in `RenderSettings` — anti-pattern on TBDR (#R-audit)
+3. [x] Mobile preset still ships `depthPrepassEnabled = true` default in `RenderSettings` — anti-pattern on TBDR (#R-audit) — **landed: struct default flipped to `false`, `renderSettingsLow()` corrected (was inconsistent with own docstring), `Renderer::makeDefaultSettings()` made the choice explicit**
 4. [ ] `Frustum` ctor calls `glm::length` (sqrt) + division per plane every frame (#C-frustum)
 5. [ ] `Joint` is 80 B (one cache line) but only 4 B is hot per frame in skinning (#M1)
 6. [ ] Recursive `TransformSystem` traversal still visits *clean* descendants every frame (#C-xform)
@@ -118,7 +118,7 @@ suggested first-sprint quick wins.
 - [ ] **(#T2) ProjectConfig.cpp:25 + CMakeLists.txt:1131** — `maxBones=64` for low, but shader declares `u_model[128]` (global `BGFX_CONFIG_MAX_BONES=128`). Per-tier shader variant. *medium*.
 - [ ] **ProjectConfig.cpp:34-51** — Mid tier `BloomSettings.downsampleSteps = 5` (10 fullscreen passes). Cap mid at 3, low at 0. **Saves ~1-1.5 ms on mid-tier devices.** *low*.
 - [ ] ⭐ **(#P2) ProjectConfig.cpp + Android** — `targetFPS=30` for low/mid but no plumbing actually caps frame rate on Android (only iOS uses it per `IosApp.mm:127,141`). Add `Surface.setFrameRate(targetFPS)` or `eglSwapInterval(2)`. **Halves GPU work + power on 60 Hz panels.** *medium*.
-- [ ] ⭐ **(#R-audit) RenderSettings.h:102** — `depthPrepassEnabled = true` default in global struct; only `renderSettingsMobile()` flips off — verify low/mid actually call `tierToRenderSettings` and not default ctor. *trivial (audit)*.
+- [x] ⭐ **(#R-audit) RenderSettings.h:102** — `depthPrepassEnabled = true` default in global struct. **Landed:** audit found that *no system actually consumes the flag yet* (the `kViewDepth = 8` view is reserved but nothing submits to it); the audit issue was the *default* being wrong, so the day someone wires up a `DepthPrepassSystem` a no-config Android build would silently get a TBDR-harmful prepass. Three fixes: (1) struct default in `RenderSettings.h:102` flipped `true` → `false` (the TBDR-safe value); (2) `renderSettingsLow()` now also sets `false` (was `true` despite the docstring "weak integrated GPUs and old mobile hardware" — preset and its own intent disagreed); (3) `Renderer::makeDefaultSettings()` gained an explicit `depthPrepassEnabled = false` line as defense-in-depth so the chosen policy is visible at the obvious lookup site. Desktop presets (`Medium / High / Ultra`) still flip to `true` — they target IMR GPUs where prepass helps. Tests: new "RenderSettings default — depth prepass off" pins the struct default; extended "renderSettingsLow — expensive effects disabled" with the same assertion. 717 unit + 22 screenshot tests pass. *trivial*.
 - [ ] **RenderSettings.h:108** — `anisotropicFiltering = 8` default; low tier cap at 1-2. *low*.
 - [ ] **ShadowRenderer.cpp:42-56** — verify `desc.resolution=512` honoured on low tier. *trivial (audit)*.
 - [ ] **No tier-gating for `maxActiveLights`** (default 256). Low tier <8 lights — gate cluster grid + light data sizing. *low*.
@@ -170,3 +170,4 @@ suggested first-sprint quick wins.
 
 - 2026-05-25: initial audit landed.
 - 2026-05-29: #R1 + #R3 landed — `DrawCallBuildSystem` (all 5 overloads) routed through `bgfx::Encoder`. Investigated and rejected the uniform-hoist approach (O(N²) GPU-side regression). Texture fallback for IBL hoisted out of inner loop. Tests green. **Measured on Android emulator A/B: p99 −30%, max −50% for the per-system wall time; mean flat (emulator mutex cheaper than real-device target).**
+- 2026-06-01: #R-audit landed — `RenderSettings::depthPrepassEnabled` default flipped `true` → `false`; `renderSettingsLow()` also corrected (was setting `true` despite targeting weak mobile GPUs); `Renderer::makeDefaultSettings()` made the policy explicit. Audit discovered the flag isn't consumed by any code today (no `DepthPrepassSystem` exists yet) — the fix is preventative: when the prepass *is* later wired up, no-config Android builds won't silently regress.

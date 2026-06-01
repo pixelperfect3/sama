@@ -231,6 +231,11 @@ RenderSettings Renderer::makeDefaultSettings()
     settings.postProcess.ssao.enabled = false;
     settings.postProcess.fxaaEnabled = false;
     settings.postProcess.toneMapper = ToneMapper::ACES;
+    // Defense-in-depth: the struct default in RenderSettings.h is already
+    // `false` (see docs/PERF_AUDIT_2026-05-25.md item #R-audit), but call it
+    // out here too so a future reader of this default-settings function
+    // doesn't need to chase the header to learn the chosen TBDR policy.
+    settings.depthPrepassEnabled = false;
     return settings;
 }
 

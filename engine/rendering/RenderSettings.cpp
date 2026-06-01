@@ -32,7 +32,12 @@ RenderSettings renderSettingsLow()
     s.postProcess.toneMapper = ToneMapper::Reinhard;
     s.postProcess.exposure = 1.0f;
 
-    s.depthPrepassEnabled = true;
+    // Depth prepass is harmful on the TBDR mobile GPUs this preset targets
+    // (Mali / Adreno / PowerVR rely on hardware HSR for occlusion culling).
+    // Was previously `true` here — that was inconsistent with the preset's
+    // docstring ("weak integrated GPUs and old mobile hardware").  See
+    // docs/PERF_AUDIT_2026-05-25.md item #R-audit.
+    s.depthPrepassEnabled = false;
     s.depthPrepassAlphaTestedOnly = false;
     s.anisotropicFiltering = 1;
     s.renderScale = 1.0f;

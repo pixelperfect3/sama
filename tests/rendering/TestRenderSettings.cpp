@@ -76,6 +76,23 @@ TEST_CASE("renderSettingsLow — expensive effects disabled", "[render_settings]
     CHECK(s.postProcess.ssao.enabled == false);
     CHECK(s.postProcess.bloom.enabled == false);
     CHECK(s.anisotropicFiltering == 1);
+    // Low tier targets weak integrated GPUs + TBDR mobile — depth prepass
+    // is harmful on TBDR (Mali / Adreno / PowerVR have HSR in hardware).
+    // See docs/PERF_AUDIT_2026-05-25.md item #R-audit.
+    CHECK(s.depthPrepassEnabled == false);
+}
+
+TEST_CASE("RenderSettings default — depth prepass off (TBDR-safe)", "[render_settings][default]")
+{
+    // The struct default must be the TBDR-safe value so any code path that
+    // constructs a RenderSettings without going through a tier preset or
+    // tierToRenderSettings() (e.g. Renderer::makeDefaultSettings, deserialised
+    // partial JSON, test fixtures) doesn't accidentally enable a prepass on
+    // mobile.  Desktop opaque-heavy scenes opt in via renderSettingsHigh() /
+    // Medium() / Ultra() — all of which still flip this to true.
+    RenderSettings s{};
+    CHECK(s.depthPrepassEnabled == false);
+    CHECK(s.depthPrepassAlphaTestedOnly == false);
 }
 
 TEST_CASE("renderSettingsLow — basic fields valid", "[render_settings][low]")

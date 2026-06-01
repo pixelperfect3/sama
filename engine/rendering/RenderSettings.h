@@ -98,8 +98,15 @@ struct RenderSettings
 
     /// Depth-only prepass before opaque pass.
     /// Beneficial on IMR (desktop) — saves fragment work on occluded geometry.
-    /// Harmful on TBDR (mobile) — doubles vertex work and forces tile resolves.
-    bool depthPrepassEnabled = true;
+    /// Harmful on TBDR (mobile) — doubles vertex work and forces tile resolves;
+    /// Mali / Adreno / PowerVR all do hidden-surface removal in hardware, so a
+    /// prepass is pure overhead on those GPUs.
+    /// Default is `false` (TBDR-safe).  Desktop opaque-heavy scenes that want
+    /// the prepass should construct via `renderSettingsHigh()` / `Medium()` /
+    /// `Ultra()` factories, all of which flip this to `true`.  See
+    /// `docs/PERF_AUDIT_2026-05-25.md` item #R-audit for the rationale behind
+    /// the default flip.
+    bool depthPrepassEnabled = false;
 
     /// TBDR exception: depth prepass for alpha-tested geometry only (foliage,
     /// fences, hair).  Safe on TBDR because it covers a narrow subset.
