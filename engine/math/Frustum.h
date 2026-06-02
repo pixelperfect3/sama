@@ -51,11 +51,24 @@ public:
         planes_[kFar] = r3 - r2;
 
         // Normalise plane normals so distances are in world-space units.
+        //
+        // Previous form was `len = glm::length(Vec3(p)); if (len > eps) p /= len`
+        // which costs 6 sqrt + 24 fdiv per Frustum construction.  On Cortex-A78
+        // each fdiv is ~7 cycles vs ~3 for fmul, so trading 4 fdiv per plane
+        // for 1 fdiv + 4 fmul cuts the normalisation cost roughly in half.
+        // Also avoids the Vec3(p) constructor copy (three loads/stores even
+        // when the compiler inlines glm::length).  Branch on length-squared
+        // (epsilon^2) so we keep the degenerate-plane safety net at zero
+        // additional cost (sqrt and division both produce NaN/inf there).
+        // See docs/PERF_AUDIT_2026-05-25.md item #C-frustum.
         for (auto& p : planes_)
         {
-            const float len = glm::length(Vec3(p));
-            if (len > 1e-8f)
-                p /= len;
+            const float lenSq = p.x * p.x + p.y * p.y + p.z * p.z;
+            if (lenSq > 1e-16f)
+            {
+                const float invLen = 1.0f / glm::sqrt(lenSq);
+                p *= invLen;
+            }
         }
     }
 

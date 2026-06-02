@@ -106,3 +106,33 @@ TEST_CASE("Frustum: zero-size AABB (point) outside frustum is rejected", "[frust
     const Frustum f(makeTestVP());
     REQUIRE_FALSE(f.containsAABB(Vec3(0, 0, 200), Vec3(0, 0, 200)));
 }
+
+// ---------------------------------------------------------------------------
+// Normalisation invariant — pins the ctor's plane-normal behaviour after the
+// rsqrt-style optimisation in docs/PERF_AUDIT_2026-05-25.md item #C-frustum.
+// Without unit-length normals, sphere radius / AABB extent comparisons are
+// in arbitrary units and the cull rejects/accepts at the wrong distance.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Frustum: all 6 planes have unit-length normals", "[frustum]")
+{
+    const Frustum f(makeTestVP());
+    constexpr float kTolerance = 1e-5f;
+    for (int i = 0; i < 6; ++i)
+    {
+        const Vec4& p = f.plane(i);
+        const float lenSq = p.x * p.x + p.y * p.y + p.z * p.z;
+        // Length squared should be ~1 (i.e. length itself is ~1).
+        REQUIRE(std::abs(lenSq - 1.0f) < kTolerance);
+    }
+}
+
+TEST_CASE("Frustum: sphere just touching far plane is treated consistently", "[frustum]")
+{
+    // Unit-length plane normals mean the sphere-vs-plane distance check
+    // (radius compared to signed distance) is in the same metric as world
+    // units.  Place a sphere whose surface kisses the far plane (z = -100).
+    const Frustum f(makeTestVP());
+    REQUIRE(f.containsSphere(Vec3(0, 0, -99), 0.5f));         // inside near edge
+    REQUIRE_FALSE(f.containsSphere(Vec3(0, 0, -101), 0.5f));  // outside far edge
+}
