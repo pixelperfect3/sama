@@ -90,7 +90,7 @@ static void discoverArmChains(const Skeleton& skel, const Pose& bindPose, ArmCha
             glm::mat4 local = glm::translate(glm::mat4(1.0f), jp.position);
             local *= glm::mat4_cast(jp.rotation);
             local = glm::scale(local, jp.scale);
-            int32_t parent = skel.joints[i].parentIndex;
+            int32_t parent = skel.parentIndices[i];
             worldXform[i] = (parent >= 0) ? worldXform[parent] * local : local;
             worldPos[i] = glm::vec3(worldXform[i][3]);
         }
@@ -100,7 +100,7 @@ static void discoverArmChains(const Skeleton& skel, const Pose& bindPose, ArmCha
     std::vector<std::vector<uint32_t>> children(jointCount);
     for (uint32_t i = 0; i < jointCount; ++i)
     {
-        int32_t parent = skel.joints[i].parentIndex;
+        int32_t parent = skel.parentIndices[i];
         if (parent >= 0)
             children[parent].push_back(i);
     }
@@ -110,7 +110,7 @@ static void discoverArmChains(const Skeleton& skel, const Pose& bindPose, ArmCha
     int32_t spineJoint = -1;
     for (uint32_t i = 0; i < jointCount; ++i)
     {
-        if (children[i].size() >= 3 && skel.joints[i].parentIndex >= 0)
+        if (children[i].size() >= 3 && skel.parentIndices[i] >= 0)
         {
             spineJoint = static_cast<int32_t>(i);
             break;

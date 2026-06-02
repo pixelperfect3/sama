@@ -50,7 +50,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
             SkinComponent& skinComp)
         {
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
-            if (!skeleton || skeleton->joints.empty())
+            if (!skeleton || skeleton->parentIndices.empty())
                 return;
 
             const uint32_t jointCount = skeleton->jointCount();
@@ -156,7 +156,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
             for (uint32_t i = 0; i < jointCount; ++i)
             {
                 math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
-                int32_t parent = skeleton->joints[i].parentIndex;
+                int32_t parent = skeleton->parentIndices[i];
                 if (parent >= 0 && static_cast<uint32_t>(parent) < jointCount)
                     worldTransforms[i] = worldTransforms[parent] * local;
                 else
@@ -175,7 +175,7 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
             for (uint32_t i = 0; i < jointCount; ++i)
             {
                 math::Mat4 finalMatrix =
-                    entityWorld * worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
+                    entityWorld * worldTransforms[i] * skeleton->inverseBindMatrices[i];
                 boneBuffer.push_back(finalMatrix);
             }
         });
@@ -199,7 +199,7 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
             SkinComponent& /*skinComp*/)
         {
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
-            if (!skeleton || skeleton->joints.empty())
+            if (!skeleton || skeleton->parentIndices.empty())
                 return;
 
             const uint32_t jointCount = skeleton->jointCount();
@@ -325,7 +325,7 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
             const PoseComponent& poseComp)
         {
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
-            if (!skeleton || skeleton->joints.empty())
+            if (!skeleton || skeleton->parentIndices.empty())
                 return;
             if (!poseComp.pose)
                 return;
@@ -338,7 +338,7 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
             for (uint32_t i = 0; i < jointCount; ++i)
             {
                 math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
-                int32_t parent = skeleton->joints[i].parentIndex;
+                int32_t parent = skeleton->parentIndices[i];
                 if (parent >= 0 && static_cast<uint32_t>(parent) < jointCount)
                     worldTransforms[i] = worldTransforms[parent] * local;
                 else
@@ -354,7 +354,7 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
             for (uint32_t i = 0; i < jointCount; ++i)
             {
                 math::Mat4 finalMatrix =
-                    entityWorld * worldTransforms[i] * skeleton->joints[i].inverseBindMatrix;
+                    entityWorld * worldTransforms[i] * skeleton->inverseBindMatrices[i];
                 boneBuffer.push_back(finalMatrix);
             }
         });

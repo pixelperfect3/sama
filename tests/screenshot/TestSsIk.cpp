@@ -42,20 +42,22 @@ TEST_CASE("screenshot: IK two-bone solver", "[screenshot]")
     // -----------------------------------------------------------------------
 
     engine::animation::Skeleton skeleton;
-    skeleton.joints.resize(3);
+    // Skeleton::resize sizes parentIndices / inverseBindMatrices /
+    // nameHashes / restPoses in lockstep (audit #M1 hot/cold split).
+    skeleton.resize(3);
 
     // Joint 0: root (shoulder)
-    skeleton.joints[0].parentIndex = -1;
-    skeleton.joints[0].inverseBindMatrix = glm::inverse(glm::mat4(1.0f));
+    skeleton.parentIndices[0] = -1;
+    skeleton.inverseBindMatrices[0] = glm::inverse(glm::mat4(1.0f));
 
     // Joint 1: elbow, child of shoulder
-    skeleton.joints[1].parentIndex = 0;
-    skeleton.joints[1].inverseBindMatrix =
+    skeleton.parentIndices[1] = 0;
+    skeleton.inverseBindMatrices[1] =
         glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, 0.0f)));
 
     // Joint 2: hand, child of elbow
-    skeleton.joints[2].parentIndex = 1;
-    skeleton.joints[2].inverseBindMatrix =
+    skeleton.parentIndices[2] = 1;
+    skeleton.inverseBindMatrices[2] =
         glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(4.0f, 0.0f, 0.0f)));
 
     // -----------------------------------------------------------------------

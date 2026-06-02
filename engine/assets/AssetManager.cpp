@@ -412,16 +412,18 @@ void AssetManager::upload(Record& rec, CpuSceneData&& data)
     for (const auto& cpuSkel : data.skeletons)
     {
         animation::Skeleton skeleton;
-        skeleton.joints.resize(cpuSkel.joints.size());
-        skeleton.restPoses.resize(cpuSkel.joints.size());
+        // Skeleton::resize sizes parentIndices / inverseBindMatrices /
+        // nameHashes / restPoses in lockstep.  See Skeleton.h hot/cold-split
+        // notes for why these are parallel arrays now (audit #M1).
+        skeleton.resize(cpuSkel.joints.size());
 #if !defined(NDEBUG)
         skeleton.debugJointNames.resize(cpuSkel.joints.size());
 #endif
         for (size_t j = 0; j < cpuSkel.joints.size(); ++j)
         {
-            skeleton.joints[j].inverseBindMatrix = cpuSkel.joints[j].inverseBindMatrix;
-            skeleton.joints[j].parentIndex = cpuSkel.joints[j].parentIndex;
-            skeleton.joints[j].nameHash = fnv1a(cpuSkel.joints[j].name);
+            skeleton.inverseBindMatrices[j] = cpuSkel.joints[j].inverseBindMatrix;
+            skeleton.parentIndices[j] = cpuSkel.joints[j].parentIndex;
+            skeleton.nameHashes[j] = fnv1a(cpuSkel.joints[j].name);
 #if !defined(NDEBUG)
             skeleton.debugJointNames[j] = cpuSkel.joints[j].name;
 #endif

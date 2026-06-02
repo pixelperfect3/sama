@@ -37,9 +37,9 @@ static bool approxQuat(const Quat& a, const Quat& b, float eps = kEps)
 static Skeleton make1JointSkeleton()
 {
     Skeleton skel;
-    skel.joints.resize(1);
-    skel.joints[0].parentIndex = -1;
-    skel.joints[0].nameHash = 1;
+    skel.resize(1);
+    skel.parentIndices[0] = -1;
+    skel.nameHashes[0] = 1;
     return skel;
 }
 

@@ -28,9 +28,9 @@ struct MinimalSetup
     MinimalSetup(float duration, std::vector<std::pair<float, std::string>> events)
     {
         Skeleton skel;
-        skel.joints.resize(1);
-        skel.joints[0].parentIndex = -1;
-        skel.joints[0].inverseBindMatrix = engine::math::Mat4(1.0f);
+        skel.resize(1);
+        skel.parentIndices[0] = -1;
+        skel.inverseBindMatrices[0] = engine::math::Mat4(1.0f);
         skelId = res.addSkeleton(std::move(skel));
 
         AnimationClip clip;

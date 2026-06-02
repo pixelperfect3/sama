@@ -52,11 +52,11 @@ math::Quat rotationBetween(const math::Vec3& from, const math::Vec3& to)
 math::Quat getWorldRotation(const Skeleton& skeleton, const Pose& pose, uint32_t jointIdx)
 {
     math::Quat worldRot = pose.jointPoses[jointIdx].rotation;
-    int32_t parent = skeleton.joints[jointIdx].parentIndex;
+    int32_t parent = skeleton.parentIndices[jointIdx];
     while (parent >= 0)
     {
         worldRot = pose.jointPoses[parent].rotation * worldRot;
-        parent = skeleton.joints[parent].parentIndex;
+        parent = skeleton.parentIndices[parent];
     }
     return worldRot;
 }
@@ -76,7 +76,7 @@ void computeWorldPositions(const Skeleton& skeleton, const Pose& pose, math::Vec
     for (uint32_t i = 0; i < jointCount; ++i)
     {
         math::Mat4 local = trsMatrix(pose.jointPoses[i]);
-        int32_t parent = skeleton.joints[i].parentIndex;
+        int32_t parent = skeleton.parentIndices[i];
         if (parent >= 0 && static_cast<uint32_t>(parent) < jointCount)
         {
             worldTransforms[i] = worldTransforms[parent] * local;
@@ -103,7 +103,7 @@ memory::InlinedVector<uint32_t, 8> buildChainFromHierarchy(const Skeleton& skele
     while (current != rootJoint)
     {
         chain.push_back(current);
-        int32_t parent = skeleton.joints[current].parentIndex;
+        int32_t parent = skeleton.parentIndices[current];
         if (parent < 0)
         {
             break;  // reached skeleton root without finding rootJoint

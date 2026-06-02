@@ -26,7 +26,7 @@ void IkSystem::update(ecs::Registry& reg, const AnimationResources& animRes,
             IkChainsComponent& chainsComp, IkTargetsComponent& targetsComp, PoseComponent& poseComp)
         {
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
-            if (!skeleton || skeleton->joints.empty())
+            if (!skeleton || skeleton->parentIndices.empty())
             {
                 return;
             }
@@ -149,7 +149,7 @@ void IkSystem::update(ecs::Registry& reg, const AnimationResources& animRes,
                 {
                     // Convert target world orientation to local space.
                     math::Quat parentWorldRot{1, 0, 0, 0};
-                    int32_t parentIdx = skeleton->joints[chain.endEffectorJoint].parentIndex;
+                    int32_t parentIdx = skeleton->parentIndices[chain.endEffectorJoint];
                     if (parentIdx >= 0)
                     {
                         // Accumulate parent rotations.
@@ -160,7 +160,7 @@ void IkSystem::update(ecs::Registry& reg, const AnimationResources& animRes,
                         while (cur >= 0)
                         {
                             ancestors.push_back(static_cast<uint32_t>(cur));
-                            cur = skeleton->joints[cur].parentIndex;
+                            cur = skeleton->parentIndices[cur];
                         }
                         for (int32_t a = static_cast<int32_t>(ancestors.size()) - 1; a >= 0; --a)
                         {

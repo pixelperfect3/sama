@@ -40,19 +40,19 @@ static bool approxVec3(const Vec3& a, const Vec3& b, float eps = kEps)
 static Skeleton makeThreeJointSkeleton()
 {
     Skeleton skel;
-    skel.joints.resize(3);
+    skel.resize(3);
 
     // Root joint -- no parent
-    skel.joints[0].parentIndex = -1;
-    skel.joints[0].inverseBindMatrix = Mat4(1.0f);
+    skel.parentIndices[0] = -1;
+    skel.inverseBindMatrices[0] = Mat4(1.0f);
 
     // Mid joint -- parent is root
-    skel.joints[1].parentIndex = 0;
-    skel.joints[1].inverseBindMatrix = Mat4(1.0f);
+    skel.parentIndices[1] = 0;
+    skel.inverseBindMatrices[1] = Mat4(1.0f);
 
     // Tip joint -- parent is mid
-    skel.joints[2].parentIndex = 1;
-    skel.joints[2].inverseBindMatrix = Mat4(1.0f);
+    skel.parentIndices[2] = 1;
+    skel.inverseBindMatrices[2] = Mat4(1.0f);
 
     return skel;
 }
@@ -80,11 +80,11 @@ static Pose makeThreeJointPose()
 static Skeleton makeFiveJointSkeleton()
 {
     Skeleton skel;
-    skel.joints.resize(5);
+    skel.resize(5);
     for (int i = 0; i < 5; ++i)
     {
-        skel.joints[i].parentIndex = (i == 0) ? -1 : (i - 1);
-        skel.joints[i].inverseBindMatrix = Mat4(1.0f);
+        skel.parentIndices[i] = (i == 0) ? -1 : (i - 1);
+        skel.inverseBindMatrices[i] = Mat4(1.0f);
     }
     return skel;
 }
@@ -448,17 +448,17 @@ TEST_CASE("Multiple IK chains per entity", "[ik]")
     // Chain A: joints 0-1-2
     // Chain B: joints 0-3-4 (branching skeleton)
     Skeleton skel;
-    skel.joints.resize(5);
-    skel.joints[0].parentIndex = -1;
-    skel.joints[0].inverseBindMatrix = Mat4(1.0f);
-    skel.joints[1].parentIndex = 0;
-    skel.joints[1].inverseBindMatrix = Mat4(1.0f);
-    skel.joints[2].parentIndex = 1;
-    skel.joints[2].inverseBindMatrix = Mat4(1.0f);
-    skel.joints[3].parentIndex = 0;
-    skel.joints[3].inverseBindMatrix = Mat4(1.0f);
-    skel.joints[4].parentIndex = 3;
-    skel.joints[4].inverseBindMatrix = Mat4(1.0f);
+    skel.resize(5);
+    skel.parentIndices[0] = -1;
+    skel.inverseBindMatrices[0] = Mat4(1.0f);
+    skel.parentIndices[1] = 0;
+    skel.inverseBindMatrices[1] = Mat4(1.0f);
+    skel.parentIndices[2] = 1;
+    skel.inverseBindMatrices[2] = Mat4(1.0f);
+    skel.parentIndices[3] = 0;
+    skel.inverseBindMatrices[3] = Mat4(1.0f);
+    skel.parentIndices[4] = 3;
+    skel.inverseBindMatrices[4] = Mat4(1.0f);
 
     Pose pose;
     pose.jointPoses.resize(5);
