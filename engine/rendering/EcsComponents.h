@@ -136,13 +136,22 @@ static_assert(sizeof(InstancedMeshComponent) == 12);
 // ---------------------------------------------------------------------------
 
 // Local TRS — written by game code, read by TransformSystem.
-// dirty flag in bit 0 of flags; set when position/rotation/scale changes.
+//
+// flags bit layout:
+//   0x01 — self-dirty:    this entity's local TRS changed; world needs recompute
+//   0x02 — subtree-dirty: a descendant somewhere below is self-dirty (maintained
+//                         by TransformSystem itself; game code does NOT need to
+//                         set this — the system propagates it up the parent
+//                         chain in a pre-pass each frame).  Lets the top-down
+//                         recursion skip subtrees with no dirty descendants
+//                         instead of walking every entity every frame.  See
+//                         docs/PERF_AUDIT_2026-05-25.md item #C-xform.
 struct TransformComponent  // offset  size
 {
     math::Vec3 position;  //  0      12
     math::Quat rotation;  // 12      16
     math::Vec3 scale;     // 28      12
-    uint8_t flags;        // 40       1  bit 0: dirty
+    uint8_t flags;        // 40       1  bit 0: self-dirty, bit 1: subtree-dirty
     uint8_t _pad[3];      // 41       3
 };  // total:  44 bytes
 static_assert(sizeof(TransformComponent) == 44);

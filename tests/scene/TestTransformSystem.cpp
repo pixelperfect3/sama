@@ -405,6 +405,163 @@ TEST_CASE("re-parenting marks dirty and produces correct world matrix", "[transf
     CHECK(std::abs(wtc->matrix[3].z - 1.0f) < 1e-4f);
 }
 
+// ---------------------------------------------------------------------------
+// Hierarchical subtree-dirty optimization (#C-xform) — these tests pin the
+// invariants of the two-pass dirty propagation in TransformSystem so a future
+// refactor of the optimization can't silently break either the correctness
+// or the performance contract.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("clean subtree is fully skipped on second update", "[transform][subtree]")
+{
+    // The core perf claim: after the first frame settles everything, a
+    // second update with no self-dirty entities anywhere must not touch
+    // any world matrix.  We verify by mutating world matrices directly
+    // after the first update — if the second update walks the subtree it
+    // will overwrite our writes; if it correctly short-circuits, the
+    // writes survive.
+    Registry reg;
+    TransformSystem sys;
+
+    EntityID root = reg.createEntity();
+    EntityID mid = reg.createEntity();
+    EntityID leaf = reg.createEntity();
+
+    Quat identity = Quat(1.0F, 0.0F, 0.0F, 0.0F);
+    Vec3 one{1.0F, 1.0F, 1.0F};
+
+    reg.emplace<TransformComponent>(
+        root, TransformComponent{Vec3{1.0F, 0.0F, 0.0F}, identity, one, 0x01, {}});
+    reg.emplace<TransformComponent>(
+        mid, TransformComponent{Vec3{0.0F, 1.0F, 0.0F}, identity, one, 0x01, {}});
+    reg.emplace<TransformComponent>(
+        leaf, TransformComponent{Vec3{0.0F, 0.0F, 1.0F}, identity, one, 0x01, {}});
+
+    REQUIRE(setParent(reg, mid, root));
+    REQUIRE(setParent(reg, leaf, mid));
+    sys.update(reg);
+
+    // Confirm dirty bits are cleared after first update — proves that
+    // setParent / first-frame dirties were consumed, not left around to
+    // mask a missed-skip in the next pass.
+    CHECK((reg.get<TransformComponent>(root)->flags & 0x03) == 0);
+    CHECK((reg.get<TransformComponent>(mid)->flags & 0x03) == 0);
+    CHECK((reg.get<TransformComponent>(leaf)->flags & 0x03) == 0);
+
+    // Poison the world matrices with a sentinel.  If the second update
+    // recomposes any of them, the sentinel will be overwritten.
+    const Mat4 sentinel = glm::translate(Mat4(1.0F), Vec3{999.0F, 999.0F, 999.0F});
+    reg.get<WorldTransformComponent>(root)->matrix = sentinel;
+    reg.get<WorldTransformComponent>(mid)->matrix = sentinel;
+    reg.get<WorldTransformComponent>(leaf)->matrix = sentinel;
+
+    sys.update(reg);
+
+    // Nothing is self-dirty and nothing is subtree-dirty → no node should
+    // have been touched.
+    CHECK(approxEqual(reg.get<WorldTransformComponent>(root)->matrix, sentinel));
+    CHECK(approxEqual(reg.get<WorldTransformComponent>(mid)->matrix, sentinel));
+    CHECK(approxEqual(reg.get<WorldTransformComponent>(leaf)->matrix, sentinel));
+}
+
+TEST_CASE("dirty leaf propagates subtree-dirty up the parent chain", "[transform][subtree]")
+{
+    // When only the deepest leaf is self-dirty, the system still has to
+    // descend to find it — but no ancestor's world matrix should change,
+    // and clean siblings of intermediate nodes must be skipped entirely.
+    Registry reg;
+    TransformSystem sys;
+
+    EntityID root = reg.createEntity();
+    EntityID branchA = reg.createEntity();  // dirty path
+    EntityID branchB = reg.createEntity();  // sibling that must be skipped
+    EntityID leaf = reg.createEntity();
+
+    Quat identity = Quat(1.0F, 0.0F, 0.0F, 0.0F);
+    Vec3 one{1.0F, 1.0F, 1.0F};
+
+    reg.emplace<TransformComponent>(
+        root, TransformComponent{Vec3{1.0F, 0.0F, 0.0F}, identity, one, 0x01, {}});
+    reg.emplace<TransformComponent>(
+        branchA, TransformComponent{Vec3{0.0F, 1.0F, 0.0F}, identity, one, 0x01, {}});
+    reg.emplace<TransformComponent>(
+        branchB, TransformComponent{Vec3{0.0F, 5.0F, 0.0F}, identity, one, 0x01, {}});
+    reg.emplace<TransformComponent>(
+        leaf, TransformComponent{Vec3{0.0F, 0.0F, 1.0F}, identity, one, 0x01, {}});
+
+    REQUIRE(setParent(reg, branchA, root));
+    REQUIRE(setParent(reg, branchB, root));
+    REQUIRE(setParent(reg, leaf, branchA));
+    sys.update(reg);
+
+    // Poison branchB so we can detect if the second update incorrectly
+    // walks into the clean sibling.
+    const Mat4 sentinel = glm::translate(Mat4(1.0F), Vec3{777.0F, 777.0F, 777.0F});
+    reg.get<WorldTransformComponent>(branchB)->matrix = sentinel;
+
+    // Dirty only the leaf.  Move it from (0,0,1) -> (0,0,2).
+    auto* leafTc = reg.get<TransformComponent>(leaf);
+    leafTc->position = Vec3{0.0F, 0.0F, 2.0F};
+    leafTc->flags |= 0x01;
+
+    sys.update(reg);
+
+    // Leaf should have its updated world: root(1,0,0) + branchA(0,1,0) +
+    // leaf(0,0,2) = (1,1,2).
+    auto leafWorld = reg.get<WorldTransformComponent>(leaf)->matrix[3];
+    CHECK(std::abs(leafWorld.x - 1.0F) < 1e-4F);
+    CHECK(std::abs(leafWorld.y - 1.0F) < 1e-4F);
+    CHECK(std::abs(leafWorld.z - 2.0F) < 1e-4F);
+
+    // Clean sibling branchB's world matrix must be untouched.
+    CHECK(approxEqual(reg.get<WorldTransformComponent>(branchB)->matrix, sentinel));
+
+    // After the update the dirty bits should be cleared up the chain so
+    // a third update with no changes is a true no-op.
+    CHECK((reg.get<TransformComponent>(root)->flags & 0x03) == 0);
+    CHECK((reg.get<TransformComponent>(branchA)->flags & 0x03) == 0);
+    CHECK((reg.get<TransformComponent>(branchB)->flags & 0x03) == 0);
+    CHECK((reg.get<TransformComponent>(leaf)->flags & 0x03) == 0);
+}
+
+TEST_CASE("subtree-dirty bit is a system-managed flag, not a public input", "[transform][subtree]")
+{
+    // Game code should only ever set self-dirty (0x01).  If a caller
+    // happens to leave subtree-dirty set on its own, TransformSystem must
+    // tolerate it (treat as "descend and clear") without producing wrong
+    // world matrices.  Pins the policy that subtree-dirty is owned by the
+    // system, not by callers.
+    Registry reg;
+    TransformSystem sys;
+
+    EntityID root = reg.createEntity();
+    EntityID child = reg.createEntity();
+
+    Quat identity = Quat(1.0F, 0.0F, 0.0F, 0.0F);
+    Vec3 one{1.0F, 1.0F, 1.0F};
+
+    reg.emplace<TransformComponent>(
+        root, TransformComponent{Vec3{2.0F, 0.0F, 0.0F}, identity, one, 0x01, {}});
+    reg.emplace<TransformComponent>(
+        child, TransformComponent{Vec3{0.0F, 3.0F, 0.0F}, identity, one, 0x01, {}});
+    REQUIRE(setParent(reg, child, root));
+    sys.update(reg);
+
+    // Spuriously set subtree-dirty on the root (without self-dirty on
+    // anything) — the next update should descend, find no self-dirty
+    // entities, and clear the spurious bit without changing matrices.
+    auto* rootTc = reg.get<TransformComponent>(root);
+    rootTc->flags |= 0x02;
+    const Mat4 rootBefore = reg.get<WorldTransformComponent>(root)->matrix;
+    const Mat4 childBefore = reg.get<WorldTransformComponent>(child)->matrix;
+
+    sys.update(reg);
+
+    CHECK(approxEqual(reg.get<WorldTransformComponent>(root)->matrix, rootBefore));
+    CHECK(approxEqual(reg.get<WorldTransformComponent>(child)->matrix, childBefore));
+    CHECK((reg.get<TransformComponent>(root)->flags & 0x02) == 0);
+}
+
 TEST_CASE("after re-parenting, update produces correct world matrix", "[transform]")
 {
     Registry reg;
