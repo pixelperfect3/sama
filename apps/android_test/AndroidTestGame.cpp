@@ -734,8 +734,7 @@ public:
 
         // Shadow pass — depth-only into cascade 0.
         engine.shadow().beginCascade(0, lightView, lightProj);
-        drawCallSys_.submitShadowDrawCalls(registry, engine.resources(),
-                                           engine.shadowProgram(), 0);
+        drawCallSys_.submitShadowDrawCalls(registry, engine.resources(), engine.shadowProgram(), 0);
 
         // Opaque PBR pass.
         const auto W = engine.fbWidth();
@@ -824,8 +823,8 @@ public:
         // ambient illumination from the environment and the shadow gets
         // washed out almost entirely.
         // if (ibl_.isValid()) { ... }
-        drawCallSys_.update(registry, engine.resources(),
-                            engine.pbrProgram(), engine.uniforms(), frame);
+        drawCallSys_.update(registry, engine.resources(), engine.pbrProgram(), engine.uniforms(),
+                            frame);
 
         // Post-process is auto-submitted by Renderer::endFrame using the
         // RenderSettings we set above (bloom + FXAA gated by the toggle,
@@ -1207,6 +1206,11 @@ int main()
     desc.windowTitle = "Android Test — Input";
     desc.windowWidth = 800;
     desc.windowHeight = 600;
+    // android_test exercises the gyro / accelerometer code path (it logs
+    // sensor values every 60 frames and uses gravity to drive the colour
+    // visualisation), so we explicitly opt in.  Default for new apps is
+    // off — see EngineDesc::enableGyro for why.
+    desc.enableGyro = true;
     return runner.run(desc);
 }
 

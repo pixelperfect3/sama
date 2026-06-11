@@ -428,14 +428,18 @@ void Engine::handleAndroidCmd(struct android_app* app, int32_t cmd)
             break;
 
         case APP_CMD_RESUME:
-            // Activity returning to the foreground.  Re-enable gyro and
-            // unpause audio.  Note the bgfx surface is rebuilt separately
-            // via APP_CMD_TERM_WINDOW / APP_CMD_INIT_WINDOW — those fire
-            // around the pause/resume pair when the surface is invalidated
-            // (always on background, sometimes not on app switcher).
+            // Activity returning to the foreground.  Re-enable gyro (only
+            // if the game opted in via EngineDesc::enableGyro — otherwise
+            // RESUME would silently flip the sensor on for a game that
+            // never asked for it, which is the original always-on bug)
+            // and unpause audio.  Note the bgfx surface is rebuilt
+            // separately via APP_CMD_TERM_WINDOW / APP_CMD_INIT_WINDOW —
+            // those fire around the pause/resume pair when the surface
+            // is invalidated (always on background, sometimes not on app
+            // switcher).
             LOGI("APP_CMD_RESUME");
             engine->paused_ = false;
-            if (engine->androidGyro_)
+            if (engine->androidGyro_ && engine->gyroOptedIn_)
             {
                 engine->androidGyro_->setEnabled(true);
             }
@@ -615,8 +619,16 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     }
 
     // -- Gyroscope --------------------------------------------------------
+    // init() probes the sensor handles + creates the event queue so a later
+    // opt-in (via desc.enableGyro = true OR APP_CMD_RESUME after the game
+    // wires it up dynamically) has somewhere to deliver events.  The sensor
+    // itself stays *off* unless the game opted in — see EngineDesc::enableGyro
+    // for the contract.  gyroOptedIn_ is the latched copy of that flag; we
+    // can't re-read desc on resume because the game owns the EngineDesc and
+    // it may have gone out of scope.
+    gyroOptedIn_ = desc.enableGyro;
     ALooper* looper = ALooper_forThread();
-    if (looper && androidGyro_->init(looper))
+    if (looper && androidGyro_->init(looper) && gyroOptedIn_)
     {
         androidGyro_->setEnabled(true);
     }

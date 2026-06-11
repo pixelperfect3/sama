@@ -66,3 +66,32 @@ TEST_CASE("Renderer headless init succeeds with singleThreaded=false", "[threadi
     r.endFrame();
     r.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// EngineDesc::enableGyro opt-in plumbing.  See docs/PERF_AUDIT_2026-05-25.md
+// item #P1.  The gyro / accelerometer pair burns ~5-10 mW continuously even
+// when the game never reads it, so the default has to be off and games must
+// opt in explicitly.  These tests pin the default and the writable contract
+// so a future refactor that flipped the default back to true would fail
+// loudly here instead of silently regressing battery on low-tier phones.
+//
+// The actual sensor-enable path lives in Engine::initAndroid (gated on
+// EngineDesc::enableGyro) and APP_CMD_RESUME (gated on the latched
+// gyroOptedIn_ member).  We can't exercise that path from a desktop unit
+// test because AndroidGyro is compiled out via #ifdef __ANDROID__ — the
+// integration coverage lives in apps/android_test, which sets the flag
+// explicitly.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("EngineDesc::enableGyro defaults to false (opt-in)", "[gyro][engine-desc]")
+{
+    engine::core::EngineDesc desc{};
+    REQUIRE(desc.enableGyro == false);
+}
+
+TEST_CASE("EngineDesc::enableGyro can be set to true", "[gyro][engine-desc]")
+{
+    engine::core::EngineDesc desc{};
+    desc.enableGyro = true;
+    REQUIRE(desc.enableGyro == true);
+}

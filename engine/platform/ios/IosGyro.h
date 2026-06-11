@@ -27,7 +27,10 @@ namespace engine::platform::ios
 // is delivered" would over-count on Android and under-count on iOS;  in
 // practice game code reads the most-recent state so this is fine.
 //
-// Sampling rate defaults to 60 Hz to match AndroidGyro::sampleRateUs_.
+// Sampling rate defaults to 60 Hz on iOS.  AndroidGyro::sampleRateUs_ was
+// dropped to 30 Hz for battery (see audit item #P1) — the platforms now
+// diverge intentionally because iOS doesn't show the same power win at
+// 30 Hz (CoreMotion's sensor fusion runs continuously regardless).
 // ---------------------------------------------------------------------------
 
 class IosGyro

@@ -150,6 +150,16 @@ struct EngineDesc
     // (e.g. blit-and-readback) on the calling thread between frames, like
     // the screenshot fixture.  Forwarded to RendererDesc::singleThreaded.
     bool singleThreaded = false;
+
+    // Gyroscope + accelerometer opt-in (Android).  Default false because the
+    // sensors burn ~5-10 mW continuously even when the game never reads them
+    // — a non-trivial fraction of standby power on low-tier phones.  Games
+    // that actually consume `inputState().gyro()` must opt in by setting
+    // this true; everything else gets the sensors disabled for the entire
+    // process lifetime (pause/resume cycles included).  Today only Android
+    // honours this flag; iOS still auto-enables in IosApp.mm pending the
+    // same audit follow-up.  See docs/PERF_AUDIT_2026-05-25.md item #P1.
+    bool enableGyro = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -405,6 +415,16 @@ private:
     // engine/core/Engine.cpp handleAndroidCmd() for the lifecycle table
     // and docs/ANDROID_SUPPORT.md Phase B for the design rationale.
     bool paused_ = false;
+
+    // Latched copy of EngineDesc::enableGyro for the Android lifecycle path.
+    // We can't just look at `androidGyro_->isEnabled()` to decide whether to
+    // re-enable on APP_CMD_RESUME, because PAUSE has already flipped it to
+    // false by then.  Keeping the original opt-in choice on the Engine lets
+    // RESUME restore the pre-pause state without "always enable on resume"
+    // (which is what caused the always-on bug in the first place — games
+    // that never opted in still got the sensor flipped on after the first
+    // pause/resume cycle).
+    bool gyroOptedIn_ = false;
 
     // Save-state callback — registered by the game via
     // registerSaveStateCallback() and fired from APP_CMD_SAVE_STATE.  The

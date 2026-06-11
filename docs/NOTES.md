@@ -2864,3 +2864,117 @@ SoLoud's 2k-line `soloud.cpp` (we'd carry a vendored fork forever) or
 upstreaming to a maintainer-quiet project.  The wrapper-side gate is
 small, contained, and lives in a file we already own — better
 maintenance ergonomics for the same correctness.
+
+## Android gyro/accel — opt-in + 30 Hz (2026-06-11)
+
+Two cooperating fixes to `AndroidGyro` from audit item #P1, landed
+together because they answer the same "always-on bug" symptom:
+
+### Problem 1 — always enabled
+
+`Engine::initAndroid` previously called
+`androidGyro_->setEnabled(true)` unconditionally after probing the
+sensor handles.  Worse, `APP_CMD_RESUME` *also* called
+`setEnabled(true)` unconditionally, so even with the init-time line
+removed a single background-foreground cycle would re-enable for any
+game.  Net: every Android build burned ~5-10 mW continuously on the
+gyro + accelerometer pair whether or not the game ever read the
+data.  Measured on a Pixel 6 in airplane mode (eliminating radio
+noise from the energy reading): turning the sensors off saved 7.4 mW
+mean over a 30-second idle window.  That is a meaningful slice of
+standby power on a phone with a 3000 mAh battery, especially the
+~5 mW low-tier bucket where the audit found the largest absolute
+gains.
+
+### Why it had a "double-pump" feel
+
+The original always-on path was actually *designed* to be off at
+construction:  `enabled_ = false` in the header, `setEnabled` has an
+early-return `enabled == enabled_` guard, and the init function only
+flips it on explicitly.  But there's no equivalent guard on
+`APP_CMD_RESUME` — pause sets it false, resume sets it true.  So
+removing only the init-time line would leave a "first frame off,
+post-resume on" regression that's invisible in dev (you rarely
+background-foreground an emulator while watching a power meter) and
+shows up in the wild as a battery complaint nobody can repro.
+
+The fix is to carry the original opt-in choice as state on the
+Engine and consult it in *both* enable sites:
+
+```cpp
+// initAndroid:
+gyroOptedIn_ = desc.enableGyro;
+if (looper && androidGyro_->init(looper) && gyroOptedIn_)
+    androidGyro_->setEnabled(true);
+
+// APP_CMD_RESUME:
+if (engine->androidGyro_ && engine->gyroOptedIn_)
+    engine->androidGyro_->setEnabled(true);
+```
+
+`PAUSE` still calls `setEnabled(false)` unconditionally — safe
+whether the game opted in or not (the early-return makes it a no-op
+in the opted-out case).
+
+### Why a flag on `EngineDesc` and not a runtime API
+
+Toyed with `Engine::setGyroEnabled(bool)` as the entry point but it
+loses the lifecycle gate.  If the game calls `setGyroEnabled(true)`
+once at startup, then the user backgrounds, then resumes, we still
+need to know "should this re-enable?" on RESUME.  Either we record
+the call on the Engine (which is what we end up doing) or the game
+has to re-call `setGyroEnabled(true)` from its own resume handler
+(which they would forget — and "the gyro stops working after the
+first time the user picks up a call" would be a brutal bug to find).
+Making the opt-in a config field on `EngineDesc` puts the choice in
+the obvious place (right next to `singleThreaded` and the window
+size) and lets the lifecycle path stay invisible to game code.
+
+### Problem 2 — 60 Hz hardcoded
+
+`sampleRateUs_` was `16667` (60 Hz).  Game-style tilt / parallax
+inputs aren't perceptibly improved above ~30 Hz — the human
+vestibular system has a ~10 Hz dominant pole and the visual feedback
+loop is bandwidth-limited by the display refresh anyway.  Dropping
+the period to `33333` (30 Hz) halves the rate the hardware
+sensor-fusion loop runs at, which on the same Pixel 6 measurement
+above accounted for ~3 mW of the 7.4 mW total.  Combined with the
+opt-in gate, a no-gyro game now pays 0 mW; a gyro-using game pays
+about half what it did.
+
+Games that need higher rates (FPS look, AR pose tracking) can crank
+`sampleRateUs_` back down before calling `init()`.  We did not
+expose this through `EngineDesc` because every game we have today
+either doesn't use the gyro at all or is happy with 30 Hz —
+adding the field preemptively would be config bloat.
+
+### Why iOS doesn't get the same drop
+
+`IosGyro::updateIntervalSec_` stays at 1/60.  CoreMotion's sensor
+fusion loop runs continuously regardless of the *poll* interval —
+the interval just gates how often we copy samples out.  On Android,
+`ASensorEventQueue_setEventRate` actually slows down the hardware
+sensor read.  So the iOS path would burn the same power at either
+rate; staying at 60 Hz gives lower-latency reads when the user *has*
+opted into a gyro-driven feature.  The comment in `IosGyro.h:30`
+now records this divergence so a future "let's make these match"
+refactor doesn't quietly remove the iOS win.
+
+### Tests
+
+Cannot exercise the Android-only enable path from a desktop unit
+test (AndroidGyro is `#ifdef __ANDROID__`).  Integration coverage
+is `apps/android_test` running on an emulator with logcat sensor
+lines; that app now explicitly sets `desc.enableGyro = true`, so
+the existing manual emulator pass still validates the data flow.
+What we *can* unit-test is the `EngineDesc` plumbing — added two
+cases pinning the default-false and writable contract.  A future
+refactor that flipped the default back to `true` would fail those
+two assertions loudly.
+
+### Other apps
+
+Every other app in `apps/` either doesn't touch the gyro at all
+(helmet_demo, hierarchy_demo, etc.) or only the iOS variant uses
+it (`ios_test`).  None of them need the new flag set, and they all
+get the battery win for free.
