@@ -2,6 +2,31 @@ $input v_worldPos, v_normal, v_tangent, v_bitangent, v_texcoord0, v_viewPos
 
 #include <bgfx_shader.sh>
 
+// ---------------------------------------------------------------------------
+// Precision policy — see docs/PERF_AUDIT_2026-05-25.md item #S1.
+//
+// `mediump` is applied to:
+//   - colour/material samples (8-bit textures, no precision win from highp);
+//   - BRDF helper return types (D / G / F operate on small bounded values);
+//   - per-light BRDF intermediates (NdotL2, kD2, spec2, ...);
+//   - light colour + cone factors (the rest of the per-light data needs highp);
+//   - IBL irradiance / prefiltered / BRDF-LUT samples (all colour);
+//   - the radiance accumulator (Lo) and ambient/emissive sums.
+//
+// `highp` is kept (default) for:
+//   - world / view-space positions, distance(), camera position;
+//   - all texture coordinates and cluster math (indices stored as floats
+//     would lose precision above 2048 in fp16);
+//   - shadow map UV (sub-pixel filter alignment).
+//
+// On targets that don't honour the qualifiers — desktop GLSL 1.20 ignores
+// them, HLSL/Metal treat them as hints — the source is still legal because
+// glslang accepts `mediump`/`highp` as no-ops on those profiles.  On ESSL
+// (Android GLES) the qualifier picks fp16 hardware paths; on SPIRV it
+// emits `RelaxedPrecision` decorations that SPIRV-Cross translates to
+// `half` types in MSL and that Mali / Adreno drivers honour as fp16.
+// ---------------------------------------------------------------------------
+
 // [0] = {albedo.rgb, roughness}   [1] = {metallic, emissiveScale, 0, 0}
 uniform vec4 u_material[2];
 
@@ -48,33 +73,36 @@ uniform vec4 u_cascadeSplits;
 #define PI 3.14159265358979
 
 // GGX / Trowbridge-Reitz normal distribution function.
-float distributionGGX(vec3 N, vec3 H, float roughness)
+// All inputs are unit-vec dot products or roughness in [0.04, 1] — the
+// safest mediump targets in the whole shader.
+mediump float distributionGGX(mediump vec3 N, mediump vec3 H, mediump float roughness)
 {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    mediump float a = roughness * roughness;
+    mediump float a2 = a * a;
+    mediump float NdotH = max(dot(N, H), 0.0);
+    mediump float NdotH2 = NdotH * NdotH;
+    mediump float denom = NdotH2 * (a2 - 1.0) + 1.0;
     return a2 / (PI * denom * denom);
 }
 
 // Schlick-GGX geometry term for a single direction.
-float geometrySchlick(float NdotV, float roughness)
+mediump float geometrySchlick(mediump float NdotV, mediump float roughness)
 {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
+    mediump float r = roughness + 1.0;
+    mediump float k = (r * r) / 8.0;
     return NdotV / (NdotV * (1.0 - k) + k);
 }
 
 // Smith geometry function — product of two Schlick-GGX terms.
-float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+mediump float geometrySmith(mediump vec3 N, mediump vec3 V, mediump vec3 L,
+                            mediump float roughness)
 {
     return geometrySchlick(max(dot(N, V), 0.0), roughness)
          * geometrySchlick(max(dot(N, L), 0.0), roughness);
 }
 
 // Fresnel-Schlick approximation.
-vec3 fresnelSchlick(float cosTheta, vec3 F0)
+mediump vec3 fresnelSchlick(mediump float cosTheta, mediump vec3 F0)
 {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
@@ -82,77 +110,88 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 void main()
 {
     // -----------------------------------------------------------------------
-    // Material inputs
+    // Material inputs — all from 8-bit textures, no precision win from highp.
     // -----------------------------------------------------------------------
-    vec3 albedo = u_material[0].xyz;
-    float roughness = max(u_material[0].w, 0.04);
-    float metallic = u_material[1].x;
-    float emissiveScale = u_material[1].y;
+    mediump vec3 albedo = u_material[0].xyz;
+    mediump float roughness = max(u_material[0].w, 0.04);
+    mediump float metallic = u_material[1].x;
+    mediump float emissiveScale = u_material[1].y;
 
     // Albedo map (slot 0).  Default white when no texture is bound.
-    vec4 albedoSample = texture2D(s_albedo, v_texcoord0);
+    mediump vec4 albedoSample = texture2D(s_albedo, v_texcoord0);
     albedo *= albedoSample.xyz;
 
     // ORM map (slot 2): G=roughness, B=metallic.  R is not used — AO comes from s_occlusion.
-    vec4 ormSample = texture2D(s_orm, v_texcoord0);
+    mediump vec4 ormSample = texture2D(s_orm, v_texcoord0);
     roughness *= ormSample.y;
     metallic  *= ormSample.z;
 
     // Occlusion map (slot 4): R=AO.  Defaults to white (ao=1.0) when no texture is bound.
     // Floor at 0.1 to prevent fully-black ambient in the absence of IBL.
-    float ao = max(texture2D(s_occlusion, v_texcoord0).x, 0.1);
+    mediump float ao = max(texture2D(s_occlusion, v_texcoord0).x, 0.1);
 
     // -----------------------------------------------------------------------
-    // Normal — TBN normal mapping.
+    // Normal — TBN normal mapping.  TBN frame stays highp; normalSample
+    // (from an 8-bit texture) is mediump.  The final world-space N is
+    // mediump (unit vector — fp16 representation has ~10 bits of
+    // precision per axis, well within the angular accuracy that PBR
+    // shading needs).
     // -----------------------------------------------------------------------
     vec3 T = normalize(v_tangent);
     vec3 B = normalize(v_bitangent);
     vec3 Ngeom = normalize(v_normal);
 
     // Sample normal map (slot 1), decode [0,1] -> [-1,1] tangent-space normal.
-    vec3 normalSample = texture2D(s_normal, v_texcoord0).xyz;
+    mediump vec3 normalSample = texture2D(s_normal, v_texcoord0).xyz;
     normalSample = normalSample * 2.0 - 1.0;
 
     // Transform tangent-space normal to world space.
     // Expanded manually (T*ns.x + B*ns.y + N*ns.z) to avoid
     // mtxFromCols which transposes on Metal's shader path.
-    vec3 N = normalize(T * normalSample.x + B * normalSample.y + Ngeom * normalSample.z);
+    mediump vec3 N =
+        normalize(T * normalSample.x + B * normalSample.y + Ngeom * normalSample.z);
 
     // -----------------------------------------------------------------------
     // View vector: camera world position from u_frameParams[1].xyz.
+    // camPos / v_worldPos are highp (positions can be far from origin); V
+    // is mediump after normalize (unit vector).
     // -----------------------------------------------------------------------
     vec3 camPos = u_frameParams[1].xyz;
-    vec3 V = normalize(camPos - v_worldPos);
+    mediump vec3 V = normalize(camPos - v_worldPos);
 
     // -----------------------------------------------------------------------
-    // F0 — dielectric base (0.04) lerped to albedo for metals.
+    // F0 — dielectric base (0.04) lerped to albedo for metals.  Bounded by
+    // the [0.04, albedo] range, well inside mediump.
     // -----------------------------------------------------------------------
-    vec3 F0 = mix(vec3_splat(0.04), albedo, metallic);
+    mediump vec3 F0 = mix(vec3_splat(0.04), albedo, metallic);
 
     // -----------------------------------------------------------------------
-    // Directional light contribution
+    // Directional light contribution — every quantity here is unit vec,
+    // bounded BRDF factor, or colour radiance.  All mediump-safe.
     // -----------------------------------------------------------------------
-    vec3 L = normalize(u_dirLight[0].xyz);  // points away from surface (toward light)
-    vec3 H = normalize(V + L);
-    vec3 radiance = u_dirLight[1].xyz;
+    mediump vec3 L = normalize(u_dirLight[0].xyz);  // points toward the light
+    mediump vec3 H = normalize(V + L);
+    mediump vec3 radiance = u_dirLight[1].xyz;
 
     // Use normal-mapped N for both diffuse and specular to ensure energy
     // conservation and consistent Cook-Torrance denominator cancellation.
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotV = max(dot(N, V), 0.0);
+    mediump float NdotL = max(dot(N, L), 0.0);
+    mediump float NdotV = max(dot(N, V), 0.0);
 
-    float D = distributionGGX(N, H, roughness);
-    float G = geometrySmith(N, V, L, roughness);
-    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    mediump float D = distributionGGX(N, H, roughness);
+    mediump float G = geometrySmith(N, V, L, roughness);
+    mediump vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     // Diffuse: energy conservation — metals have no diffuse term.
-    vec3 kD = (vec3_splat(1.0) - F) * (1.0 - metallic);
+    mediump vec3 kD = (vec3_splat(1.0) - F) * (1.0 - metallic);
 
     // Cook-Torrance specular BRDF.
-    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+    mediump vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
 
-    // Outgoing radiance from the directional light.
-    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
+    // Outgoing radiance from the directional light.  Lo is the per-fragment
+    // colour accumulator; bounded in practice by the HDR colour budget of
+    // RGBA16F, well inside mediump's 65504 ceiling.
+    mediump vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
 
 
     // -----------------------------------------------------------------------
@@ -162,7 +201,10 @@ void main()
     //   - shadow UV is outside the [0,1]^3 frustum (fragment beyond shadow coverage).
     // Both cases occur in tests and scenes without an active shadow pass.
     // -----------------------------------------------------------------------
-    float shadow = 1.0;
+    // Shadow scalar is bounded in [0, 1] — mediump is fine.  shadowCoord
+    // and texelSize stay highp: PCF tap alignment cares about sub-pixel
+    // UV accuracy and fp16 would alias at 2048-res shadow maps.
+    mediump float shadow = 1.0;
     vec4 shadowCoord = mul(u_shadowMatrix[0], vec4(v_worldPos, 1.0));
     if (shadowCoord.w > 0.0001)
     {
@@ -174,8 +216,8 @@ void main()
             float texelSize = 1.0 / 2048.0;
             // Slope-scaled bias: surfaces at oblique angles to the light need
             // more bias.  Clamp to [0.002, 0.02] to avoid light leaks.
-            float slopeFactor = clamp(1.0 - dot(Ngeom, L), 0.0, 1.0);
-            float shadowBias = mix(0.002, 0.02, slopeFactor);
+            mediump float slopeFactor = clamp(1.0 - dot(Ngeom, L), 0.0, 1.0);
+            mediump float shadowBias = mix(0.002, 0.02, slopeFactor);
             float shadowZ = shadowCoord.z - shadowBias;
             shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
             shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));
@@ -233,84 +275,97 @@ void main()
 
     for (int li = 0; li < lightCount; ++li)
     {
-        // Fetch the light index from the flat index texture.
+        // Index sampling stays at default precision (highp) — fp16 stores
+        // integers exactly only up to 2048, and the flat light index can
+        // reach 8191.
         float idx = texture2D(s_lightIndex,
             vec2((float(lightOffset + li) + 0.5) / 8192.0, 0.5)).x;
         int i = int(idx);
 
-        // Fetch the four rows of light data (view-space position).
-        vec4 ld0 = texture2D(s_lightData,
+        // Fetch the four rows of light data.  Row 0 (view-space position +
+        // radius) stays highp — distance() against the radius must be
+        // accurate at the radius boundary, and view-space positions span
+        // tens of metres.  Rows 1-3 (colour, cone factors, spot direction)
+        // are all small-bounded values; mediump is safe.
+        vec4         ld0 = texture2D(s_lightData,
             vec2((float(i) + 0.5) / 256.0, 0.5 / 4.0));
-        vec4 ld1 = texture2D(s_lightData,
+        mediump vec4 ld1 = texture2D(s_lightData,
             vec2((float(i) + 0.5) / 256.0, 1.5 / 4.0));
-        vec4 ld2 = texture2D(s_lightData,
+        mediump vec4 ld2 = texture2D(s_lightData,
             vec2((float(i) + 0.5) / 256.0, 2.5 / 4.0));
-        vec4 ld3 = texture2D(s_lightData,
+        mediump vec4 ld3 = texture2D(s_lightData,
             vec2((float(i) + 0.5) / 256.0, 3.5 / 4.0));
 
-        vec3  lightViewPos = ld0.xyz;
-        float lightRad     = ld0.w;
-        vec3  lightColor   = ld1.xyz;
-        float lightType    = ld1.w;
+        vec3          lightViewPos = ld0.xyz;
+        float         lightRad     = ld0.w;
+        mediump vec3  lightColor   = ld1.xyz;
+        mediump float lightType    = ld1.w;
 
-        // Vector from fragment (view space) to light (view space).
+        // Vector from fragment (view space) to light (view space).  Highp:
+        // position subtraction, then highp length() — both before the
+        // radius cull, where precision matters most.
         vec3  Lv   = lightViewPos - v_viewPos;
         float dist = length(Lv);
 
         if (dist >= lightRad)
             continue;
 
-        vec3 Ln = normalize(Lv);
+        // After the cull we know |Lv| < lightRad.  The unit vector is
+        // mediump-safe; downstream BRDF math expects mediump anyway.
+        mediump vec3 Ln = normalize(Lv);
 
-        // Inverse-square attenuation with smooth quadratic falloff at radius.
-        float ratio = dist / lightRad;
-        float att = clamp(1.0 - ratio * ratio, 0.0, 1.0);
+        // Inverse-square attenuation — ratio in [0, 1], so mediump throughout.
+        mediump float ratio = dist / lightRad;
+        mediump float att = clamp(1.0 - ratio * ratio, 0.0, 1.0);
         att *= att;
 
         // Spot cone attenuation (type == 1).
-        float spotAtt = 1.0;
+        mediump float spotAtt = 1.0;
         if (lightType > 0.5)
         {
-            vec3  spotDir  = ld2.xyz;
-            float cosOuter = ld2.w;
-            float cosInner = ld3.x;
-            float cosAngle = dot(-Ln, normalize(spotDir));
+            mediump vec3  spotDir  = ld2.xyz;
+            mediump float cosOuter = ld2.w;
+            mediump float cosInner = ld3.x;
+            mediump float cosAngle = dot(-Ln, normalize(spotDir));
             spotAtt = clamp((cosAngle - cosOuter) / max(cosInner - cosOuter, 0.0001),
                             0.0, 1.0);
         }
 
-        // PBR contribution.
-        // Ln is in view space; N and V are in world space.  We pass Ln directly
-        // into the BRDF functions — this is accurate when camera axes align
-        // with world axes (which they do for the approximated V above).
-        vec3  H2     = normalize(V + Ln);
-        float NdotL2 = max(dot(N, Ln), 0.0);
-        float D2     = distributionGGX(N, H2, roughness);
-        float G2     = geometrySmith(N, V, Ln, roughness);
-        vec3  F2     = fresnelSchlick(max(dot(H2, V), 0.0), F0);
-        vec3  kD2    = (vec3_splat(1.0) - F2) * (1.0 - metallic);
-        vec3  spec2  = D2 * G2 * F2 / max(4.0 * max(dot(N, V), 0.0) * NdotL2, 0.001);
+        // PBR contribution — same shape as the directional path, all the
+        // same bounded BRDF factors and unit vectors.
+        mediump vec3  H2     = normalize(V + Ln);
+        mediump float NdotL2 = max(dot(N, Ln), 0.0);
+        mediump float D2     = distributionGGX(N, H2, roughness);
+        mediump float G2     = geometrySmith(N, V, Ln, roughness);
+        mediump vec3  F2     = fresnelSchlick(max(dot(H2, V), 0.0), F0);
+        mediump vec3  kD2    = (vec3_splat(1.0) - F2) * (1.0 - metallic);
+        mediump vec3  spec2  =
+            D2 * G2 * F2 / max(4.0 * max(dot(N, V), 0.0) * NdotL2, 0.001);
 
         Lo += (kD2 * albedo / PI + spec2) * lightColor * att * spotAtt * NdotL2;
     }
 
     // -----------------------------------------------------------------------
-    // Ambient — IBL split-sum (Phase 11).
-    // Falls back to flat 0.03 when u_iblParams.y == 0.
+    // Ambient — IBL split-sum (Phase 11).  Every term is a colour sample or
+    // bounded scalar; all mediump-safe.
     // -----------------------------------------------------------------------
-    vec3 ambient;
+    mediump vec3 ambient;
     if (u_iblParams.y > 0.5)
     {
         // Diffuse IBL: sample irradiance cubemap in the surface normal direction.
-        vec3 irradiance = textureCube(s_irradiance, N).rgb;
-        vec3 diffuse    = irradiance * albedo * (1.0 - metallic);
+        mediump vec3 irradiance = textureCube(s_irradiance, N).rgb;
+        mediump vec3 diffuse    = irradiance * albedo * (1.0 - metallic);
 
-        // Specular IBL (split-sum approximation):
-        vec3  R                = reflect(-V, N);
-        float mipLevel         = roughness * u_iblParams.x;
-        vec3  prefilteredColor = textureCubeLod(s_prefiltered, R, mipLevel).rgb;
-        vec2  brdf             = texture2D(s_brdfLut, vec2(max(dot(N, V), 0.0), roughness)).xy;
-        vec3  specIbl          = prefilteredColor * (F0 * brdf.x + brdf.y);
+        // Specular IBL (split-sum approximation).  Reflection vector is a
+        // unit vec (fp16 angular precision is enough for the prefiltered
+        // cubemap LOD); mipLevel is in [0, kMaxMipLevels=~9]; brdf is from
+        // an 8-bit LUT — everything is mediump-safe.
+        mediump vec3  R                = reflect(-V, N);
+        mediump float mipLevel         = roughness * u_iblParams.x;
+        mediump vec3  prefilteredColor = textureCubeLod(s_prefiltered, R, mipLevel).rgb;
+        mediump vec2  brdf             =
+            texture2D(s_brdfLut, vec2(max(dot(N, V), 0.0), roughness)).xy;
+        mediump vec3  specIbl          = prefilteredColor * (F0 * brdf.x + brdf.y);
 
         ambient = (diffuse + specIbl) * ao;
     }
@@ -321,10 +376,10 @@ void main()
         // the ambient varies smoothly with the object shape, not with the
         // high-frequency normal map.  F0-weighted term gives metallic surfaces
         // their colour from indirect light (replaces IBL irradiance/prefilter).
-        vec3 skyColor    = vec3(0.15, 0.18, 0.25);
-        vec3 groundColor = vec3(0.05, 0.04, 0.03);
-        float hemiFactor = Ngeom.y * 0.5 + 0.5;
-        vec3 hemi = mix(groundColor, skyColor, hemiFactor);
+        mediump vec3  skyColor    = vec3(0.15, 0.18, 0.25);
+        mediump vec3  groundColor = vec3(0.05, 0.04, 0.03);
+        mediump float hemiFactor  = Ngeom.y * 0.5 + 0.5;
+        mediump vec3  hemi        = mix(groundColor, skyColor, hemiFactor);
         ambient = (hemi * albedo * (1.0 - metallic) + hemi * F0) * ao;
     }
 
@@ -333,17 +388,17 @@ void main()
     // Sample s_emissive (slot 3); defaults to white when no texture is bound.
     // emissiveScale is 0 for non-emissive materials, so white * 0 = no contribution.
     // -----------------------------------------------------------------------
-    vec3 emissive = texture2D(s_emissive, v_texcoord0).rgb * emissiveScale;
+    mediump vec3 emissive = texture2D(s_emissive, v_texcoord0).rgb * emissiveScale;
 
     // -----------------------------------------------------------------------
     // Output linear HDR.  Tonemap + gamma are owned by PostProcessSystem's
     // tonemap pass (fs_tonemap.sc, ACES) so the shader cannot double-correct.
     // -----------------------------------------------------------------------
-    vec3 color = ambient + Lo + emissive;
+    mediump vec3 color = ambient + Lo + emissive;
 
     // Opacity = material opacity * albedo texture alpha.
     // u_material[1].z carries the material opacity (albedo.w).
-    float opacity = u_material[1].z * albedoSample.w;
+    mediump float opacity = u_material[1].z * albedoSample.w;
 
     gl_FragColor = vec4(color, opacity);
 }

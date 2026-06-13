@@ -3086,3 +3086,125 @@ use 0-3 of those mips at runtime.  Saves ~21 MB at 1080p if we
 ever shrink the allocation to match settings — but only worth
 doing if we hit memory pressure on low-tier devices.  Not in
 scope for #T3.
+
+## fs_pbr.sc — explicit `mediump` precision policy (2026-06-12)
+
+Audit item #S1 (precision half).  The PBR fragment shader had no
+precision qualifiers anywhere, so on ESSL (Android GLES) and the
+SPIRV→Mali/Adreno path everything ran at fp32.  Mali Bifrost/Valhall
+doubles ALU throughput on fp16 and halves register bandwidth, so
+this is the biggest single fragment-shader win on the mobile target
+GPUs we ship for.
+
+### Why per-variable annotation, not blanket `precision mediump float;`
+
+Three reasons:
+
+1. The cluster index path needs integer-exact fp arithmetic up to
+   8191 (the flat light-index range).  fp16 represents integers
+   exactly only up to 2048, then starts skipping (2048, 2050, 2052,
+   ...).  A blanket mediump would alias light indices ≥ 2048 — silent
+   miscoloration on heavily-lit scenes.
+
+2. View-space positions in `lightViewPos` and `v_viewPos` span tens
+   of metres.  fp16 has ~3 decimal digits at that scale, which is
+   enough for shading direction but NOT enough for the
+   `dist >= lightRad` cull at the boundary of a light's radius
+   (visible as a shimmering circle around point lights with smooth
+   walls passing near them).
+
+3. Shadow PCF tap UVs must be subpixel-accurate at 2048×2048 shadow
+   maps — i.e. better than 1/2048 = ~0.0005.  fp16 mantissa precision
+   at value ~0.5 is ~0.0005 — right at the edge.  Empirically it
+   produces a sparkle pattern on shadow boundaries.
+
+So instead of a top-of-file pragma, every variable is annotated by
+hand and a comment block at the top of the shader spells out the
+policy.  Cost: more boilerplate.  Benefit: explicit, reviewable,
+and a future edit that adds (say) a new BRDF term can pick the
+right precision by reading the rule rather than discovering the
+bug a sprint later when the screenshot fixture finally exercises
+that code path on Mali.
+
+### What gets `mediump` (safe — bounded values or colours)
+
+- All material samples: `albedo`, `roughness`, `metallic`, `ao`,
+  `F0`, the `albedoSample` / `ormSample` reads.  These come from
+  8-bit textures so fp32 was always wasted bandwidth.
+- BRDF helper functions: every param of `distributionGGX`,
+  `geometrySchlick`, `geometrySmith`, `fresnelSchlick` plus their
+  locals.  These take dot-products of unit vectors (always in
+  [-1, 1]) and roughness in [0.04, 1].  Textbook mediump territory.
+- Per-fragment BRDF locals: `NdotL`, `NdotV`, `D`, `G`, `F`, `kD`,
+  `specular`, `H`, `L`, `V` (after normalize), `radiance`, `Lo`.
+- Per-light loop locals: `Ln`, `ratio`, `att`, `spotAtt`, `H2`,
+  `NdotL2`, `D2`, `G2`, `F2`, `kD2`, `spec2`, `lightColor`,
+  `lightType`, `spotDir`, `cosOuter`, `cosInner`, `cosAngle`.
+- Light data rows 1-3 (ld1=colour/type, ld2=spotDir/cosOuter,
+  ld3=cosInner) — all small bounded values.
+- IBL samples: `irradiance`, `diffuse`, `R` (reflection unit vec),
+  `mipLevel`, `prefilteredColor`, `brdf` (LUT sample), `specIbl`,
+  `hemi`, `skyColor`, `groundColor`, `hemiFactor`.
+- Shadow scalar (in [0, 1]) and the slope-scaled bias.
+- Final `color` and `opacity`.
+
+### What stays `highp` (default)
+
+- `v_worldPos`, `v_viewPos`, `camPos`, `lightViewPos` (= `ld0.xyz`).
+- `Lv = lightViewPos - v_viewPos`, `dist = length(Lv)`, the
+  `lightRad` it's compared against.
+- All texture coordinates (`v_texcoord0`, the `vec2(...)` args to
+  texture2D for the cluster/grid/index samples).
+- Cluster math: `tile`, `viewZ`, `depthSlice`, `sliceIdx`,
+  `clusterIdx`, `lightOffset`, `lightCount`, `idx` (light-index
+  sample).
+- Shadow coordinates: `shadowCoord`, `texelSize`, `shadowZ`.
+- `gl_FragCoord` (provided as highp by every ESSL profile we target).
+- The TBN inputs `T`, `B`, `Ngeom` (varying-interpolated; the final
+  `N = normalize(T*ns.x + B*ns.y + Ngeom*ns.z)` is mediump because
+  the unit-vec output is mediump-safe regardless of input precision).
+
+### How non-ESSL targets handle the qualifiers
+
+- **ESSL** (Android Vulkan path emits ESSL via shaderc + bgfx):
+  native support, qualifiers map directly to fp16/fp32 hardware paths.
+- **SPIRV** (also used on Android Vulkan): glslang emits
+  `OpDecorate %x RelaxedPrecision` for every `mediump`-qualified
+  declaration.  Mali and Adreno drivers honour the decoration and
+  schedule fp16 ALU; SPIRV-Cross translates `RelaxedPrecision` to
+  the MSL `half` type when generating Metal shaders for iOS.
+- **GLSL 1.20** (desktop OpenGL): the language version doesn't
+  formally support precision qualifiers in most contexts, but
+  glslang accepts them as no-ops.  Compiles to fp32 throughout,
+  same as before the edit.
+- **MSL via shaderc native Metal path** (`fs_pbr_mtl`): Metal source
+  doesn't have GLSL precision qualifiers, shaderc strips them.
+  Apple GPUs are mostly fp32 internally so this matches today's
+  behaviour anyway.
+- **HLSL** (not currently targeted): not affected.
+
+### Validation
+
+All 22 screenshot tests pass after the change:
+- PBR helmet (default + IBL + shadow + lighting variants)
+- IBL split-sum
+- Lighting (point/spot/directional)
+- Post-process (bloom, FXAA, tonemap)
+- Shadows (single + multi-cascade)
+
+No banding visible in any of them at desktop GL (where qualifiers
+no-op).  ESSL output decoded from `fs_pbr_essl.bin.h` confirms the
+qualifiers landed.  Cannot exercise the actual Mali fp16 win from
+a Mac desktop test — integration validation will need an Android
+emulator frame trace + a Pixel-class device frame trace before this
+gets cited as a measured saving in marketing material.
+
+### Texture-indirection half of #S1 NOT addressed here
+
+The audit's #S1 had two threads: precision (this commit) and a
+separate `LOW_TIER` shader variant that skips the cluster light
+loop entirely on no-lights scenes.  The latter is a new shader
+permutation alongside the existing `SKINNED` define, with
+rendering-pipeline plumbing to pick the right variant per tier.
+That's a separate piece of work — left open as the unfinished half
+of #S1.
