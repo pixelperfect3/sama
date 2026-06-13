@@ -225,3 +225,136 @@ TEST_CASE("ShadowCullSystem: entity in frustum gets correct cascadeMask for 3 ca
 
     res.destroyAll();
 }
+
+// ---------------------------------------------------------------------------
+// ShadowCullSystem multi-cascade overload — matches the per-cascade result
+//
+// Audit item line 43.  The new `update(reg, res, span<Frustum>, base)`
+// overload walks the mesh view once and tests all N frustums per entity.
+// It must produce a byte-identical `cascadeMask` to N calls of the
+// per-cascade overload — that's the safety contract for the optimisation.
+// ---------------------------------------------------------------------------
+
+#include <array>
+#include <span>
+
+TEST_CASE("ShadowCullSystem multi-cascade overload matches N per-cascade calls", "[csm][shadow]")
+{
+    CsmHeadlessBgfx bgfxCtx;
+    engine::ecs::Registry reg;
+    engine::rendering::RenderResources res;
+
+    const uint32_t meshId =
+        res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));
+
+    // Set up two entities — one inside all cascades, one outside all of
+    // them — to exercise both branches.
+    const engine::ecs::EntityID insideEntity = reg.createEntity();
+    reg.emplace<engine::rendering::WorldTransformComponent>(
+        insideEntity, engine::rendering::WorldTransformComponent{engine::math::Mat4(1.0F)});
+    reg.emplace<engine::rendering::MeshComponent>(insideEntity,
+                                                  engine::rendering::MeshComponent{meshId});
+
+    const engine::ecs::EntityID outsideEntity = reg.createEntity();
+    engine::math::Mat4 farAwayMatrix(1.0F);
+    farAwayMatrix[3] = engine::math::Vec4(1000.0F, 1000.0F, 1000.0F, 1.0F);
+    reg.emplace<engine::rendering::WorldTransformComponent>(
+        outsideEntity, engine::rendering::WorldTransformComponent{farAwayMatrix});
+    reg.emplace<engine::rendering::MeshComponent>(outsideEntity,
+                                                  engine::rendering::MeshComponent{meshId});
+
+    // Three cascade frustums (same as the test above — all enclose the
+    // origin, none enclose (1000, 1000, 1000)).
+    const engine::math::Mat4 lightView =
+        glm::lookAt(engine::math::Vec3(0.0F, 10.0F, 0.0F), engine::math::Vec3(0.0F, 0.0F, 0.0F),
+                    engine::math::Vec3(0.0F, 0.0F, -1.0F));
+    const engine::math::Mat4 lightProj = glm::ortho(-10.0F, 10.0F, -10.0F, 10.0F, 0.1F, 20.0F);
+    const engine::math::Frustum cascade0(lightProj * lightView);
+    const engine::math::Frustum cascade1(lightProj * lightView);
+    const engine::math::Frustum cascade2(lightProj * lightView);
+
+    // Reference path: three per-cascade calls.
+    engine::rendering::ShadowCullSystem scsRef;
+    scsRef.update(reg, res, cascade0, 0);
+    scsRef.update(reg, res, cascade1, 1);
+    scsRef.update(reg, res, cascade2, 2);
+    const uint8_t refInsideMask =
+        reg.has<engine::rendering::ShadowVisibleTag>(insideEntity)
+            ? reg.get<engine::rendering::ShadowVisibleTag>(insideEntity)->cascadeMask
+            : uint8_t{0};
+    const bool refOutsideHasTag = reg.has<engine::rendering::ShadowVisibleTag>(outsideEntity);
+
+    // Reset for the multi-cascade path.  Strip the tags so the new call
+    // starts from the same blank slate.
+    if (reg.has<engine::rendering::ShadowVisibleTag>(insideEntity))
+    {
+        reg.remove<engine::rendering::ShadowVisibleTag>(insideEntity);
+    }
+    if (reg.has<engine::rendering::ShadowVisibleTag>(outsideEntity))
+    {
+        reg.remove<engine::rendering::ShadowVisibleTag>(outsideEntity);
+    }
+
+    // Optimised path: single multi-cascade call.
+    const std::array<engine::math::Frustum, 3> cascades{cascade0, cascade1, cascade2};
+    engine::rendering::ShadowCullSystem scsOpt;
+    scsOpt.update(reg, res, std::span<const engine::math::Frustum>{cascades});
+    const uint8_t optInsideMask =
+        reg.has<engine::rendering::ShadowVisibleTag>(insideEntity)
+            ? reg.get<engine::rendering::ShadowVisibleTag>(insideEntity)->cascadeMask
+            : uint8_t{0};
+    const bool optOutsideHasTag = reg.has<engine::rendering::ShadowVisibleTag>(outsideEntity);
+
+    // Byte-identical results.
+    REQUIRE(optInsideMask == refInsideMask);
+    REQUIRE(optInsideMask == 0x07);  // bits 0, 1, 2 set
+    REQUIRE(optOutsideHasTag == refOutsideHasTag);
+    REQUIRE(optOutsideHasTag == false);
+
+    res.destroyAll();
+}
+
+TEST_CASE("ShadowCullSystem multi-cascade preserves bits outside its range", "[csm][shadow]")
+{
+    // The contract: the multi-cascade overload owns the bits in
+    // [baseCascadeIdx, baseCascadeIdx + N).  Bits outside that range
+    // survive.  This lets a caller drive cascades 0..2 in bulk while a
+    // separate caller manages bit 3 for, say, a spot-light shadow.
+    CsmHeadlessBgfx bgfxCtx;
+    engine::ecs::Registry reg;
+    engine::rendering::RenderResources res;
+
+    const uint32_t meshId =
+        res.addMesh(engine::rendering::buildMesh(engine::rendering::makeCubeMeshData()));
+
+    const engine::ecs::EntityID entity = reg.createEntity();
+    reg.emplace<engine::rendering::WorldTransformComponent>(
+        entity, engine::rendering::WorldTransformComponent{engine::math::Mat4(1.0F)});
+    reg.emplace<engine::rendering::MeshComponent>(entity, engine::rendering::MeshComponent{meshId});
+
+    // Pre-populate bit 4 (an external owner — e.g. a spot light).
+    engine::rendering::ShadowVisibleTag tag{};
+    tag.cascadeMask = 0x10;  // bit 4
+    reg.emplace<engine::rendering::ShadowVisibleTag>(entity, tag);
+
+    const engine::math::Mat4 lightView =
+        glm::lookAt(engine::math::Vec3(0.0F, 10.0F, 0.0F), engine::math::Vec3(0.0F, 0.0F, 0.0F),
+                    engine::math::Vec3(0.0F, 0.0F, -1.0F));
+    const engine::math::Mat4 lightProj = glm::ortho(-10.0F, 10.0F, -10.0F, 10.0F, 0.1F, 20.0F);
+    const engine::math::Frustum cascade0(lightProj * lightView);
+    const engine::math::Frustum cascade1(lightProj * lightView);
+
+    // Cull cascades 0..1 only.  Bit 4 must survive.
+    const std::array<engine::math::Frustum, 2> cascades{cascade0, cascade1};
+    engine::rendering::ShadowCullSystem scs;
+    scs.update(reg, res, std::span<const engine::math::Frustum>{cascades}, /*baseCascadeIdx=*/0);
+
+    const uint8_t mask = reg.get<engine::rendering::ShadowVisibleTag>(entity)->cascadeMask;
+    REQUIRE((mask & 0x01) != 0);  // cascade 0 set (entity inside)
+    REQUIRE((mask & 0x02) != 0);  // cascade 1 set (entity inside)
+    REQUIRE((mask & 0x10) != 0);  // bit 4 preserved
+    REQUIRE((mask & 0xE0) == 0);  // bits 5..7 still zero
+    REQUIRE((mask & 0x0C) == 0);  // bits 2, 3 still zero (not in our range)
+
+    res.destroyAll();
+}

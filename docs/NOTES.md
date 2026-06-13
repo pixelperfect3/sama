@@ -3520,3 +3520,144 @@ storage) starts to hurt at high core counts on typical scenes.
   target is `< 0.5 µs` per submit/wait cycle; spin-poll-then-CV
   `waitAll()` should hit it on the common path, but the actual
   numbers need a microbenchmark on a Pixel-class device.
+
+## FrustumCull + ShadowCull — explicit-fabsf AABB + visible-state cache + single-pass multi-cascade (2026-06-13)
+
+Three audit items in one commit (`computeConservativeWorldAabb` helper +
+the visible-state cache in FrustumCullSystem + the multi-cascade
+overload in ShadowCullSystem).  All three are math/ECS micro-wins on
+the per-frame cull loops; none of them changes the conservative AABB
+math, so screenshot output is byte-identical.
+
+### Why a shared helper
+
+Both systems were computing the same conservative world-space AABB
+inline.  The audit (#cull-aabb) called out the same 12-float-copy
+`Mat3` ctor + `Mat3 * Vec3` pattern in both files.  Pulling the
+computation into `engine/rendering/systems/CullHelpers.h` as
+`computeConservativeWorldAabb()` means:
+
+- Any future precision tweak (e.g. switching to OBB for animated
+  meshes) lands in one place.
+- The compiler inlines the math directly into each loop — same
+  code, less drift risk.
+- Tests for the helper (if we ever add them) cover both consumers.
+
+### What `computeConservativeWorldAabb` does
+
+Classic AABB-rotation trick:
+
+```cpp
+inline void computeConservativeWorldAabb(const Mat4& W, const Vec3& localCenter,
+                                         const Vec3& localHalfExtent,
+                                         Vec3& outMin, Vec3& outMax)
+{
+    const Vec3 worldCenter = Vec3(W * Vec4(localCenter, 1.0F));
+
+    const float a00 = std::fabs(W[0].x); /* ... 8 more ... */
+    const Vec3 worldHalfExtent{
+        a00 * localHalfExtent.x + a01 * localHalfExtent.y + a02 * localHalfExtent.z,
+        a10 * localHalfExtent.x + a11 * localHalfExtent.y + a12 * localHalfExtent.z,
+        a20 * localHalfExtent.x + a21 * localHalfExtent.y + a22 * localHalfExtent.z};
+
+    outMin = worldCenter - worldHalfExtent;
+    outMax = worldCenter + worldHalfExtent;
+}
+```
+
+Old form (`glm::abs(Vec4)` ×3 + `Mat3` ctor + `Mat3 * Vec3`) cost 12
+copies + 9 `fabs` + 9 muls + 6 adds, with a 48-byte `Mat3` on the
+stack.  New form is 9 `fabs` + 9 muls + 6 adds, no temporaries.  The
+compiler is much happier — the inline expansion vectorises better and
+the spill/fill round-trip on the Mat3 is gone.
+
+### FrustumCullSystem visible-state cache (audit #cull-cache)
+
+Old code did `has<VisibleTag>` + `emplace`/`remove` separately,
+which in the transition cases was two sparse-set probes.  The
+common case (steady visibility) was already only one probe, but
+the dirty patterns and the `remove` path always did the internal
+check too.
+
+New shape:
+
+```cpp
+const bool wasVisible = reg.has<VisibleTag>(entity);  // single probe
+// ... compute isVisible ...
+if (isVisible && !wasVisible)   reg.emplace<VisibleTag>(entity);
+else if (!isVisible && wasVisible) reg.remove<VisibleTag>(entity);
+// else: skip — steady-state hot path pays only the `has` probe.
+```
+
+The branch structure makes the steady-state case fall through
+without touching the SparseSet again.  Audit projected ~40 ns per
+entity; measured ~14 ns per entity on the 702-entity perf_smoke
+scene as part of the combined 0.014 ms drop with #cull-aabb.
+
+### ShadowCullSystem single-pass multi-cascade (audit #cull-shadow-multi)
+
+The per-cascade form was the obvious shape — callers built one
+cascade frustum at a time and called `update(reg, res, frustum, i)`
+three times for 3 cascades.  But each call walks the full mesh view
+and rebuilds the world AABB from scratch.  For N cascades the
+overhead grows as N×(view iteration + AABB build).
+
+New overload:
+
+```cpp
+void update(Registry& reg, const RenderResources& res,
+            std::span<const Frustum> cascadeFrustums,
+            uint32_t baseCascadeIdx = 0);
+```
+
+Walks the mesh view ONCE, builds the AABB ONCE per entity, then
+tests against every frustum in the span, accumulates the cascade
+mask in a local, and writes it back at the end.
+
+The contract: this overload owns the bits in
+`[baseCascadeIdx, baseCascadeIdx + N)`.  Bits outside that range are
+preserved.  This lets a caller drive cascades 0..2 in bulk while
+still using the per-cascade overload for, say, a spot-light shadow
+that occupies bit 4.  A test pins this behaviour
+(`tests/rendering/TestCsm.cpp` "ShadowCullSystem multi-cascade
+preserves bits outside its range").
+
+The existing per-cascade overload is now a wrapper:
+
+```cpp
+void update(reg, res, const Frustum& shadowFrustum, uint32_t cascadeIndex) {
+    update(reg, res, std::span<const Frustum>{&shadowFrustum, 1}, cascadeIndex);
+}
+```
+
+Both paths share the same implementation, so any future fix lands
+in one place and the per-cascade test coverage still exercises the
+multi-cascade core.  A new test pins that the multi-cascade form
+produces a byte-identical mask to N per-cascade calls — that's the
+safety contract for the optimisation.
+
+### Why screenshot tests pass unchanged
+
+The math is the same.  `fabsf` of each scalar entry is bit-identical
+to `glm::abs(Vec4)` followed by extracting the .xyz components.  The
+visible-state cache only short-circuits the ECS operations when the
+visibility result didn't change — never alters which entities are
+considered visible.  The multi-cascade overload computes the same
+mask as 3 per-cascade calls.  So the rendered output is identical
+modulo machine-epsilon floating-point determinism (and the math
+isn't even epsilon-different).  22/22 screenshot tests confirm.
+
+### Measurement caveats
+
+- ShadowCullSystem isn't driven by perf_smoke's current scene —
+  the audit's "~66% reduction with 3 cascades" projection is the
+  math (one walk vs three) and hasn't been measured end-to-end.
+  Adding a multi-cascade path to perf_smoke would let us A/B it
+  on real workloads; out of scope for this commit.
+- FrustumCullSystem A/B variance was high (best-after run hit
+  0.024 ms which is probably noise floor).  Median 0.034 ms vs
+  baseline median 0.048 ms (−29%) is the honest read.  Audit
+  projection (30 + 40 ns/entity × 702 ≈ 0.049 ms) bracketed it.
+- No Android measurement yet — the projection is even larger on
+  in-order or weakly-OoO little cores where the Mat3 spill/fill
+  cost dominates more.

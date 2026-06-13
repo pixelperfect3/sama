@@ -1,8 +1,7 @@
 #include "engine/rendering/systems/FrustumCullSystem.h"
 
-#include <glm/glm.hpp>
-
 #include "engine/rendering/EcsComponents.h"
+#include "engine/rendering/systems/CullHelpers.h"
 
 namespace engine::rendering
 {
@@ -15,42 +14,46 @@ void FrustumCullSystem::update(ecs::Registry& reg, const RenderResources& res,
     meshView.each(
         [&](ecs::EntityID entity, const WorldTransformComponent& wtc, const MeshComponent& mc)
         {
+            // Single ECS probe for the prior visibility state.  Re-used to
+            // skip the redundant `has`-then-`emplace`/`remove` round-trip
+            // when the result didn't change between frames — which is the
+            // common case in steady scenes.  See audit item line 42.
+            const bool wasVisible = reg.has<VisibleTag>(entity);
+
             const Mesh* mesh = res.getMesh(mc.mesh);
-            if (!mesh)
+            if (mesh == nullptr)
             {
                 // No mesh data — treat as not visible.
-                reg.remove<VisibleTag>(entity);
+                if (wasVisible)
+                {
+                    reg.remove<VisibleTag>(entity);
+                }
                 return;
             }
 
-            // Approximate world-space AABB:
-            //   Transform the local AABB center by the world matrix, then add
-            //   local half-extents to produce a conservative world AABB.
-            //   This is an over-approximation (a rotated box won't fit perfectly),
-            //   but it is always conservative — no visible entity is ever culled.
-            const math::Vec3 localCenter = (mesh->boundsMin + mesh->boundsMax) * 0.5f;
-            const math::Vec3 localHalfExtent = (mesh->boundsMax - mesh->boundsMin) * 0.5f;
+            // Approximate world-space AABB (conservative — never culls a
+            // visible entity, but a rotated bound is slightly larger than
+            // a perfectly-fit OBB).  See CullHelpers.h for the explicit-
+            // fabsf form that replaces the `glm::abs(Vec4)` + Mat3 ctor +
+            // Mat3*Vec3 chain (audit line 41).
+            const math::Vec3 localCenter = (mesh->boundsMin + mesh->boundsMax) * 0.5F;
+            const math::Vec3 localHalfExtent = (mesh->boundsMax - mesh->boundsMin) * 0.5F;
+            math::Vec3 worldMin;
+            math::Vec3 worldMax;
+            computeConservativeWorldAabb(wtc.matrix, localCenter, localHalfExtent, worldMin,
+                                         worldMax);
 
-            // Transform center into world space.
-            const math::Vec3 worldCenter = math::Vec3(wtc.matrix * math::Vec4(localCenter, 1.0f));
+            const bool isVisible = frustum.containsAABB(worldMin, worldMax);
 
-            // Compute conservative world-space AABB by projecting the local
-            // half-extents through the absolute values of the rotation columns.
-            // This is exact for axis-aligned transforms and conservative for
-            // rotated transforms.
-            const math::Mat3 absRot = math::Mat3(glm::abs(wtc.matrix[0]), glm::abs(wtc.matrix[1]),
-                                                 glm::abs(wtc.matrix[2]));
-            const math::Vec3 worldHalfExtent = absRot * localHalfExtent;
-
-            const math::Vec3 worldMin = worldCenter - worldHalfExtent;
-            const math::Vec3 worldMax = worldCenter + worldHalfExtent;
-
-            if (frustum.containsAABB(worldMin, worldMax))
+            // Only touch the ECS when the state changes.  Steady-state hot
+            // entities (visible last frame, still visible this frame) skip
+            // the emplace/remove entirely and pay just the single `has`
+            // probe above.
+            if (isVisible && !wasVisible)
             {
-                if (!reg.has<VisibleTag>(entity))
-                    reg.emplace<VisibleTag>(entity);
+                reg.emplace<VisibleTag>(entity);
             }
-            else
+            else if (!isVisible && wasVisible)
             {
                 reg.remove<VisibleTag>(entity);
             }
