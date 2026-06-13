@@ -38,6 +38,10 @@ TEST_CASE("defaultTiers low tier values", "[game][tier]")
     CHECK(low.enableIBL == false);
     CHECK(low.enableSSAO == false);
     CHECK(low.enableBloom == false);
+    // Bloom is off on low; steps=0 prevents a tier-override that flips
+    // enableBloom=true from accidentally inheriting a 9-pass chain.  Item
+    // #T3 in docs/PERF_AUDIT_2026-05-25.md.
+    CHECK(low.bloomDownsampleSteps == 0);
     CHECK_THAT(low.renderScale, WithinAbs(0.75f, 1e-6f));
     CHECK(low.targetFPS == 30);
 }
@@ -55,6 +59,10 @@ TEST_CASE("defaultTiers mid tier values", "[game][tier]")
     CHECK(mid.enableIBL == true);
     CHECK(mid.enableSSAO == false);
     CHECK(mid.enableBloom == true);
+    // 3 steps → 5 fullscreen passes; saves ~1-1.5 ms on mid-tier devices
+    // vs the struct default of 5 (9 passes).  Item #T3 in
+    // docs/PERF_AUDIT_2026-05-25.md.
+    CHECK(mid.bloomDownsampleSteps == 3);
     CHECK_THAT(mid.renderScale, WithinAbs(1.0f, 1e-6f));
     CHECK(mid.targetFPS == 30);
 }
@@ -72,6 +80,8 @@ TEST_CASE("defaultTiers high tier values", "[game][tier]")
     CHECK(high.enableIBL == true);
     CHECK(high.enableSSAO == true);
     CHECK(high.enableBloom == true);
+    // Full 5-step / 9-pass chain — flagship GPUs absorb it below 0.5 ms.
+    CHECK(high.bloomDownsampleSteps == 5);
     CHECK_THAT(high.renderScale, WithinAbs(1.0f, 1e-6f));
     CHECK(high.targetFPS == 60);
 }
@@ -166,6 +176,58 @@ TEST_CASE("tierToRenderSettings uses Hard filter for small shadow maps", "[game]
 }
 
 // ---------------------------------------------------------------------------
+// Bloom downsampleSteps plumbing — audit item #T3.  The TierConfig field
+// must reach RenderSettings; previously tierToRenderSettings ignored it,
+// so mid tier inherited the struct default (5) regardless of what the
+// project asked for.  These tests pin the wire-up + the clamp at 5
+// (PostProcessResources::kMaxSteps).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("tierToRenderSettings forwards bloomDownsampleSteps", "[game][tier][bloom]")
+{
+    TierConfig tier;
+    tier.enableBloom = true;
+    tier.bloomDownsampleSteps = 3;
+
+    RenderSettings rs = ProjectConfig::tierToRenderSettings(tier);
+    CHECK(rs.postProcess.bloom.downsampleSteps == 3);
+}
+
+TEST_CASE("tierToRenderSettings clamps bloomDownsampleSteps at engine ceiling",
+          "[game][tier][bloom]")
+{
+    TierConfig tier;
+    tier.enableBloom = true;
+    // PostProcessResources::kMaxSteps = 5; anything above must saturate
+    // rather than overrun the bloomLevels_[5] array.
+    tier.bloomDownsampleSteps = 12;
+
+    RenderSettings rs = ProjectConfig::tierToRenderSettings(tier);
+    CHECK(rs.postProcess.bloom.downsampleSteps == 5);
+}
+
+TEST_CASE("tierToRenderSettings clamps negative bloomDownsampleSteps to 0", "[game][tier][bloom]")
+{
+    TierConfig tier;
+    tier.bloomDownsampleSteps = -1;  // hand-edited project.json or older format
+
+    RenderSettings rs = ProjectConfig::tierToRenderSettings(tier);
+    CHECK(rs.postProcess.bloom.downsampleSteps == 0);
+}
+
+TEST_CASE("defaultTiers bloomDownsampleSteps follow low<mid<high ordering", "[game][tier][bloom]")
+{
+    auto tiers = defaultTiers();
+    CHECK(tiers.at("low").bloomDownsampleSteps == 0);
+    CHECK(tiers.at("mid").bloomDownsampleSteps == 3);
+    CHECK(tiers.at("high").bloomDownsampleSteps == 5);
+    // Strict ordering — a refactor that flipped mid above high would be
+    // an inversion bug; this catches it loudly.
+    CHECK(tiers.at("low").bloomDownsampleSteps < tiers.at("mid").bloomDownsampleSteps);
+    CHECK(tiers.at("mid").bloomDownsampleSteps < tiers.at("high").bloomDownsampleSteps);
+}
+
+// ---------------------------------------------------------------------------
 // JSON parsing — tiers section
 // ---------------------------------------------------------------------------
 
@@ -187,7 +249,8 @@ TEST_CASE("JSON parsing with tiers section", "[game][tier]")
                 "enableFXAA": false,
                 "depthPrepass": false,
                 "renderScale": 0.5,
-                "targetFPS": 20
+                "targetFPS": 20,
+                "bloomDownsampleSteps": 2
             }
         }
     })";
@@ -211,6 +274,10 @@ TEST_CASE("JSON parsing with tiers section", "[game][tier]")
     CHECK(low.depthPrepass == false);
     CHECK_THAT(low.renderScale, WithinAbs(0.5f, 1e-6f));
     CHECK(low.targetFPS == 20);
+    // Project-supplied override must reach the parsed tier struct so a
+    // game can re-enable bloom on low-tier for an art test without forking
+    // the engine.
+    CHECK(low.bloomDownsampleSteps == 2);
 }
 
 TEST_CASE("JSON parsing with missing tiers uses defaults", "[game][tier]")

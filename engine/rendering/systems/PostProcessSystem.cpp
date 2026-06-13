@@ -228,7 +228,19 @@ bgfx::ViewId PostProcessSystem::submit(const PostProcessSettings& settings,
     bgfx::ViewId viewId = firstViewId;
     const uint16_t w = resources_.width();
     const uint16_t h = resources_.height();
-    const uint8_t steps = resources_.steps();
+    // Effective bloom step count.  Clamped to the FB allocation (validated
+    // upfront at init with the engine's max of 5).  This is the actual perf
+    // knob — `settings.bloom.downsampleSteps` used to be inert because the
+    // loops below indexed `resources_.steps()`, which only validate() ever
+    // changed and init() always seeded with 5.  Now a tier-config drop from
+    // 5 → 3 actually removes 4 fullscreen passes per frame (was the
+    // motivating audit item #T3).  We don't reallocate the mip chain on
+    // every settings tick — re-sizing FBs is far more expensive than the
+    // wasted-memory cost of keeping the top mips allocated.
+    const uint8_t maxSteps = resources_.steps();
+    const uint8_t requestedSteps =
+        settings.bloom.enabled ? static_cast<uint8_t>(settings.bloom.downsampleSteps) : uint8_t{0};
+    const uint8_t steps = requestedSteps < maxSteps ? requestedSteps : maxSteps;
 
     // ------------------------------------------------------------------
     // SSAO pass (optional) — runs first, before bloom, using the scene depth.

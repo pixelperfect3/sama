@@ -76,6 +76,15 @@ struct TierConfig
     bool depthPrepass = false;  // false for mobile TBDR
     float renderScale = 1.0f;
     int targetFPS = 30;
+
+    // Bloom mip-chain depth.  Each step is one downsample + one upsample
+    // fullscreen pass (plus the shared threshold pass at the top of the
+    // chain), so total bloom passes = 2*N - 1 for N >= 1.  The audit
+    // observed mid-tier devices burning ~1-1.5 ms on N=5 (9 passes) when
+    // N=3 (5 passes) is visually indistinguishable in motion.  Defaults:
+    // low=0 (effectively off even if enableBloom=true), mid=3, high=5.
+    // See docs/PERF_AUDIT_2026-05-25.md item #T3.
+    int bloomDownsampleSteps = 3;
 };
 
 /// Returns the three built-in default tiers: "low", "mid", "high".

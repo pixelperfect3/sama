@@ -2978,3 +2978,111 @@ Every other app in `apps/` either doesn't touch the gyro at all
 (helmet_demo, hierarchy_demo, etc.) or only the iOS variant uses
 it (`ios_test`).  None of them need the new flag set, and they all
 get the battery win for free.
+
+## Bloom — per-tier downsample steps (2026-06-12)
+
+Audit item #T3.  Two related bugs in the bloom pipeline:
+
+### Bug 1 — the settings field was inert
+
+`BloomSettings::downsampleSteps` looked like a real knob (it has a JSON
+parser, a struct default of 5, and `renderSettingsMedium()` even sets
+it to 3) but `PostProcessSystem::submit()` iterated
+`resources_.steps()` instead of `settings.bloom.downsampleSteps`.
+`resources_.steps()` is set once by `PostProcessSystem::init()` with a
+hard-coded `validate(w, h, /*downsampleSteps=*/5)`.  So no matter what
+the settings said, the loop always ran 5 levels deep.
+
+### Bug 2 — the tier translator dropped the value on the floor
+
+`ProjectConfig::tierToRenderSettings` wires every other tier-config
+field into `RenderSettings` but didn't touch `downsampleSteps`, so
+even a project that explicitly set "mid → 3" via JSON saw the struct
+default (5) at runtime.  Combined with Bug 1 the field was unreachable
+from two directions.
+
+### Combined fix
+
+- New `TierConfig::bloomDownsampleSteps` field.  Defaults: low=0,
+  mid=3, high=5.  The "low=0 even though enableBloom=false" pinning
+  is deliberate so a project that flips `enableBloom=true` on low for
+  an art test (single-scene debug, screenshot harness, etc.) doesn't
+  silently inherit the 9-pass chain.
+- `tierToRenderSettings` clamps the field to [0, 5] and writes it to
+  `rs.postProcess.bloom.downsampleSteps`.  The clamp at 5 saturates
+  rather than crashes when a hand-edited project.json passes 12 —
+  the engine's `kMaxSteps` is 5 (PostProcessResources allocates a
+  fixed-size `bloomLevels_[kMaxSteps]` array; an unclamped 12 would
+  walk off the end of that array in submit).
+- `submit()` computes the effective loop count as
+  `min(settings.bloom.downsampleSteps, resources_.steps())`.  The
+  outer min is necessary because the resource side still pre-allocates
+  the full 5-mip chain — we don't dynamically reallocate framebuffers
+  when settings change (resize cost dominates the wasted memory).
+
+### Pass-count math
+
+For N downsample steps, the bloom pipeline runs:
+- 1 threshold pass (full res, brightness extraction)
+- N - 1 downsample passes (halving each time)
+- N - 1 upsample passes (doubling each time, additive)
+
+Total = 2N - 1.  Each is a fullscreen pass at progressively lower
+resolution; the area sum is approximately 1 + 2 × (1/4 + 1/16 + 1/64
++ ...).  Memory bandwidth dominates GPU cost, especially on TBDR
+where each pass forces a tile resolve.
+
+| Tier | N | Total passes | Notes |
+|------|---|--------------|-------|
+| low  | 0 | 0            | bloom disabled |
+| mid  | 3 | 5            | (was 9 — 4 passes removed) |
+| high | 5 | 9            | full quality |
+
+The audit's "~1-1.5 ms saving on mid tier" comes from those 4 removed
+passes at 1080p with bandwidth-limited Mali / Adreno hardware.
+No on-device A/B has been measured yet for this commit — the audit
+projection sets the expectation and a follow-up perf_smoke run on
+the emulator + Pixel 6 should confirm the actual delta before this
+gets cited as a win in marketing material.
+
+### Why not reallocate FBs on settings change
+
+`PostProcessResources::validate()` shuts down + recreates every FB
+when steps changes.  At 1080p × RGBA16F that's 5 × ~16 MB
+texture-create calls + 5 fb-create calls — easily 5-10 ms of bgfx
+work, plus driver-side allocator churn.  For a one-time tier switch
+at app launch it doesn't matter, but the design needs to survive
+runtime settings changes (debug-UI sliders, dynamic tier drop on
+thermal throttling) without a 10 ms hitch.  Keeping the FBs at max
+and short-circuiting the loop is the simpler win.  Memory cost is
+constant (~22 MB at 1080p for the full mip chain) — not free, but
+not a per-frame surprise.  If the low-tier "drop the 22 MB" memory
+win becomes important on RAM-constrained devices we can add a
+resize-on-tier-change path at the boundary (rare event), separate
+from the per-frame submit() that runs at 60 Hz.
+
+### Tests
+
+- `defaultTiers <tier> values` extended to pin
+  `bloomDownsampleSteps` per tier (catches future struct-default
+  drift).
+- New `defaultTiers bloomDownsampleSteps follow low<mid<high
+  ordering` — checks the strict ordering invariant, so a refactor
+  that flipped mid above high would fail loudly.
+- New `tierToRenderSettings forwards bloomDownsampleSteps` — pins
+  the previously-missing wire-up.
+- New clamp tests at both ends (-1 → 0, 12 → 5).
+- Extended JSON-parsing test sets `bloomDownsampleSteps: 2` to
+  confirm the field round-trips through `loadFromString`.
+- All 22 screenshot tests still pass: the screenshot fixture uses
+  the engine defaults (not project-config tiers), so its bloom
+  output is unchanged.
+
+### Potential follow-up
+
+`PostProcessSystem::init()` still calls `validate(w, h, 5)` to
+pre-allocate the full mip chain even though most tiers will only
+use 0-3 of those mips at runtime.  Saves ~21 MB at 1080p if we
+ever shrink the allocation to match settings — but only worth
+doing if we hit memory pressure on low-tier devices.  Not in
+scope for #T3.

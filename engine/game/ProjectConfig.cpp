@@ -1,5 +1,7 @@
 #include "engine/game/ProjectConfig.h"
 
+#include <algorithm>
+
 #include "engine/core/Engine.h"
 #include "engine/io/Json.h"
 #include "engine/rendering/RenderSettings.h"
@@ -30,6 +32,10 @@ std::unordered_map<std::string, TierConfig> defaultTiers()
         t.depthPrepass = false;
         t.renderScale = 0.75f;
         t.targetFPS = 30;
+        // Bloom is off on low anyway, but pin steps=0 so a project that
+        // overrides only `enableBloom=true` (e.g. for a single-scene art
+        // test) doesn't accidentally inherit a 9-pass chain.
+        t.bloomDownsampleSteps = 0;
         tiers["low"] = t;
     }
 
@@ -48,6 +54,9 @@ std::unordered_map<std::string, TierConfig> defaultTiers()
         t.depthPrepass = false;
         t.renderScale = 1.0f;
         t.targetFPS = 30;
+        // 3 steps → 5 fullscreen passes (was 9 at the struct default of 5).
+        // ~1-1.5 ms saving on mid-tier devices per the audit.
+        t.bloomDownsampleSteps = 3;
         tiers["mid"] = t;
     }
 
@@ -66,6 +75,9 @@ std::unordered_map<std::string, TierConfig> defaultTiers()
         t.depthPrepass = false;
         t.renderScale = 1.0f;
         t.targetFPS = 60;
+        // 5 steps → 9 fullscreen passes — full bloom depth on flagship GPUs
+        // where the cost is below 0.5 ms and the wider halo is visible.
+        t.bloomDownsampleSteps = 5;
         tiers["high"] = t;
     }
 
@@ -116,6 +128,11 @@ rendering::RenderSettings ProjectConfig::tierToRenderSettings(const TierConfig& 
 
     rs.postProcess.ssao.enabled = tier.enableSSAO;
     rs.postProcess.bloom.enabled = tier.enableBloom;
+    // Clamp to BloomSettings::downsampleSteps field width (uint8_t) and the
+    // engine's hard ceiling (PostProcessResources::kMaxSteps = 5).  A higher
+    // tier-config value just saturates — never crash, never under-set.
+    rs.postProcess.bloom.downsampleSteps =
+        static_cast<uint8_t>(std::clamp(tier.bloomDownsampleSteps, 0, 5));
     rs.postProcess.fxaaEnabled = tier.enableFXAA;
 
     rs.depthPrepassEnabled = tier.depthPrepass;
@@ -157,6 +174,8 @@ static TierConfig parseTierConfig(io::JsonValue obj, TierConfig base = TierConfi
         base.renderScale = obj["renderScale"].getFloat(base.renderScale);
     if (obj.hasMember("targetFPS"))
         base.targetFPS = obj["targetFPS"].getInt(base.targetFPS);
+    if (obj.hasMember("bloomDownsampleSteps"))
+        base.bloomDownsampleSteps = obj["bloomDownsampleSteps"].getInt(base.bloomDownsampleSteps);
 
     return base;
 }
