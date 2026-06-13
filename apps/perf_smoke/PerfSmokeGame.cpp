@@ -99,8 +99,12 @@ float maxOf(const std::vector<float>& v)
 namespace perf_smoke
 {
 
-PerfSmokeGame::PerfSmokeGame(int framesToRun, const PerfBudgets& budgets, bool singleThreaded)
-    : framesToRun_(framesToRun), budgets_(budgets), singleThreaded_(singleThreaded)
+PerfSmokeGame::PerfSmokeGame(int framesToRun, const PerfBudgets& budgets, bool singleThreaded,
+                             bool dirtyAll)
+    : framesToRun_(framesToRun),
+      budgets_(budgets),
+      singleThreaded_(singleThreaded),
+      dirtyAll_(dirtyAll)
 {
     // Pre-allocate so push_back never reallocates inside the measurement loop.
     const auto reserve = [&](std::vector<float>& v) { v.reserve(framesToRun_); };
@@ -279,17 +283,31 @@ void PerfSmokeGame::onUpdate(engine::core::Engine& engine, Registry& reg, float 
 
     frameStart_ = Clock::now();
 
+    // --dirty-all (off by default): mark every TransformComponent self-dirty
+    // before timing.  Without this every frame after the first sees all-clean
+    // flags and the TransformSystem fast path skips composeLocal +
+    // setWorldMatrix entirely — perfect for verifying the dirty-tracking is
+    // intact, useless for measuring the audit's composeLocal /
+    // WorldTransform-lookup items.  Toggling at the dirtying step (not in
+    // TransformSystem itself) keeps the production code path untouched.
+    if (dirtyAll_)
+    {
+        reg.view<engine::rendering::TransformComponent>().each(
+            [](engine::ecs::EntityID /*entity*/, engine::rendering::TransformComponent& tcomp)
+            { tcomp.flags |= 0x01; });
+    }
+
     // GameRunner::runLoop calls transformSys.update() after onUpdate but
     // before onRender; we re-run it here ourselves so we can attribute the
-    // cost to our own timer.  The second call done by GameRunner will see
-    // all-clean dirty flags so it's a tight no-op fast path.
+    // cost to our own timer.  In the default (clean) path the second call
+    // done by GameRunner sees all-clean dirty flags so it's a tight no-op
+    // fast path.  Under --dirty-all the loop above marks every entity dirty
+    // so this call exercises the full composeLocal + setWorldMatrix path.
     auto t0 = Clock::now();
     engine::scene::TransformSystem transformSys;
     transformSys.update(reg);
     samples_.transform.push_back(msSince(t0));
 
-    // Drive cycling motion on the helmet so the dirty-flag path stays warm.
-    // Without this, TransformSystem's second run wouldn't be representative.
     (void)engine;
 }
 

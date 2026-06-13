@@ -16,22 +16,56 @@ namespace
 constexpr uint8_t kSelfDirty = 0x01;
 constexpr uint8_t kSubtreeDirty = 0x02;
 
+// Build the local TRS matrix directly instead of via three glm operations.
+//
+// Old shape: glm::translate(I, t) * glm::mat4_cast(q) * glm::scale(rot, s)
+//   - glm::translate writes the identity + 3 translation slots (~16 muls).
+//   - glm::mat4_cast builds the rotation mat4 (~20 muls).
+//   - glm::scale multiplies cols 0/1/2 by s.x/s.y/s.z (~12 muls).
+//   - The two mat4*mat4 multiplies dominate: ~64 muls each = 128 muls.
+//   - Total ≈ 176 muls/call, plus three temporary Mat4 objects spilled to
+//     the stack (~192 bytes), most of which goes through L1.
+//
+// Direct construction:
+//   R = mat3_cast(q)        // ~20 muls, in registers.
+//   col0 = R[0] * s.x       //  3 muls
+//   col1 = R[1] * s.y       //  3 muls
+//   col2 = R[2] * s.z       //  3 muls
+//   col3 = (t, 1)           //  0 muls
+//   Total ≈ 29 muls/call, no Mat4 temporaries.
+//
+// The trick is that for a pure TRS the local matrix has the closed form
+//   [ R*S | t ]
+//   [  0  | 1 ]
+// where R is the unit-quat rotation and S is diag(scale).  Column-major
+// glm::mat4 storage means each column is one Vec4 — exactly what we want
+// for the constructor below.  The fourth column is the position with w=1.
+//
+// See audit item line 38 in docs/PERF_AUDIT_2026-05-25.md.
 math::Mat4 composeLocal(const rendering::TransformComponent& tcomp)
 {
-    math::Mat4 mat = glm::translate(math::Mat4(1.0f), tcomp.position);
-    mat *= glm::mat4_cast(tcomp.rotation);
-    mat = glm::scale(mat, tcomp.scale);
-    return mat;
+    const math::Mat3 rot = glm::mat3_cast(tcomp.rotation);
+    return {math::Vec4(rot[0] * tcomp.scale.x, 0.0f), math::Vec4(rot[1] * tcomp.scale.y, 0.0f),
+            math::Vec4(rot[2] * tcomp.scale.z, 0.0f), math::Vec4(tcomp.position, 1.0f)};
 }
 
-// Write the world matrix to an entity, creating WorldTransformComponent if absent.
-// NOTE: the caller must not hold any WorldTransformComponent pointers across this
-// call — emplace may reallocate the dense WorldTransformComponent array.
+// Write the world matrix into an existing WorldTransformComponent or create one
+// when the cached pointer is null.  Caller passes the cached pointer it already
+// fetched at the start of the entity's processing — saves one sparse-set lookup
+// per entity (the old helper used `reg.has() + reg.get() + reg.emplace()`
+// internally, even though the caller had just done `reg.has()` immediately
+// before; three lookups collapse to one).  See audit item line 39 in
+// docs/PERF_AUDIT_2026-05-25.md.
+//
+// CAUTION: when `wtc == nullptr`, emplace may reallocate the dense
+// WorldTransformComponent array — any pointer the caller has from a *different*
+// entity's prior get() is invalidated.  In this file we use wtc only for the
+// entity we just emplaced, so the invalidation is harmless for our callers.
 // TransformComponent pointers are unaffected (different sparse-set storage).
-void setWorldMatrix(ecs::Registry& reg, ecs::EntityID entity, const math::Mat4& world)
+void writeWorldMatrix(ecs::Registry& reg, ecs::EntityID entity,
+                      rendering::WorldTransformComponent* wtc, const math::Mat4& world)
 {
-    auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);
-    if (wtc)
+    if (wtc != nullptr)
     {
         wtc->matrix = world;
     }
@@ -100,7 +134,13 @@ void updateChildren(ecs::Registry& reg, const math::Mat4& parentWorld,
             continue;
         }
 
-        const bool missingWorld = !reg.has<rendering::WorldTransformComponent>(child);
+        // One sparse-set lookup for both the missing-world test and the later
+        // write path.  Old code did `reg.has<...>` here then
+        // `reg.get<...>` again inside the old setWorldMatrix helper — three
+        // separate sparse-set hits per child in the dirty path.  See audit
+        // line 39.
+        auto* wtc = reg.get<rendering::WorldTransformComponent>(child);
+        const bool missingWorld = (wtc == nullptr);
         const bool selfDirty = (tcomp->flags & kSelfDirty) != 0;
         const bool subtreeDirty = (tcomp->flags & kSubtreeDirty) != 0;
         const bool childDirty = parentDirty || selfDirty || missingWorld;
@@ -117,7 +157,10 @@ void updateChildren(ecs::Registry& reg, const math::Mat4& parentWorld,
         if (childDirty)
         {
             math::Mat4 world = parentWorld * composeLocal(*tcomp);
-            setWorldMatrix(reg, child, world);
+            writeWorldMatrix(reg, child, wtc, world);
+            // wtc may now be invalidated (when it was null and emplace ran).
+            // We don't read it again past this point, so the dangling
+            // pointer is harmless — but be cautious if you add code below.
             // Clear BOTH bits — this node is fully up to date and so are all
             // descendants once the recursive call below returns (parentDirty
             // forces every descendant to recompute).
@@ -135,12 +178,13 @@ void updateChildren(ecs::Registry& reg, const math::Mat4& parentWorld,
             // isn't.  Don't recompute the world matrix for this node — just
             // descend with parentDirty=false so each dirty descendant gets
             // found and recomputed against this node's unchanged world.
+            // wtc is non-null on this branch: childDirty was false, which
+            // means missingWorld was false, which means we found a
+            // WorldTransformComponent above.  Saves a redundant get().
             auto* cc = reg.get<ChildrenComponent>(child);
             if (cc != nullptr)
             {
-                auto* wtc = reg.get<rendering::WorldTransformComponent>(child);
-                math::Mat4 world = wtc ? wtc->matrix : composeLocal(*tcomp);
-                updateChildren(reg, world, *cc, false);
+                updateChildren(reg, wtc->matrix, *cc, false);
             }
             // After the recursion, every dirty descendant has been cleared,
             // so the subtree-dirty marker here is no longer accurate; clear
@@ -169,7 +213,10 @@ void TransformSystem::update(ecs::Registry& reg)
                 return;
             }
 
-            const bool missingWorld = !reg.has<rendering::WorldTransformComponent>(entity);
+            // One sparse-set lookup serves both the missing-world test and
+            // the write path below.  See audit line 39.
+            auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);
+            const bool missingWorld = (wtc == nullptr);
             const bool selfDirty = (tcomp.flags & kSelfDirty) != 0;
             const bool subtreeDirty = (tcomp.flags & kSubtreeDirty) != 0;
             const bool dirty = selfDirty || missingWorld;
@@ -184,7 +231,7 @@ void TransformSystem::update(ecs::Registry& reg)
             if (dirty)
             {
                 math::Mat4 world = composeLocal(tcomp);
-                setWorldMatrix(reg, entity, world);
+                writeWorldMatrix(reg, entity, wtc, world);
                 tcomp.flags &= ~(kSelfDirty | kSubtreeDirty);
 
                 auto* cc = reg.get<ChildrenComponent>(entity);
@@ -196,13 +243,12 @@ void TransformSystem::update(ecs::Registry& reg)
             else
             {
                 // subtreeDirty == true, root clean.  Don't recompute the root;
-                // descend to find the dirty descendant(s).
+                // descend to find the dirty descendant(s).  wtc is non-null
+                // here (dirty == false implies missingWorld == false).
                 auto* cc = reg.get<ChildrenComponent>(entity);
                 if (cc != nullptr)
                 {
-                    auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);
-                    math::Mat4 world = wtc ? wtc->matrix : composeLocal(tcomp);
-                    updateChildren(reg, world, *cc, false);
+                    updateChildren(reg, wtc->matrix, *cc, false);
                 }
                 tcomp.flags &= ~kSubtreeDirty;
             }

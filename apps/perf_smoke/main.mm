@@ -6,6 +6,14 @@
 //      build/perf_smoke --frames=1200   (override frame count via long-form)
 //      build/perf_smoke 600 --single    (single-threaded bgfx)
 //      build/perf_smoke 600 --multi     (multi-threaded bgfx, the default)
+//      build/perf_smoke --dirty-all     (mark every transform dirty every frame
+//                                        — measures the TransformSystem worst
+//                                        case where composeLocal + setWorldMatrix
+//                                        fire for every entity; the default path
+//                                        is all-clean after frame 0 because
+//                                        nothing moves, so the audit's
+//                                        composeLocal / WorldTransform-lookup
+//                                        items would yield no signal otherwise)
 //
 // Unknown / misspelled flags print a warning to stderr and the binary
 // continues with defaults — catches typos like --singel without breaking
@@ -36,6 +44,7 @@ int main(int argc, char** argv)
 {
     int frames = 600;
     bool singleThreaded = false;  // multi-threaded is the new default.
+    bool dirtyAll = false;        // mark every transform dirty every frame.
 
     for (int i = 1; i < argc; ++i)
     {
@@ -47,6 +56,10 @@ int main(int argc, char** argv)
         else if (std::strcmp(arg, "--multi") == 0)
         {
             singleThreaded = false;
+        }
+        else if (std::strcmp(arg, "--dirty-all") == 0)
+        {
+            dirtyAll = true;
         }
         else if (std::strncmp(arg, "--frames=", 9) == 0)
         {
@@ -91,7 +104,15 @@ int main(int argc, char** argv)
     desc.singleThreaded = singleThreaded;
 
     perf_smoke::PerfBudgets budgets;  // defaults — see PerfSmokeGame.h
-    perf_smoke::PerfSmokeGame game(frames, budgets, singleThreaded);
+    if (dirtyAll)
+    {
+        // --dirty-all changes the workload from "almost no work" to "every
+        // entity recomputes every frame".  The static default budget would
+        // FAIL the gate spuriously, so we slacken it here.  This is a tool
+        // for A/B measurement, not a regression gate.
+        budgets.transformMeanMs = 5.0f;
+    }
+    perf_smoke::PerfSmokeGame game(frames, budgets, singleThreaded, dirtyAll);
 
     engine::game::GameRunner runner(game);
     const int runResult = runner.run(desc);

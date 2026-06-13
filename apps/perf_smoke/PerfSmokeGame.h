@@ -68,8 +68,8 @@ public:
     // is informational only.  Default matches EngineDesc::singleThreaded
     // (false = multi-threaded) so callers that omit the arg get a label
     // consistent with the engine default.
-    explicit PerfSmokeGame(int framesToRun, const PerfBudgets& budgets,
-                           bool singleThreaded = false);
+    explicit PerfSmokeGame(int framesToRun, const PerfBudgets& budgets, bool singleThreaded = false,
+                           bool dirtyAll = false);
 
     void onInit(engine::core::Engine& engine, engine::ecs::Registry& reg) override;
     void onFixedUpdate(engine::core::Engine& engine, engine::ecs::Registry& reg,
@@ -99,6 +99,7 @@ private:
     int framesToRun_;
     PerfBudgets budgets_;
     bool singleThreaded_ = true;  // label only; see ctor comment.
+    bool dirtyAll_ = false;       // --dirty-all: re-dirty every transform every frame.
     int frameIndex_ = 0;
     bool done_ = false;
     int exitCode_ = 0;

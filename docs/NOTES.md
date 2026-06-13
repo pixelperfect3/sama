@@ -3208,3 +3208,150 @@ permutation alongside the existing `SKINNED` define, with
 rendering-pipeline plumbing to pick the right variant per tier.
 That's a separate piece of work — left open as the unfinished half
 of #S1.
+
+## TransformSystem — direct TRS + cached WorldTransform pointer (2026-06-12)
+
+Audit items at TransformSystem.cpp:15-21 (composeLocal) and
+TransformSystem.cpp:51-72 (WorldTransform single-get).  Both small,
+mechanical wins on the same hot path — landed together with a clean
+A/B in `perf_smoke`.
+
+### composeLocal — old shape
+
+```cpp
+Mat4 m = translate(Mat4(1), pos);   // 16 muls + identity write
+m *= mat4_cast(quat);                // 20 muls + mat4*mat4 (64 muls)
+m = scale(m, scale);                 // 12 muls
+return m;
+```
+
+That's ~176 muls/call and three intermediate Mat4 objects spilled
+to the stack (~192 bytes through L1).  Most of the cost is in the
+two mat4*mat4 multiplies — translate produces an almost-identity
+which is fully general by the time `*= mat4_cast(quat)` runs.
+
+### composeLocal — new shape
+
+```cpp
+const Mat3 rot = glm::mat3_cast(quat);   // ~20 muls
+return {
+    Vec4(rot[0] * scale.x, 0),           // 3 muls
+    Vec4(rot[1] * scale.y, 0),           // 3 muls
+    Vec4(rot[2] * scale.z, 0),           // 3 muls
+    Vec4(pos, 1),                        // 0 muls
+};
+```
+
+Closed-form TRS: `[R*S | t]` with the bottom row `[0 0 0 1]`.  The
+Mat4 brace-init writes four columns in place — no intermediate
+Mat4 ever materialises.  ~29 muls/call.
+
+### WorldTransform — old shape (3 sparse-set hits per child)
+
+```cpp
+const bool missing = !reg.has<WorldTransform>(child);   // hit 1
+// ...
+setWorldMatrix(reg, child, world);
+  // inside:
+  auto* wtc = reg.get<WorldTransform>(child);           // hit 2
+  if (wtc) wtc->matrix = world;
+  else reg.emplace<WorldTransform>(child, world);       // hit 3
+```
+
+The `has + get` are redundant — `get` already returns nullptr for
+the missing case.
+
+### WorldTransform — new shape (1 lookup)
+
+```cpp
+auto* wtc = reg.get<WorldTransform>(child);
+const bool missing = (wtc == nullptr);
+// ...
+writeWorldMatrix(reg, child, wtc, world);
+  // inside:
+  if (wtc) wtc->matrix = world;
+  else reg.emplace<WorldTransform>(child, world);
+```
+
+One sparse-set lookup per entity instead of three.  The
+not-dirty-but-subtree-dirty branch also drops a redundant
+`reg.get<WorldTransform>` (we already had the pointer from the
+top-of-iteration get).
+
+### Measurement methodology
+
+Existing `perf_smoke` measures the all-clean fast path (after frame
+0, nothing moves, the dirty-flag check short-circuits before
+composeLocal ever runs).  That's correct for testing the
+dirty-tracking invariant but useless for measuring composeLocal
+cost.  Added a `--dirty-all` CLI flag that marks every
+TransformComponent self-dirty every frame, before the timed
+update.  This exercises Pass 1 + Pass 2 + composeLocal +
+writeWorldMatrix for every entity, every frame — the worst case
+the audit's projections were sized against.
+
+Default path unchanged; `--dirty-all` is opt-in for A/B work.
+
+### Clean A/B numbers (same session, same machine, 5 runs each)
+
+| | Baseline mean | After mean | Delta |
+|--|---------|-------|-------|
+| `--dirty-all` mean | 0.062 ± 0.001 | 0.046 ± 0.001 | **−26%** |
+| `--dirty-all` p99  | 0.074         | 0.056         | **−24%** |
+| `--dirty-all` max  | 0.077         | 0.061         | **−21%** |
+| Default mean       | 0.033         | 0.034         | flat (noise) |
+
+702 entities, 600 frames per run, M-series Mac, multi-threaded bgfx
+mode.  The before/after variance is tight (±0.001 ms) once
+background load settles, which makes the 26% mean drop a real
+signal, not a noise artefact.
+
+### Why audit's "50%" overshot
+
+The audit's mul-count math (176 → 29) suggested ~85% drop in
+composeLocal's ALU cost.  But the per-entity envelope also
+contains:
+
+- The flags check (`!(tcomp->flags & kSelfDirty)`)
+- The Pass 1 ancestor walk (when applicable)
+- Sparse-set view iteration overhead
+- The `reg.get<HierarchyComponent>` test
+- The new `reg.get<WorldTransform>` cache lookup
+- The `writeWorldMatrix` branch + write
+
+composeLocal itself is maybe 30-40% of that envelope, and we
+roughly halved it — so the measured 26% on the full
+TransformSystem time is internally consistent with the muls
+analysis, just smaller than the headline-projection number.
+
+### Why the clean fast path didn't regress
+
+In the all-clean case, every entity short-circuits at
+`if (!dirty && !subtreeDirty) return;` before composeLocal or
+writeWorldMatrix run.  My change adds *one* `reg.get<WorldTransform>`
+to the path (where the old code did `reg.has<WorldTransform>`),
+but those two have essentially identical cost in the ECS layer —
+both are sparse-set probes.  The 0.033 → 0.034 ms change is
+within run-to-run noise; the two are statistically equivalent.
+
+### Hazard worth knowing
+
+`writeWorldMatrix(reg, entity, wtc, world)` may invalidate the
+caller's `wtc` pointer when emplace runs (dense WorldTransform
+array can grow).  The current call sites never read `wtc` after
+the write, so the dangling pointer is harmless.  A future edit
+that adds `if (wtc->matrix == identity) ...` *after* the write
+would be a subtle use-after-free.  The function-level comment
+calls this out so a future maintainer reading just the helper
+knows the invariant.
+
+### Tests
+
+Existing TestTransformSystem coverage (113 assertions, 30 cases)
+is sufficient: it includes the poison-sentinel that proves the
+recursion only writes when a node is dirty, the dirty-leaf
+propagation case, and the system-managed flag policy.  Those
+catch any regression in the dirty-tracking; they also catch a
+bug in composeLocal because every test fixture builds a
+matrix and checks the result.  No new tests added — the existing
+ones cover the changed code.
