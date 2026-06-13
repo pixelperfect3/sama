@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <thread>
 
 #include "engine/input/InputSystem.h"
 #include "engine/rendering/ShaderLoader.h"
@@ -86,6 +87,37 @@ Engine::Engine() = default;
 void Engine::setClearColor(uint32_t rgba)
 {
     clearColor_ = rgba;
+}
+
+void Engine::maybeCreateSystemThreadPool(const EngineDesc& desc)
+{
+    if (!desc.useSystemThreadPool)
+    {
+        return;
+    }
+
+    uint32_t poolSize = desc.systemThreadPoolSize;
+    if (poolSize == 0)
+    {
+        // Engine picks: reserve 2 cores for the bgfx render thread + the OS,
+        // clamp to [2, 8].  2 is the floor where parallelism still amortises
+        // ThreadPool dispatch cost; 8 is the ceiling where shared-resource
+        // contention (cache lines, ECS sparse-set storage) starts hurting
+        // more than parallelism helps on typical scenes.  Override via
+        // EngineDesc::systemThreadPoolSize for tier-aware sizing (low-tier
+        // phones may prefer 2; desktop wants 6+).
+        const uint32_t hardware = std::thread::hardware_concurrency();
+        poolSize = (hardware > 2) ? (hardware - 2) : 2;
+        if (poolSize < 2)
+        {
+            poolSize = 2;
+        }
+        if (poolSize > 8)
+        {
+            poolSize = 8;
+        }
+    }
+    systemThreadPool_ = std::make_unique<threading::ThreadPool>(poolSize);
 }
 
 Engine::~Engine()
@@ -181,6 +213,9 @@ bool Engine::init(const EngineDesc& desc)
 
     // -- Frame arena ------------------------------------------------------
     frameArena_ = std::make_unique<memory::FrameArena>(desc.frameArenaSize);
+
+    // -- Per-frame system ThreadPool (opt-in) -----------------------------
+    maybeCreateSystemThreadPool(desc);
 
     // -- Timing -----------------------------------------------------------
     prevTime_ = glfwGetTime();
@@ -636,6 +671,9 @@ bool Engine::initAndroid(struct android_app* app, const EngineDesc& desc)
     // -- Frame arena ------------------------------------------------------
     frameArena_ = std::make_unique<memory::FrameArena>(desc.frameArenaSize);
 
+    // -- Per-frame system ThreadPool (opt-in) -----------------------------
+    maybeCreateSystemThreadPool(desc);
+
     // -- Audio (SoLoud via miniaudio -> AAudio / OpenSL ES) ---------------
     // miniaudio's NULL-context init auto-selects the best available Android
     // backend at runtime: AAudio on API 26+ (lower latency, modern), with
@@ -976,6 +1014,9 @@ bool Engine::initIos(platform::ios::IosWindow* window, platform::ios::IosTouchIn
 
     // -- Frame arena ------------------------------------------------------
     frameArena_ = std::make_unique<memory::FrameArena>(desc.frameArenaSize);
+
+    // -- Per-frame system ThreadPool (opt-in) -----------------------------
+    maybeCreateSystemThreadPool(desc);
 
     // -- Audio (SoLoud via miniaudio -> CoreAudio) ------------------------
     // SoLoud's miniaudio backend automatically picks the CoreAudio path on

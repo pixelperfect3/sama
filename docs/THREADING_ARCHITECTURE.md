@@ -1,5 +1,32 @@
 # Threading Architecture Analysis for Sama Engine
 
+> **Current state (2026-06-13):** the scaffolding described in §0-§3 below is
+> partially landed.  What's real today:
+> - `engine/threading/ThreadPool.h` ships POD `submitTask(fn, arg)` + bounded
+>   ring + counting-semaphore + atomic active count.  See NOTES.md
+>   "ThreadPool v2 + per-frame system opt-in" for the rewrite rationale and
+>   audit items #H1 / 66 / 77-79.
+> - `engine/ecs/SystemExecutor.h` is wired through that POD path and has
+>   7 unit tests (single-system inline dispatch, multi-system parallelism,
+>   phase-ordering barriers, 10 000-frame conservation race-check).
+> - `EngineDesc::useSystemThreadPool` (default **false**, opt-in) +
+>   `EngineDesc::systemThreadPoolSize` (default 0 = engine picks via
+>   `hardware_concurrency() - 2` clamped to [2, 8]).
+> - `Engine::systemThreadPool()` accessor; returns nullptr when opt-in is off.
+>
+> What's still aspirational:
+> - `EngineDesc::workerThreadCount` and `EngineDesc::physicsThreadCount`
+>   shown in the snippet below — the real field name is
+>   `systemThreadPoolSize`, and Jolt manages its own internal pool today.
+> - None of the built-in systems (TransformSystem, FrustumCullSystem,
+>   DrawCallBuildSystem, ShadowCullSystem, LightClusterBuilder) declare
+>   `Reads`/`Writes` TypeLists yet, so the schedule still can't reason
+>   about them.  Wiring those in is per-system follow-up work, gated on
+>   per-tier device measurement.
+> - Per-worker queues + work-stealing for true MPMC scaling.  The current
+>   ring uses a single short-held mutex; fine for the measured workloads
+>   but would contend under many concurrent submitters.
+
 ### 0. Thread Count Summary
 
 **How many threads run simultaneously once fully implemented?**

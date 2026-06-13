@@ -95,3 +95,43 @@ TEST_CASE("EngineDesc::enableGyro can be set to true", "[gyro][engine-desc]")
     desc.enableGyro = true;
     REQUIRE(desc.enableGyro == true);
 }
+
+// ---------------------------------------------------------------------------
+// EngineDesc::useSystemThreadPool opt-in plumbing.  See audit item line 80
+// in docs/PERF_AUDIT_2026-05-25.md.  Default is single-threaded per-system
+// execution (the historical engine behaviour) — games opt in to a
+// thread-pool dispatcher by setting `useSystemThreadPool = true`.  Engine
+// builds the pool at init; `Engine::systemThreadPool()` returns nullptr
+// otherwise.  The integration path (constructing an actual Engine) needs
+// a window + bgfx, so we can't exercise it from a headless unit test —
+// these pin the EngineDesc plumbing.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("EngineDesc::useSystemThreadPool defaults to false (opt-in)", "[threading][engine-desc]")
+{
+    engine::core::EngineDesc desc{};
+    REQUIRE(desc.useSystemThreadPool == false);
+}
+
+TEST_CASE("EngineDesc::useSystemThreadPool can be set to true", "[threading][engine-desc]")
+{
+    engine::core::EngineDesc desc{};
+    desc.useSystemThreadPool = true;
+    REQUIRE(desc.useSystemThreadPool == true);
+}
+
+TEST_CASE("EngineDesc::systemThreadPoolSize defaults to 0 (engine picks)",
+          "[threading][engine-desc]")
+{
+    // 0 is the "let the engine pick" sentinel — see
+    // Engine::maybeCreateSystemThreadPool for the [2, 8] clamp.
+    engine::core::EngineDesc desc{};
+    REQUIRE(desc.systemThreadPoolSize == 0);
+}
+
+TEST_CASE("EngineDesc::systemThreadPoolSize can be overridden", "[threading][engine-desc]")
+{
+    engine::core::EngineDesc desc{};
+    desc.systemThreadPoolSize = 4;
+    REQUIRE(desc.systemThreadPoolSize == 4);
+}

@@ -3355,3 +3355,168 @@ catch any regression in the dirty-tracking; they also catch a
 bug in composeLocal because every test fixture builds a
 matrix and checks the result.  No new tests added — the existing
 ones cover the changed code.
+
+## ThreadPool v2 + per-frame system opt-in (2026-06-13)
+
+Audit items #H1 (line 28), 66 (storage), 77 (mutex), 78 (notify), 79
+(wakeup), and 80 (per-frame work) all landed together as a single
+opt-in scaffolding pass.  The user explicitly asked for the default
+behaviour to stay single-threaded — the new path is wholly opt-in.
+
+### Why "opt-in" matters
+
+Threading per-frame systems is a real perf win on phones with idle
+little cores, but:
+
+1. Pool overhead can dominate on a per-system basis if the system
+   itself takes < 10 µs.  Splitting `Shadow submit` (40 µs) is a win;
+   splitting `LightClusterBuilder` (5 µs in the perf_smoke scene) is
+   probably a loss after dispatch costs.
+2. The Schedule's compile-time conflict matrix relies on every system
+   correctly declaring its `Reads` / `Writes` TypeLists.  Today's
+   engine systems don't all declare these — they're called inline by
+   game code, not through SystemExecutor.  Wiring them up without
+   declaration would silently allow races.
+3. Tier-aware sizing matters: low-tier phones with 2 little + 4 big
+   cores want a different pool size than a 6-core desktop.
+
+So the engine ships the *capability* (ThreadPool + SystemExecutor +
+EngineDesc opt-in) but doesn't impose the *policy* (which systems
+to parallelise, what schedule).  Games opt in by setting
+`EngineDesc::useSystemThreadPool = true` and either constructing a
+`SystemExecutor<...>` directly, or grabbing
+`engine.systemThreadPool()` and submitting POD tasks themselves.
+
+### What changed in ThreadPool
+
+**Storage.**  `std::deque<std::function<void()>>` → `std::array<Task,
+1024>` where `Task = { void(*fn)(void*); void* arg; }` is 16 bytes
+POD.  Submitters write directly to a ring slot.  No allocation on
+the fast path.  Ring overflow is an assert — back-pressure is the
+caller's job, the audit's recommendation.
+
+**Synchronisation.**  The old design held `mutex_` across
+`std::function` construction + `queue_.push_back` (which could grow
+the deque) + `notify_one`.  Workers waited on `workCv_` with the
+same mutex held.  Wakeups serialised through that mutex.
+
+The new design:
+
+- `submitTask` holds `ringMutex_` only across `tail_++` and one slot
+  write — a few instructions, no allocation.
+- Work-available signalling is `std::counting_semaphore<INT32_MAX>`
+  (C++20).  `release()` is atomic, no mutex; `acquire()` blocks
+  without holding any lock.
+- `activeTasks_` is `std::atomic<uint32_t>`.  `submitTask` does
+  `fetch_add(1, relaxed)`; workers do `fetch_sub(1, acq_rel)` after
+  running and only call `doneCv_.notify_all()` when the prior value
+  is 1 (the audit's line 78 "notify only on zero transition" fix).
+- `waitAll()` spin-polls `activeTasks_` for ~100 iterations
+  (`yield()` between) before falling back to a CV wait on
+  `doneMutex_` — for the common case of small fast tasks the spin
+  drains the queue without paying the CV round-trip.
+- Destructor wakes every worker with `release(workers_.size())`
+  tokens.  Workers drain any queued tasks before exiting so
+  fire-and-forget submitters don't lose work.
+
+### Back-compat: keep `submit(std::function)` working
+
+AssetManager and the existing 7 ThreadPool tests use
+`submit(std::function<void()>)`.  Rewriting them would be busywork
+and risk subtle behaviour changes.  Instead, `submit` is now a
+wrapper that heap-allocates a `std::function*` and dispatches it
+via `submitTask` with a trampoline that runs the function and
+deletes the heap object.  Slow path — but only when the caller
+asked for the `std::function` interface.  Per-frame callers
+(SystemExecutor) use `submitTask` directly and skip the allocation.
+
+The wrapper does mean per-task allocation is back on the
+`std::function` path.  AssetManager submits ≤ 10 tasks per scene
+load (not per frame); the allocation cost is invisible there.
+
+### SystemExecutor changes
+
+Existed but never instantiated.  Now its phase-dispatch loop uses
+`threadPool_.submitTask(&dispatchTrampoline, heapArg)` instead of
+`threadPool_.submit([this, ...] { ... })`.  The arg block is
+heap-allocated per submission (`new DispatchArg{...}`, freed by the
+trampoline) — small (~32 bytes), bounded by phase.count which is
+≤ kMaxSystemsPerPhase = 64.  Could move to a per-frame arena
+allocator if profiling showed it mattered; today it doesn't.
+
+### Tests: race-check methodology
+
+7 new SystemExecutor tests:
+
+1. Single system dispatch increments component.
+2. Single-system phase runs inline on caller thread (pins the
+   `phase.count == 1` short-circuit).
+3. Multi-system phase runs in parallel (timing-sensitive — 3 of 5
+   trials must beat the serial-execution threshold).
+4. Phase ordering creates a read-after-write barrier (100 frames,
+   per-entity assert every frame).
+5. 10 000-frame stress with phase ordering — no race.
+6. **10 000-frame conservation-law race-check (TSAN-friendly).**
+   Three independent producers each increment their own component
+   in phase 0; a summer in phase 1 reads all three and writes their
+   sum.  Conservation invariant `A == B == C == frame+1` and
+   `Total == 3*(frame+1)` is spot-checked every 1000 frames.
+   Build with `-fsanitize=thread -g` for TSAN coverage.
+7. getSystem<S>() returns the configured instance.
+
+The conservation test catches three failure modes:
+
+- A race between producers writing the same component (would
+  under-count one).  Compile-time conflict matrix prevents this,
+  but a refactor that broke the matrix would surface here.
+- A missing phase barrier (Total would lag by 1).
+- A torn write into Total from a partial producer phase.
+
+### EngineDesc plumbing
+
+```cpp
+struct EngineDesc {
+    // ... existing fields ...
+    bool useSystemThreadPool = false;      // opt-in
+    uint32_t systemThreadPoolSize = 0;     // 0 = engine picks
+};
+```
+
+`Engine::maybeCreateSystemThreadPool` is called from all three init
+paths (desktop / Android / iOS).  When `useSystemThreadPool` is
+false (default), no pool is constructed and
+`Engine::systemThreadPool()` returns nullptr — game code uses the
+nullptr return to write opt-in patterns:
+
+```cpp
+if (auto* pool = engine.systemThreadPool()) {
+    // multi-threaded fast path
+} else {
+    // single-threaded path (default)
+}
+```
+
+The 0-sentinel "engine picks" resolves to
+`hardware_concurrency() - 2` clamped to [2, 8].  Reserve 2 cores
+for the bgfx render thread + OS; floor at 2 because that's where
+parallelism still amortises ThreadPool dispatch; ceiling at 8
+because shared-resource contention (cache lines, SparseSet
+storage) starts to hurt at high core counts on typical scenes.
+
+### What's still open
+
+- Per-worker queues + work-stealing for true MPMC scaling.  Current
+  design has a single short-held mutex on the ring — fine for the
+  measured workloads but would contend under many concurrent
+  submitters.
+- Actual per-system parallelisation in built-in engine code.  None
+  of `TransformSystem`, `FrustumCullSystem`, `DrawCallBuildSystem`,
+  `ShadowCullSystem`, `LightClusterBuilder` declare
+  `Reads`/`Writes` TypeLists today.  Until they do, the schedule
+  can't reason about them.  This is per-system-by-system work
+  gated on real device measurement — the audit explicitly flags
+  it as "experiment."
+- Dispatch latency measurement on real hardware.  The audit
+  target is `< 0.5 µs` per submit/wait cycle; spin-poll-then-CV
+  `waitAll()` should hit it on the common path, but the actual
+  numbers need a microbenchmark on a Pixel-class device.

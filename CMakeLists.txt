@@ -1226,6 +1226,7 @@ add_executable(engine_tests
     tests/ecs/TestRegistry.cpp
     tests/ecs/TestView.cpp
     tests/ecs/TestSchedule.cpp
+    tests/ecs/TestSystemExecutor.cpp
     tests/threading/TestThreadPool.cpp
     tests/math/TestMath.cpp
     tests/math/TestFrustum.cpp
@@ -1530,6 +1531,7 @@ if(SAMA_IOS)
         engine_input_ios
         engine_memory
         engine_scene
+        engine_threading
         engine_platform_ios
     )
 elseif(SAMA_ANDROID)
@@ -1539,6 +1541,7 @@ elseif(SAMA_ANDROID)
         engine_memory
         engine_debug
         engine_scene
+        engine_threading
         native_app_glue
     )
 else()
@@ -1547,6 +1550,7 @@ else()
         engine_memory
         engine_debug
         engine_scene
+        engine_threading
     )
 endif()
 

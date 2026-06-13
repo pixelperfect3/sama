@@ -20,6 +20,7 @@
 #include "engine/rendering/RenderResources.h"
 #include "engine/rendering/Renderer.h"
 #include "engine/rendering/ShadowRenderer.h"
+#include "engine/threading/ThreadPool.h"
 
 // Platform forward-declarations.  We branch three ways: desktop (GLFW),
 // Android (android_app + AInputEvent), iOS (the engine::platform::ios types).
@@ -160,6 +161,26 @@ struct EngineDesc
     // honours this flag; iOS still auto-enables in IosApp.mm pending the
     // same audit follow-up.  See docs/PERF_AUDIT_2026-05-25.md item #P1.
     bool enableGyro = false;
+
+    // Per-frame system ThreadPool opt-in.  Default false (single-threaded
+    // per-system execution on the game thread, the historical engine
+    // behaviour).  When true, Engine constructs a `threading::ThreadPool`
+    // sized at `systemThreadPoolSize` workers and exposes it via
+    // `Engine::systemThreadPool()`.  Games use that pool to dispatch
+    // independent systems concurrently — typically by feeding the pool
+    // into an `ecs::SystemExecutor` instance, or by calling
+    // `pool->submitTask()` directly.  The Engine itself does NOT route any
+    // built-in system through the pool; what to parallelise is per-game.
+    // See audit item line 80 in docs/PERF_AUDIT_2026-05-25.md.
+    bool useSystemThreadPool = false;
+
+    // Number of worker threads when `useSystemThreadPool` is true.  Ignored
+    // otherwise.  Default 0 means "let the engine pick" — currently this
+    // resolves to `std::thread::hardware_concurrency() - 2` clamped to
+    // [2, 8], reserving cores for the bgfx render thread and the OS.
+    // Override for tier-aware sizing (low-tier phones may prefer 2; desktop
+    // wants 6+).
+    uint32_t systemThreadPoolSize = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -259,6 +280,17 @@ public:
     [[nodiscard]] memory::FrameArena& frameArena()
     {
         return *frameArena_;
+    }
+
+    // Per-frame system ThreadPool — non-null only when EngineDesc::
+    // useSystemThreadPool was true at init.  Returns nullptr otherwise so
+    // games can write `if (auto* pool = engine.systemThreadPool())`-style
+    // opt-in code without a separate `bool` accessor.  See audit item line
+    // 80 in docs/PERF_AUDIT_2026-05-25.md and the EngineDesc::
+    // useSystemThreadPool docstring for the rationale.
+    [[nodiscard]] threading::ThreadPool* systemThreadPool() noexcept
+    {
+        return systemThreadPool_.get();
     }
 
 #if ENGINE_IS_IOS || defined(__ANDROID__)
@@ -395,6 +427,12 @@ public:
 #endif
 
 private:
+    // Resolve EngineDesc::useSystemThreadPool / systemThreadPoolSize into a
+    // populated `systemThreadPool_` member (or leave it null when the opt-in
+    // flag is false).  Called from each init() path so the resolution logic
+    // and the [2, 8] sizing fallback aren't duplicated.
+    void maybeCreateSystemThreadPool(const EngineDesc& desc);
+
     bool initialized_ = false;
 
 #if !defined(__ANDROID__) && !ENGINE_IS_IOS
@@ -471,6 +509,11 @@ private:
 
     // Frame arena
     std::unique_ptr<memory::FrameArena> frameArena_;
+
+    // Per-frame system ThreadPool — non-null only when EngineDesc::
+    // useSystemThreadPool was true at init.  See the EngineDesc field
+    // docstring and `systemThreadPool()` accessor above.
+    std::unique_ptr<threading::ThreadPool> systemThreadPool_;
 
 #if ENGINE_IS_IOS || defined(__ANDROID__)
     // Audio engine (iOS / Android — desktop apps construct their own
