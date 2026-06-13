@@ -12,6 +12,7 @@
             "enableIBL": false,
             "enableSSAO": false,
             "enableBloom": false,
+            "bloomDownsampleSteps": 0,
             "renderScale": 0.75,
             "targetFPS": 30
         },
@@ -22,6 +23,7 @@
             "enableIBL": true,
             "enableSSAO": false,
             "enableBloom": true,
+            "bloomDownsampleSteps": 3,
             "renderScale": 1.0,
             "targetFPS": 30
         },
@@ -32,6 +34,7 @@
             "enableIBL": true,
             "enableSSAO": true,
             "enableBloom": true,
+            "bloomDownsampleSteps": 5,
             "renderScale": 1.0,
             "targetFPS": 60
         }

@@ -1415,7 +1415,8 @@ auto defaults = defaultTiers();  // returns {"low", "mid", "high"}
             "enableFXAA": true,
             "depthPrepass": false,
             "renderScale": 0.75,
-            "targetFPS": 30
+            "targetFPS": 30,
+            "bloomDownsampleSteps": 0
         }
     }
 }
@@ -1440,6 +1441,7 @@ Partial definitions are supported -- unspecified fields keep `TierConfig` defaul
 | `depthPrepass` | bool | false | Depth prepass (false for mobile TBDR) |
 | `renderScale` | float | 1.0 | Render resolution scale |
 | `targetFPS` | int | 30 | Target frame rate |
+| `bloomDownsampleSteps` | int | 3 | Bloom mip-chain depth (0..5). Built-ins: low=0, mid=3, high=5. Total fullscreen bloom passes = 2*N - 1 for N ≥ 1. |
 
 Source: `engine/game/ProjectConfig.h/.cpp`
 
