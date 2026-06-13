@@ -614,6 +614,23 @@ main thread, deferred to `assets.processUploads()`.
 
 ### Future: DAG-Based Parallel Frame
 
+> **Status update (2026-06-13):** the DAG scheduler described below is
+> now real but opt-in.  `engine/ecs/SystemExecutor.h` ships a
+> compile-time phase scheduler built on `engine/ecs/Schedule.h`'s
+> `Reads`/`Writes` TypeList conflict matrix.  `Engine` exposes a
+> shared `threading::ThreadPool` via `EngineDesc::useSystemThreadPool`
+> (default **false** — single-threaded per-system execution is
+> preserved as the default behaviour).  See `docs/AGENTS.md` "Threading
+> & per-frame system pool" for the worked code patterns, and
+> `docs/NOTES.md` "ThreadPool v2 + per-frame system opt-in" for the
+> design rationale.  What's still aspirational from the section below:
+> none of the built-in systems (TransformSystem, FrustumCullSystem,
+> DrawCallBuildSystem, ShadowCullSystem, LightClusterBuilder) declare
+> the `Reads`/`Writes` TypeLists yet, so the schedule can't reason
+> about them.  Wiring those declarations in is per-system follow-up
+> work, gated on per-tier device measurement (audit line 80, marked
+> partially landed).
+
 The existing architecture is designed for future parallelism:
 
 1. **System dependencies form a DAG:**

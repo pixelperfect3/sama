@@ -148,6 +148,172 @@ const auto* kids = engine::scene::getChildren(reg, parent);
 
 ---
 
+### Threading & per-frame system pool
+
+By default the engine runs every per-frame system on the game thread —
+the historical behaviour and the safest mode for games that aren't ready
+to think about parallelism.  When you want to dispatch independent
+systems across worker threads, opt in via `EngineDesc`.
+
+> Audit context: see item line 80 in `docs/PERF_AUDIT_2026-05-25.md` and
+> the "ThreadPool v2 + per-frame system opt-in" section in
+> `docs/NOTES.md` for the design rationale.
+
+#### Opt in via `EngineDesc`
+
+```cpp
+#include "engine/core/Engine.h"
+
+engine::core::EngineDesc desc;
+desc.useSystemThreadPool = true;     // default: false (single-threaded)
+desc.systemThreadPoolSize = 0;       // default: 0 = engine picks
+                                     //   (hardware_concurrency() - 2,
+                                     //    clamped to [2, 8])
+```
+
+`systemThreadPoolSize = 0` lets the engine reserve 2 cores for the
+bgfx render thread + OS and clamp the rest to [2, 8].  Override for
+tier-aware sizing — e.g. low-tier phones may prefer 2; desktop wants
+6+.
+
+#### Access the pool
+
+```cpp
+// nullptr when opt-in is off — write the check explicitly:
+if (auto* pool = engine.systemThreadPool())
+{
+    // Multi-threaded fast path.
+    runFrameInParallel(*pool, registry, dt);
+}
+else
+{
+    // Single-threaded default path.
+    runFrameSerially(registry, dt);
+}
+```
+
+#### Submit POD tasks directly
+
+For per-frame work the **fast path** is `submitTask` — no allocation,
+no `std::function` indirection.  The `arg` pointer's lifetime is
+yours; it must outlive the task's execution.
+
+```cpp
+struct Args { Registry* reg; float dt; };
+
+static void doCullingTask(void* raw)
+{
+    auto* args = static_cast<Args*>(raw);
+    runCullSystem(*args->reg, args->dt);
+}
+
+auto* pool = engine.systemThreadPool();
+Args cullArgs{&registry, dt};
+Args shadowArgs{&registry, dt};
+
+pool->submitTask(&doCullingTask, &cullArgs);
+pool->submitTask(&doCullingTask, &shadowArgs);
+pool->waitAll();   // block until both finish
+```
+
+Ring buffer capacity is 1024 in-flight tasks.  Overflow asserts —
+back-pressure is the caller's job, not the pool's.  For low-frequency
+work (asset loading, etc.) the existing `pool->submit(std::function<void()>)`
+slow path still works and incurs one heap alloc per task.
+
+#### Use `SystemExecutor` for compile-time-scheduled phases
+
+`SystemExecutor<Sys1, Sys2, ...>` reads each system's `Reads` and
+`Writes` TypeLists, builds a conflict-free phase DAG at **compile
+time**, and dispatches each phase concurrently with a barrier between
+phases.  See `engine/ecs/SystemExecutor.h`.
+
+```cpp
+#include "engine/ecs/SystemExecutor.h"
+#include "engine/ecs/System.h"
+
+// 1) Declare each system's component dependencies.
+struct IncA : engine::ecs::ISystem
+{
+    using Reads  = engine::ecs::TypeList<>;
+    using Writes = engine::ecs::TypeList<ComponentA>;
+    void update(engine::ecs::Registry& reg, float /*dt*/) override
+    {
+        reg.view<ComponentA>().each(
+            [&](EntityID /*e*/, ComponentA& c) { c.value += 1; });
+    }
+};
+// (IncB / IncC analogously, each writing only its own component.)
+
+// 2) Construct the executor — `buildSchedule<>` runs at compile time.
+//    Systems with disjoint Writes land in the same phase and run
+//    concurrently; conflicting systems get a barrier between phases.
+engine::ecs::SystemExecutor<IncA, IncB, IncC> executor(/*workers=*/4);
+
+// 3) Drive it from the game loop.
+executor.runFrame(registry, dt);
+
+// 4) Configure or inspect a specific system at any time.
+executor.getSystem<IncA>().someField = 42;
+```
+
+Conflict rules (from `Schedule.h`):
+
+- System I and J conflict iff (`I.Writes` ∩ `(J.Reads ∪ J.Writes)`) is
+  non-empty, OR symmetric for J.  The check is fully `constexpr`.
+- Conflicting systems get a phase boundary; the executor calls
+  `waitAll()` between phases.  The barrier provides acquire/release
+  semantics on the underlying atomic, so phase N+1 reads happen-after
+  phase N writes — plain (non-atomic) component fields are safe across
+  phase boundaries.
+- Single-system phases short-circuit the pool dispatch and run inline
+  on the caller's thread (saves the round-trip latency).
+
+#### Pitfalls
+
+- **Don't submit from inside a worker if a downstream `waitAll()`
+  expects that task to finish.**  If every worker is running a task
+  that submits a new task, and the new task is what the outer
+  `waitAll()` is waiting for, you've deadlocked the pool.  The fix
+  is to keep the submitter / waitAll caller on the pool-owning
+  thread.  (One-off "fire-and-forget" submits from a worker are
+  fine — they just won't be visible to the *current* `waitAll`
+  cycle.)
+- **`arg` lifetime is yours.** Stack-allocated arg blocks must outlive
+  `waitAll()`.  Heap-allocated args must be freed by the task itself
+  (typical pattern: `new` in the submitter, `delete` in the
+  trampoline).
+- **`std::atomic`-typed components don't work with the Registry's
+  vector-backed SparseSet** (the storage requires move-construction).
+  Rely on the phase-barrier acquire/release for synchronisation
+  between phases instead of marking fields atomic.  The
+  `tests/ecs/TestSystemExecutor.cpp` fixtures show the pattern.
+- **The Schedule conflict check is type-level, not entity-level.** Two
+  systems that both declare `Writes = TypeList<Transform>` will be
+  serialised even if they touch disjoint entities at runtime.
+  AnimationSystem and PhysicsSystem in this codebase are a real
+  example — see `docs/THREADING_ARCHITECTURE.md` §1.
+- **`useSystemThreadPool = false` is still the default.**  Don't
+  assume the pool exists; always check `engine.systemThreadPool()`
+  for nullptr.
+
+#### When NOT to use it
+
+- Systems that finish faster than the per-task dispatch cost.  The
+  audit's target is `< 0.5 µs` dispatch latency, but the actual
+  number on the current implementation hasn't been measured on
+  real hardware — assume it sits somewhere between 0.5 µs and a
+  few µs and measure your specific case before committing to a
+  parallel split.
+- Single-threaded targets (Wasm without SharedArrayBuffer, some
+  embedded).  Keep `useSystemThreadPool = false`.
+- Systems with structural mutations (`emplace` / `remove` /
+  `destroyEntity`) inside `view().each()` — those aren't even safe
+  single-threaded; threading would just surface the race faster.
+  Use a deferred command queue instead.
+
+---
+
 ### Rendering
 
 #### Create a material (PBR)

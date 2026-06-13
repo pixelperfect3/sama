@@ -284,7 +284,13 @@ graph TD
     P2B --> WAIT2
 ```
 
-`SystemExecutor` owns the thread pool and drives the phase loop. The thread pool is fixed-size, configured at startup per platform (e.g. fewer threads on mobile).
+`SystemExecutor` owns the thread pool and drives the phase loop. The thread pool is fixed-size, configured at startup (`SystemExecutor(threadCount)` constructor argument).  Per-tier sizing is the game's job; see the `Engine`-level opt-in pool below.
+
+Dispatch goes through `ThreadPool::submitTask` — the POD path that avoids the `std::function` heap allocation.  Each submission heap-allocates a small `DispatchArg` block (~32 bytes) that the trampoline frees after running.  Single-system phases short-circuit the pool entirely and run inline on the caller's thread.
+
+### Engine-level opt-in pool
+
+`Engine` exposes a shared `threading::ThreadPool` via `EngineDesc::useSystemThreadPool` (default **false**) — distinct from a `SystemExecutor`-owned pool.  Game code that wants to drive its own dispatch (without committing to the full compile-time `Reads`/`Writes` declaration model) can grab `engine.systemThreadPool()` and call `submitTask` directly.  See `docs/AGENTS.md` "Threading & per-frame system pool" for the worked code patterns and `docs/NOTES.md` "ThreadPool v2 + per-frame system opt-in" for the rationale.
 
 ### Constraints
 - All systems must be known at **compile time** — no runtime-registered systems in this layer
@@ -298,18 +304,21 @@ engine/ecs/
 ├── TypeList.h         Compile-time type list: Contains, Intersects utilities
 ├── Schedule.h         constexpr buildSchedule<>(), Phase/Schedule structs
 ├── System.h           Updated: Reads/Writes type aliases + SystemType concept
-├── SystemExecutor.h   Drives phase loop against ThreadPool + Registry
-└── SystemExecutor.cpp
+└── SystemExecutor.h   Drives phase loop against ThreadPool + Registry
+                       (header-only template — no .cpp)
 
 engine/threading/
-├── ThreadPool.h       Fixed-size worker thread pool
-└── ThreadPool.cpp
+├── ThreadPool.h       Fixed-size worker thread pool — POD submitTask path
+└── ThreadPool.cpp     + back-compat std::function submit wrapper
 
 tests/ecs/
-└── TestSchedule.cpp   DAG construction, phase grouping, conflict detection
+├── TestSchedule.cpp        DAG construction, phase grouping, conflict detection
+└── TestSystemExecutor.cpp  Single-system inline dispatch, multi-system phase
+                            parallelism, phase-ordering barriers, getSystem
+                            accessor, 10000-frame conservation race-check
 
 tests/threading/
-└── TestThreadPool.cpp Submit, waitAll, multi-batch correctness
+└── TestThreadPool.cpp Submit, waitAll, multi-batch correctness, POD path
 ```
 
 ---
