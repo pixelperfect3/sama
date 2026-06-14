@@ -22,14 +22,21 @@ namespace engine::animation
 namespace
 {
 
-// Build a local TRS matrix from a JointPose.
+// Build a local TRS matrix from a JointPose.  Direct construction — same
+// pattern as engine/scene/TransformSystem.cpp `composeLocal` (audit item
+// #C-xform-trs).  The old `translate * mat4_cast * scale` chain cost
+// ~176 muls + 3 Mat4 temporaries on the stack; this form is ~29 muls
+// with no temporaries.  Closed-form TRS for column-major glm::mat4:
+//
+//   col0 = R[0] * s.x     col1 = R[1] * s.y     col2 = R[2] * s.z
+//   col3 = (pos, 1)
+//
+// where R is the unit-quat rotation as a Mat3.
 math::Mat4 trsMatrix(const JointPose& jp)
 {
-    math::Mat4 m(1.0f);
-    m = glm::translate(m, jp.position);
-    m *= glm::mat4_cast(jp.rotation);
-    m = glm::scale(m, jp.scale);
-    return m;
+    const math::Mat3 rot = glm::mat3_cast(jp.rotation);
+    return {math::Vec4(rot[0] * jp.scale.x, 0.0F), math::Vec4(rot[1] * jp.scale.y, 0.0F),
+            math::Vec4(rot[2] * jp.scale.z, 0.0F), math::Vec4(jp.position, 1.0F)};
 }
 
 }  // anonymous namespace
@@ -40,8 +47,13 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
     // Use the arena if provided, otherwise fall back to default allocator.
     std::pmr::memory_resource* alloc = arena ? arena : std::pmr::get_default_resource();
 
+    // Construct the bone buffer without pre-allocating its backing store —
+    // `reserve(256)` would call `alloc->allocate(256 * sizeof(Mat4))` even
+    // when the view is empty, wasting 16 KB of arena memory per frame on
+    // scenes with zero skinned entities.  Audit item line 147 — first
+    // skinned entity inside the lambda triggers the reserve.
     std::pmr::vector<math::Mat4> boneBuffer(alloc);
-    boneBuffer.reserve(256);  // reasonable initial estimate
+    bool boneBufferReserved = false;
 
     auto view = reg.view<SkeletonComponent, AnimatorComponent, SkinComponent>();
 
@@ -52,6 +64,14 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
             if (!skeleton || skeleton->parentIndices.empty())
                 return;
+
+            // Lazy reserve — first skinned entity pays the 16 KB; empty-view
+            // scenes don't.  See `boneBufferReserved` declaration above.
+            if (!boneBufferReserved)
+            {
+                boneBuffer.reserve(256);
+                boneBufferReserved = true;
+            }
 
             const uint32_t jointCount = skeleton->jointCount();
 
@@ -152,15 +172,27 @@ void AnimationSystem::update(ecs::Registry& reg, float dt, AnimationResources& a
 
             // Compute final bone matrices.
             // Forward pass: parent-first ordering guaranteed by Skeleton.
-            std::pmr::vector<math::Mat4> worldTransforms(jointCount, math::Mat4(1.0f), alloc);
+            //
+            // reserve + emplace_back instead of `(jointCount, Mat4(1.0F), alloc)`:
+            // the old form value-initialised every slot to identity (jointCount
+            // × 16 stores) before the loop overwrote each one (jointCount × 16
+            // more stores).  emplace_back constructs each slot in place
+            // exactly once — halves the per-joint write count.  Audit item
+            // line 120.
+            std::pmr::vector<math::Mat4> worldTransforms(alloc);
+            worldTransforms.reserve(jointCount);
             for (uint32_t i = 0; i < jointCount; ++i)
             {
-                math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
-                int32_t parent = skeleton->parentIndices[i];
+                const math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
+                const int32_t parent = skeleton->parentIndices[i];
                 if (parent >= 0 && static_cast<uint32_t>(parent) < jointCount)
-                    worldTransforms[i] = worldTransforms[parent] * local;
+                {
+                    worldTransforms.emplace_back(worldTransforms[parent] * local);
+                }
                 else
-                    worldTransforms[i] = local;
+                {
+                    worldTransforms.emplace_back(local);
+                }
             }
 
             // Incorporate the entity's world transform so skinned meshes
@@ -294,18 +326,24 @@ void AnimationSystem::updatePoses(ecs::Registry& reg, float dt, AnimationResourc
                 finalPose = std::move(poseA);
             }
 
-            // Store the pose in PoseComponent for IK to modify.
-            auto* posePtr = static_cast<Pose*>(alloc->allocate(sizeof(Pose), alignof(Pose)));
-            new (posePtr) Pose(std::move(finalPose));
-
-            auto* existingPose = reg.get<PoseComponent>(entity);
-            if (existingPose)
+            // Store the pose in PoseComponent for IK to modify.  PoseComponent
+            // now owns Pose by value (audit item line 142), so re-use the
+            // existing slot's storage via move-assign — the InlinedVector<128>
+            // inside Pose reuses its inline buffer (or heap allocation, for
+            // > 128-joint skeletons) across frames instead of arena-allocating
+            // a fresh 5 KB block every frame.  alloc is intentionally unused
+            // by this write path now.
+            (void)alloc;
+            PoseComponent* existingPose = reg.get<PoseComponent>(entity);
+            if (existingPose != nullptr)
             {
-                existingPose->pose = posePtr;
+                existingPose->pose = std::move(finalPose);
             }
             else
             {
-                reg.emplace<PoseComponent>(entity, PoseComponent{posePtr});
+                PoseComponent freshComp;
+                freshComp.pose = std::move(finalPose);
+                reg.emplace<PoseComponent>(entity, std::move(freshComp));
             }
         });
 }
@@ -315,8 +353,9 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
 {
     std::pmr::memory_resource* alloc = arena ? arena : std::pmr::get_default_resource();
 
+    // Same lazy-reserve pattern as update() — see audit item line 147.
     std::pmr::vector<math::Mat4> boneBuffer(alloc);
-    boneBuffer.reserve(256);
+    bool boneBufferReserved = false;
 
     auto view = reg.view<SkeletonComponent, SkinComponent, PoseComponent>();
 
@@ -327,22 +366,34 @@ void AnimationSystem::computeBoneMatrices(ecs::Registry& reg, AnimationResources
             const Skeleton* skeleton = animRes.getSkeleton(skelComp.skeletonId);
             if (!skeleton || skeleton->parentIndices.empty())
                 return;
-            if (!poseComp.pose)
+            if (poseComp.pose.jointPoses.empty())
                 return;
 
-            const Pose& finalPose = *poseComp.pose;
+            if (!boneBufferReserved)
+            {
+                boneBuffer.reserve(256);
+                boneBufferReserved = true;
+            }
+
+            const Pose& finalPose = poseComp.pose;
             const uint32_t jointCount = skeleton->jointCount();
 
-            // Compute final bone matrices.
-            std::pmr::vector<math::Mat4> worldTransforms(jointCount, math::Mat4(1.0f), alloc);
+            // Compute final bone matrices.  Same reserve+emplace_back form
+            // as update() — single write per slot.  Audit line 120.
+            std::pmr::vector<math::Mat4> worldTransforms(alloc);
+            worldTransforms.reserve(jointCount);
             for (uint32_t i = 0; i < jointCount; ++i)
             {
-                math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
-                int32_t parent = skeleton->parentIndices[i];
+                const math::Mat4 local = trsMatrix(finalPose.jointPoses[i]);
+                const int32_t parent = skeleton->parentIndices[i];
                 if (parent >= 0 && static_cast<uint32_t>(parent) < jointCount)
-                    worldTransforms[i] = worldTransforms[parent] * local;
+                {
+                    worldTransforms.emplace_back(worldTransforms[parent] * local);
+                }
                 else
-                    worldTransforms[i] = local;
+                {
+                    worldTransforms.emplace_back(local);
+                }
             }
 
             const auto* wtc = reg.get<rendering::WorldTransformComponent>(entity);

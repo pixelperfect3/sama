@@ -57,7 +57,17 @@ struct IkTargetsComponent
 
 struct PoseComponent
 {
-    Pose* pose = nullptr;  // arena-allocated, valid for one frame
+    // Pose is owned by value — its memory persists across frames and the
+    // AnimationSystem updates it in place via move-assign each frame.  Old
+    // shape was `Pose*` re-allocated from a per-frame arena, which threw
+    // away the previous frame's storage (~5 KB inlined / heap for >128
+    // joints) every frame.  See audit item line 142 and the
+    // "AnimationSystem: PoseComponent by value" section in docs/NOTES.md
+    // for the rationale.
+    //
+    // `jointPoses.empty()` is the "no pose yet" signal — was `pose ==
+    // nullptr` under the old design.
+    Pose pose;
 };
 
 }  // namespace engine::animation

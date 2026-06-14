@@ -30,12 +30,16 @@ void IkSystem::update(ecs::Registry& reg, const AnimationResources& animRes,
             {
                 return;
             }
-            if (!poseComp.pose)
+            if (poseComp.pose.jointPoses.empty())
             {
+                // No pose has been sampled yet — was `pose == nullptr`
+                // under the old arena-allocated layout; empty jointPoses
+                // is the equivalent signal now that PoseComponent owns
+                // Pose by value.  See audit item line 142.
                 return;
             }
 
-            Pose& pose = *poseComp.pose;
+            Pose& pose = poseComp.pose;
             const uint32_t jointCount = skeleton->jointCount();
 
             // Allocate world-space positions from arena.

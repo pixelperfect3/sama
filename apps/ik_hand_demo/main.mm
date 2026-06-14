@@ -676,23 +676,20 @@ int main()
 
         // For T-pose: if PoseComponent was not created by updatePoses
         // (e.g., if clip is invalid), manually create one from bind pose.
+        // PoseComponent now owns Pose by value (audit line 142) — copy the
+        // bind pose into the component's storage; no arena dance.
         if (modelSpawned && bindPoseStored && skinnedEntity != INVALID_ENTITY)
         {
             auto* existingPose = reg.get<PoseComponent>(skinnedEntity);
-            if (!existingPose || !existingPose->pose)
+            if (existingPose == nullptr)
             {
-                auto* alloc = arena ? arena : std::pmr::get_default_resource();
-                auto* posePtr = static_cast<Pose*>(alloc->allocate(sizeof(Pose), alignof(Pose)));
-                new (posePtr) Pose(bindPose);
-
-                if (existingPose)
-                {
-                    existingPose->pose = posePtr;
-                }
-                else
-                {
-                    reg.emplace<PoseComponent>(skinnedEntity, PoseComponent{posePtr});
-                }
+                PoseComponent comp;
+                comp.pose = bindPose;
+                reg.emplace<PoseComponent>(skinnedEntity, std::move(comp));
+            }
+            else if (existingPose->pose.jointPoses.empty())
+            {
+                existingPose->pose = bindPose;
             }
         }
 
@@ -707,14 +704,14 @@ int main()
         {
             auto* poseComp = reg.get<PoseComponent>(skinnedEntity);
             auto* skelComp = reg.get<SkeletonComponent>(skinnedEntity);
-            if (poseComp && poseComp->pose && skelComp)
+            if (poseComp != nullptr && !poseComp->pose.jointPoses.empty() && skelComp != nullptr)
             {
                 const Skeleton* skel = animRes.getSkeleton(skelComp->skeletonId);
                 if (skel)
                 {
                     // Compute world positions for joint markers.
                     std::vector<engine::math::Vec3> worldPos(skel->jointCount());
-                    computeWorldPositions(*skel, *poseComp->pose, worldPos.data());
+                    computeWorldPositions(*skel, poseComp->pose, worldPos.data());
 
                     int32_t rightJoints[3] = {rightShoulderIdx, rightElbowIdx, rightHandIdx};
                     int32_t leftJoints[3] = {leftShoulderIdx, leftElbowIdx, leftHandIdx};

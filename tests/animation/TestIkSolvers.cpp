@@ -505,9 +505,11 @@ TEST_CASE("Multiple IK chains per entity", "[ik]")
     targets.targets.push_back(targetB);
     reg.emplace<IkTargetsComponent>(entity, std::move(targets));
 
-    // Store pose.
-    auto* posePtr = new Pose(pose);
-    reg.emplace<PoseComponent>(entity, PoseComponent{posePtr});
+    // Store pose.  PoseComponent now owns Pose by value (audit line 142) —
+    // emplace constructs in place; no new/raw-pointer dance.
+    PoseComponent poseComp;
+    poseComp.pose = pose;
+    reg.emplace<PoseComponent>(entity, std::move(poseComp));
 
     // Run IK system.
     IkSystem ikSys;
@@ -516,13 +518,13 @@ TEST_CASE("Multiple IK chains per entity", "[ik]")
     // Verify that the pose was modified (rotations changed from identity).
     auto* resultPose = reg.get<PoseComponent>(entity);
     REQUIRE(resultPose);
-    REQUIRE(resultPose->pose);
+    REQUIRE_FALSE(resultPose->pose.jointPoses.empty());
 
     // At least one joint should have a non-identity rotation.
     bool anyModified = false;
     for (size_t i = 0; i < 5; ++i)
     {
-        float dot = glm::dot(resultPose->pose->jointPoses[i].rotation, Quat{1, 0, 0, 0});
+        float dot = glm::dot(resultPose->pose.jointPoses[i].rotation, Quat{1, 0, 0, 0});
         if (std::abs(std::abs(dot) - 1.0f) > 1e-3f)
         {
             anyModified = true;
@@ -530,8 +532,7 @@ TEST_CASE("Multiple IK chains per entity", "[ik]")
         }
     }
     CHECK(anyModified);
-
-    delete posePtr;
+    // PoseComponent now owns Pose by value — Registry destructor releases it.
 }
 
 // ---------------------------------------------------------------------------

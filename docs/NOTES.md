@@ -3661,3 +3661,155 @@ isn't even epsilon-different).  22/22 screenshot tests confirm.
 - No Android measurement yet — the projection is even larger on
   in-order or weakly-OoO little cores where the Mat3 spill/fill
   cost dominates more.
+
+## AnimationSystem — trsMatrix + lazy reserve + worldTransforms emplace + PoseComponent by value (2026-06-14)
+
+Four AnimationSystem audit items landed together — all small, mechanical
+wins on the per-frame skinning pipeline.
+
+### (a) `trsMatrix(JointPose)` direct construction
+
+Same pattern as TransformSystem's `composeLocal` landing
+(`#C-xform-trs`).  Old form was `translate * mat4_cast * scale` —
+176 muls + 3 Mat4 temporaries through L1.  New form uses the closed-
+form TRS for column-major glm::mat4:
+
+```cpp
+math::Mat4 trsMatrix(const JointPose& jp)
+{
+    const math::Mat3 rot = glm::mat3_cast(jp.rotation);
+    return {math::Vec4(rot[0] * jp.scale.x, 0.0F),
+            math::Vec4(rot[1] * jp.scale.y, 0.0F),
+            math::Vec4(rot[2] * jp.scale.z, 0.0F),
+            math::Vec4(jp.position, 1.0F)};
+}
+```
+
+~29 muls, no temporaries.  Same proven correctness as the
+TransformSystem version — `TestSsAnimation` (the skinned-mesh
+screenshot fixture) confirms byte-identical bone-matrix output.
+
+### (b) Lazy `boneBuffer.reserve(256)`
+
+The reserve was unconditional at the top of `update()` /
+`computeBoneMatrices()` — 16 KB arena allocation even on scenes with
+zero skinned entities.  Moved to lazy via a `bool boneBufferReserved`
+flag flipped inside the lambda's first iteration.  Empty-view scenes
+now pay zero arena bytes for animation.
+
+### (c) `worldTransforms` reserve+emplace_back
+
+Old shape:
+
+```cpp
+std::pmr::vector<Mat4> worldTransforms(jointCount, Mat4(1.0F), alloc);
+for (uint32_t i = 0; i < jointCount; ++i) {
+    // ... compute local ...
+    worldTransforms[i] = parent_or_local;     // overwrite the just-initialised slot
+}
+```
+
+That's `jointCount × 16 stores` for the value-init pass, then
+`jointCount × 16 stores` again for the loop — every slot gets
+written twice.
+
+New shape:
+
+```cpp
+std::pmr::vector<Mat4> worldTransforms(alloc);
+worldTransforms.reserve(jointCount);
+for (uint32_t i = 0; i < jointCount; ++i) {
+    // ... compute local ...
+    worldTransforms.emplace_back(parent_or_local);   // single in-place construct
+}
+```
+
+`reserve(jointCount)` allocates the buffer; `emplace_back` constructs
+each slot in place exactly once.  Halves the per-joint write count.
+Critically: `worldTransforms[parent]` (used inside the loop) is
+valid because skeleton joints are parent-first ordered — by the
+time we compute joint `i`, joint `parent < i` has already been
+emplaced.
+
+### (d) `PoseComponent::pose` by value
+
+The old `PoseComponent { Pose* pose; }` held a pointer to a
+`Pose` re-allocated from the frame arena on every `updatePoses()`
+call — every frame discarded the previous frame's ~5 KB pose
+storage and built a fresh one.
+
+Changed to:
+
+```cpp
+struct PoseComponent {
+    Pose pose;   // value-owned; reused across frames via move-assign
+};
+```
+
+The `InlinedVector<JointPose, 128>` inside Pose reuses its inline
+buffer (or heap allocation, for > 128-joint skeletons) across
+frames.  AnimationSystem's write path:
+
+```cpp
+PoseComponent* existingPose = reg.get<PoseComponent>(entity);
+if (existingPose != nullptr) {
+    existingPose->pose = std::move(finalPose);   // reuses storage
+} else {
+    PoseComponent freshComp;
+    freshComp.pose = std::move(finalPose);
+    reg.emplace<PoseComponent>(entity, std::move(freshComp));
+}
+```
+
+The three call sites that used the pointer form (`IkSystem.cpp`,
+`tests/animation/TestIkSolvers.cpp`, `apps/ik_hand_demo/main.mm`)
+were migrated:
+
+- `if (!poseComp.pose)` → `if (poseComp.pose.jointPoses.empty())`
+- `Pose& pose = *poseComp.pose` → `Pose& pose = poseComp.pose`
+- The "empty" signal is now `jointPoses.empty()` instead of
+  `pose == nullptr`.
+
+### Cost: SparseSet entries grow by ~5 KB
+
+`InlinedVector<JointPose, 128>` is 128 × 40 B = 5120 B inlined.
+For typical character counts (10-20 skinned entities per scene)
+that's 50-100 KB resident in the PoseComponent SparseSet — trivial.
+For very large characters (> 128 joints) the inline buffer spills
+to heap and the SparseSet entry stays at the inline size.
+
+For genuinely many-character scenes (crowds) the per-entity cost
+would matter and a different storage shape (heap-allocated pool
+indexed by handle) would beat it.  Out of scope here.
+
+### What's NOT in this commit (audit line 121)
+
+The audit's "full TRS-space worldTransforms storage" item — replace
+the `vector<Mat4> worldTransforms` with `vector<JointPose>`, do
+quat-mul + rotate-vec + scale-mul per joint, convert to Mat4 only
+at the bone-matrix output — saves ~3× per-joint compute.  It's a
+bigger architectural change that needs a multi-character perf_smoke
+scene to A/B confidently.  The cheaper-per-joint `trsMatrix` from
+(a) above lands part of the same win.
+
+### Why screenshot tests pass unchanged
+
+- `trsMatrix` direct construction is mathematically identical to the
+  glm chain — same closed-form TRS, just no intermediate Mat4s.
+- `reserve + emplace_back` produces the same per-slot Mat4 as the
+  default-init-then-overwrite form because `emplace_back(x)` copy-
+  constructs from `x` and the loop writes the same `x` either way.
+- PoseComponent value vs pointer doesn't change Pose contents, just
+  ownership.  IK and bone-matrix paths read the same Pose either way.
+
+So `TestSsAnimation` (skinned mesh through the full pipeline) is
+byte-identical.  22/22 screenshot tests confirm.
+
+### Measurement caveat
+
+perf_smoke has no skinned entities, so I can't A/B the AnimationSystem
+itself end-to-end.  The per-joint compute savings are math-driven; the
+PoseComponent-by-value win removes one heap alloc per skinned entity
+per frame (was bounded by jointCount > 128 spilling Pose's inline
+buffer; rare in practice).  All four items are low-risk and the
+existing screenshot fixture confirms no visual drift.
