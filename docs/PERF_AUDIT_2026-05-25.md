@@ -17,6 +17,81 @@ suggested first-sprint quick wins.
 
 ---
 
+## Status rollup (last updated 2026-06-14)
+
+| Bucket | Landed | In progress | Open | Total |
+|--------|-------:|------------:|-----:|------:|
+| **Headline (first sprint)** | 8 | 1 | 1 | 10 |
+| **CPU hot loops** | 3 | 0 | 11 | 14 |
+| **Memory layout & cache** | 1 | 0 | 7 | 8 |
+| **Allocations on the hot path** | 0 | 0 | 7 | 7 |
+| **Threading** | 3 | 1 | 1 | 5 |
+| **Rendering / bgfx** | 2 | 0 | 9 | 11 |
+| **Shaders** | 2 | 0 | 7 | 9 |
+| **Asset pipeline** | 0 | 0 | 3 | 3 |
+| **Tier-aware settings** | 2 | 0 | 5 | 7 |
+| **Android power** | 1 | 0 | 5 | 6 |
+| **Frame pacing & vsync** | 0 | 0 | 4 | 4 |
+| **Binary size / cold-start power** | 0 | 0 | 5 | 5 |
+| **Debug / editor code in release** | 0 | 0 | 4 | 4 |
+| **TOTAL** | **22** | **2** | **79** | **103** |
+
+Headline list at 80% landed.  Most of the remaining big wins are in
+"Rendering / bgfx" (per-draw `setTexture` batching, FXAA hide path)
+and "Shaders" (the deferred `#S1` LOW_TIER cluster-skip variant, plus
+the `pow(x,5)` Fresnel approximation).  Memory items and the
+Threading per-worker queues refactor are still ahead.
+
+### What's landed since the audit was opened
+
+Quick map for anyone landing here — the change log at the bottom has
+the per-commit deltas with measured numbers.
+
+- **#R1** `DrawCallBuildSystem` Encoder route (commit log) — p99
+  −30%, max −50% on Android emulator A/B.
+- **#R-audit** `RenderSettings::depthPrepassEnabled` default flipped
+  to `false` — TBDR-safe by default.
+- **#C-frustum** `Frustum` ctor: `invLen = 1/sqrt(lenSq)` — ~33%
+  cheaper per ctor on Cortex-A78.
+- **#M1** `Skeleton` hot/cold split into three parallel arrays — ~20×
+  less cache traffic in `AnimationSystem` parent walk.
+- **#C-xform** `TransformSystem` `subtree-dirty` bit — O(1) skip of
+  clean subtrees in the top-down recursion.
+- **#C-xform-trs + #C-xform-cache** `composeLocal` direct TRS + cached
+  `WorldTransform*` get — `--dirty-all` mean −26%.
+- **#H1** `ThreadPool` POD path + semaphore + atomic active count.
+- **#P1** `AndroidGyro` opt-in + 30 Hz default.
+- **#T3** `TierConfig::bloomDownsampleSteps` wired through to
+  `PostProcessSystem` (was inert from two directions before).
+- **#S1 precision half** `fs_pbr.sc` per-variable `mediump` annotations.
+- **#cull-aabb + #cull-cache + #cull-shadow-multi** — shared
+  `computeConservativeWorldAabb()` helper, visible-state cache,
+  ShadowCullSystem single-pass multi-cascade overload.  FrustumCull
+  mean −29%.
+- **#opt-in scheduler** `EngineDesc::useSystemThreadPool` opt-in +
+  `SystemExecutor` wired to ThreadPool POD path + 10 000-frame
+  conservation race-check.
+
+### Next-best landings if someone picks this up
+
+Ordered by impact-per-risk on the remaining open items:
+
+1. **#T4** (Tier-aware §): low tier `enableFXAA = true` — *trivial*,
+   ~0.8 ms saving on 720p Mali-G57.
+2. **Rendering §** `setTexture` batching for IBL + light data
+   (slots 6/7/8 + 12/13/14, frame-constant) — *low*, ~30% API cost
+   per draw.
+3. **Shaders §** `fs_tonemap.sc` `pow → sqrt` (gamma 2.0 approx) or
+   `BGFX_TEXTURE_FORMAT_SRGB` — *trivial*, one `pow` per pixel saved.
+4. **#P2** (Headline #2 successor) `Surface.setFrameRate` plumbing
+   on Android — *medium*, halves GPU work + power on 60 Hz panels
+   for tiers that target 30 fps.
+5. **#S1 texture-indirection half** `LOW_TIER` PBR variant that
+   skips the cluster light loop — *medium*, big win on no-lights
+   scenes (low tier with `maxActiveLights ≤ 0`).
+
+---
+
 ## Headline (suggested first sprint)
 
 1. [x] `DrawCallBuildSystem` re-uploads 5 frame-constant uniforms per draw — biggest CPU win (#R1) — see commit log for landed mechanism (Encoder route, not uniform-hoist)
