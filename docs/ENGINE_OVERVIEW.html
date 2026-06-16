@@ -749,13 +749,43 @@ frame.</div>
 <h3>bgfx threading model</h3>
 <p>bgfx ships with an internal render thread by default; the user thread
 records commands, and <code>bgfx::frame()</code> is an asynchronous hand-off
-via a lock-free ring. On Pixel 9 this saves ~20 ms/frame versus the
-single-threaded path (<code>docs/NOTES.md "bgfx threading mode" 2026-05-24</code>).
-The engine picks single-threaded mode only when <code>EngineDesc::singleThreaded
-= true</code> by calling <code>bgfx::renderFrame()</code> before
-<code>bgfx::init()</code> — that pre-init call is the documented way to
-inhibit the render thread. See <code>engine/rendering/Renderer.cpp:48-65</code>
-for the comment block.</p>
+via a lock-free ring. The engine picks single-threaded mode only when
+<code>EngineDesc::singleThreaded = true</code> by calling
+<code>bgfx::renderFrame()</code> before <code>bgfx::init()</code> — that
+pre-init call is the documented way to inhibit the render thread. See
+<code>engine/rendering/Renderer.cpp:48-65</code> for the comment block.</p>
+
+<div class="thirty" style="border-color:#c97a4a;background:#fff5e6">
+  <strong>Honesty flag — what multi-threaded actually buys you.</strong>
+  Prior versions of this doc and <code>docs/NOTES.md</code> claimed a
+  ~20 ms → ~0.1 ms <code>bgfx::frame()</code> drop from flipping to
+  multi-threaded.  That number is real for <em>perf_smoke-class</em>
+  workloads where GPU work is well under the vsync period — the ring
+  stays drained and <code>bgfx::frame()</code> collapses to the
+  hand-off cost.  For a <em>GPU-bound shipping game</em> at 1080×2424
+  PBR + bloom on Pixel 9, a reporting team measured the post-flip
+  <code>bgfx::frame()</code> at 15+ ms despite the threading change
+  being correctly engaged.  Mechanism: with <code>BGFX_RESET_VSYNC</code>
+  set (<code>Renderer.cpp:69</code> + <code>:267</code>), the render
+  thread blocks on <code>vkAcquireNextImageKHR</code> waiting for
+  vblank; the ring fills; the game thread's next <code>bgfx::frame()</code>
+  blocks on a free ring slot.  The wait <em>migrates</em> from the
+  GPU-fence wait to the ring back-pressure wait — it doesn't
+  disappear.  See <code>docs/NOTES.md</code> "Correction (2026-06-16):
+  expected ~0.1 ms was scene-specific" for the full mechanism and the
+  four fix paths (reduce GPU work, target 30 fps with
+  <code>Surface.setFrameRate</code>, disable vsync as a diagnostic,
+  deeper swapchain).  What multi-threaded DOES still buy:
+  CPU/GPU parallelism (render thread issues Vulkan calls while game
+  thread builds next frame's command buffer), and game-thread
+  cost outside <code>bgfx::frame()</code> goes from 16 ms wait → 0.05 ms
+  hand-off, freeing the other systems' budget.
+</div>
+
+<p>The <code>Renderer.cpp:108-138</code> Android init now logs
+<code>BGFX_CAPS_RENDERER_MULTITHREADED</code> + the requested mode to
+logcat so integrators can verify multi-threaded is actually engaged
+(rules out a silent fallback before investigating back-pressure).</p>
 
 <details>
 <summary>Follow-up: how is the variable-step update reconciled with fixed-step physics?</summary>

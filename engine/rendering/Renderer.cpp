@@ -118,6 +118,24 @@ bool Renderer::init(const RendererDesc& desc)
                                 bgfx::getRendererName(actualType));
             return false;
         }
+
+        // Log the actual threading mode bgfx is running in so the shipping
+        // build can verify multi-threaded is engaged at runtime.  Without
+        // this, a silent fallback to single-threaded (rare but possible if
+        // a future bgfx Android path can't spawn its render thread) would
+        // be invisible until someone runs perf_smoke comparison.
+        // BGFX_CAPS_RENDERER_MULTITHREADED is set when bgfx is BUILT with
+        // BGFX_CONFIG_MULTITHREADED=1 (a build-time fact, not runtime
+        // engagement) — keep the line because it's still the right thing
+        // to check first when investigating a threading-related slowdown.
+        const auto* caps = bgfx::getCaps();
+        const bool multithreadedCompiled =
+            (caps->supported & BGFX_CAPS_RENDERER_MULTITHREADED) != 0;
+        __android_log_print(4, "SamaEngine",
+                            "bgfx threading: built-multithreaded=%d, "
+                            "engine-requested-mode=%s",
+                            multithreadedCompiled ? 1 : 0,
+                            desc.singleThreaded ? "single" : "multi");
     }
 #endif
 

@@ -305,6 +305,35 @@ Full PBR sample app loading the KhronosGroup DamagedHelmet GLB asset and renderi
 
 **Not done (deliberate):** per-thread command recording via `bgfx::Encoder`.  That is a much larger refactor (every system that calls `bgfx::submit` would need to take an encoder), and the multi-threaded-default win alone closes the Pixel 9 frame-budget gap with margin.
 
+### Correction (2026-06-16): "expected ~0.1 ms" was scene-specific, not a general guarantee
+
+A game team integrating Sama reported the multi-threaded flip was working but `bgfx::frame()` still measured 15+ ms on Pixel 9 (45-50 fps), not the predicted ~0.1 ms.  Their flag plumbing was correct (`EngineDesc::singleThreaded = false` reaches `Renderer::init`, the pre-init `bgfx::renderFrame()` is correctly skipped, bgfx is built with `BGFX_CONFIG_MULTITHREADED=1`).  Diagnosis: **the original 0.1 ms number was workload-specific and shouldn't have been written as a general expectation**.
+
+**Mechanism.**  bgfx multi-threaded mode replaces the synchronous "submit + GPU wait + present" on the game thread with an asynchronous hand-off into a lock-free ring buffer.  The render thread drains the ring, makes the Vulkan/Metal/D3D calls, and waits for vsync before presenting.  This works as long as the ring stays drained — i.e. the GPU finishes frame N before frame N+1 arrives.
+
+When `BGFX_RESET_VSYNC` is set (it is, in `Renderer.cpp:69` + `:267`) AND GPU work approaches the vsync period (16.67 ms at 60 Hz), the render thread blocks on `vkAcquireNextImageKHR` (or the platform equivalent) waiting for vblank.  The ring fills up.  The game thread's next `bgfx::frame()` call then blocks waiting for a free ring slot — the wait *migrated* from the GPU-fence wait into the ring-back-pressure wait, but the wall-clock cost is conserved.  Steady-state `bgfx::frame()` ≈ `vsync_period − rest_of_CPU_work − tiny_ring_overhead`, which matches the reporter's 15+ ms exactly.
+
+**The original 0.1 ms was real but in a different regime.**  The 20.5 ms → 0.1 ms delta cited above was extrapolated from perf_smoke (1280×720, simple test scene where GPU work was well under vsync — ring stays drained, hand-off cost dominates).  The reporter's game (1080×2424, full PBR pipeline) is in the GPU-bound regime where vsync gates everything anyway.
+
+**What does multi-threaded actually win for them?**  Not zero, but not what the docs promised either.  Concretely:
+- *CPU-side game-thread cost.*  Submit commands → hand-off is ~0.05 ms instead of submit → GPU wait → present being ~16 ms.  The game thread is freed up for the next frame's `Update` / `Render` work.  But — and this is the rub — `bgfx::frame()` *still blocks* on the back-pressure wait, so the apparent saving shows up in the *prior* phases (other systems get more headroom), not in the `bgfx::frame()` row itself.
+- *GPU-CPU parallelism.*  Even with the ring full, the render thread is *making the Vulkan calls* while the game thread is *building the next frame's command buffer*.  In single-threaded mode those serialised; in multi-threaded they overlap, so total frame time at the same vsync trims by the smaller of (render-thread time, game-thread time).
+
+**Fix paths** (in order of effort, for the integrating team):
+
+1. **Reduce GPU work below the vsync period.**  The real cure.  If a frame's actual GPU time is 12 ms (vs 16.67 ms vsync at 60 Hz), the render thread drains the ring with margin and `bgfx::frame()` collapses to the hand-off cost.  This is what the engine's perf audit work targets (`docs/PERF_AUDIT_2026-05-25.md`).  Look at fragment shader cost first on a Mali / Adreno phone — TBDR + clustered lighting can absorb a lot but PBR + bloom + SSAO at 1080p×2424 is not free.
+2. **Halve the vsync target to 30 fps** on tiers that can't hit 60.  Doubles the budget (33 ms instead of 16.67 ms) for the same workload.  `Surface.setFrameRate(30, CHANGE_IF_SEAMLESS)` on Android — audit item line 138 `#P2`, partially landed via `TierConfig::targetFPS` but the Android-side `Surface.setFrameRate` plumbing is still open.
+3. **Disable vsync.**  Pass a different reset flag (`init.resolution.reset &= ~BGFX_RESET_VSYNC`).  Confirms the back-pressure diagnosis instantly — if `bgfx::frame()` drops to ~0.1 ms with vsync off, hypothesis 2 is the smoking gun.  Production cost: screen tearing.  Not a fix, just a diagnostic.
+4. **Increase swapchain depth.**  Default Android Vulkan swapchain is typically 3 images; some panels allow 4.  Buys a third "in-flight" frame for the game thread.  Tradeoff: one more frame of input latency.  Not exposed via `EngineDesc` today; would require a new flag.
+
+**Doc fix.**  The original NOTES entry above said "expected delta is ~20 ms → ~0.1 ms on the game thread" without specifying the scene.  That's misleading.  The accurate framing:
+- *With GPU work well under vsync period* (perf_smoke-like): `bgfx::frame()` → hand-off cost (~0.1 ms).  Win.
+- *With GPU work near or above vsync period* (PBR-heavy game at 1080p+): `bgfx::frame()` → ring back-pressure wait (~vsync_period − CPU work).  The wall-clock per frame doesn't actually change much, but the game-thread CPU time *outside* `bgfx::frame()` becomes more available, and CPU/GPU run in parallel.
+
+**Runtime verification** (also landed 2026-06-16): `Renderer::init` now logs `bgfx::getCaps()->supported & BGFX_CAPS_RENDERER_MULTITHREADED` + the engine-requested mode on Android, so the integrating team can confirm in logcat that multi-threaded is engaged.  This kills hypothesis 1 (silent fallback) on inspection.  See `engine/rendering/Renderer.cpp:108-138`.
+
+**Open item.**  The audit's `#P2` (line 138 of `docs/PERF_AUDIT_2026-05-25.md`) — `Surface.setFrameRate(targetFPS)` plumbing on Android — directly addresses the "GPU work doesn't fit in vsync" case for tiers that target 30 fps.  Currently `TierConfig::targetFPS` exists but the Android-side panel rate change isn't wired up.
+
 ---
 
 ## Physics
