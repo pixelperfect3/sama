@@ -4067,3 +4067,60 @@ call), and that call site receives a matrix built by `composeLocal`
 which is TRS by construction.  If a future caller uses it on a
 non-TRS matrix the bug surfaces as physics positions drifting away
 from where they should be.
+
+## InstanceBufferBuildSystem: pmr-backed groups map (2026-06-16)
+
+Audit item line 143.  `InstanceBufferBuildSystem::update` was
+constructing its `groups` map on the default heap every frame, even
+though the function already received a `std::pmr::memory_resource*
+arena` parameter.
+
+### What changed
+
+`ankerl::unordered_dense::pmr::map<uint32_t, GroupData>` — a vendored
+alias in `third_party/ankerl/unordered_dense.h` that uses
+`std::pmr::polymorphic_allocator` internally.  The allocator wraps the
+`update()` call's arena, so the map's bucket array, dense value array,
+and all per-entry storage flow through the FrameArena instead of
+hitting the system heap.
+
+```cpp
+using GroupMap = ankerl::unordered_dense::pmr::map<uint32_t, GroupData>;
+GroupMap groups{std::pmr::polymorphic_allocator<std::pair<uint32_t, GroupData>>(alloc)};
+groups.reserve(16);
+```
+
+`reserve(16)` covers typical scenes (a handful of instance groups)
+without paying the first rehash.
+
+### Measurement
+
+Microbenchmark in `tests/rendering/TestInstancing.cpp`,
+`[instancing-bench]` + Catch2 `[!benchmark]` tag.  Construction +
+fill of 8 groups × 32 instances per iteration, 10 000 iterations per
+run, 5 runs, M-series Mac.  The `pmr` side uses a 256 KB
+`monotonic_buffer_resource` with `release()` between iterations to
+simulate the engine's per-frame FrameArena reset.
+
+| Run | Default-heap ns/frame | pmr ns/frame | Speedup |
+|---|---:|---:|---:|
+| 1 (cold) | 2883 | 1711 | 1.69× |
+| 2 | 1973 | 994 | 1.99× |
+| 3 | 1941 | 998 | 1.94× |
+| 4 | 1972 | 1026 | 1.92× |
+| 5 | 1921 | 985 | 1.95× |
+
+Median runs 2-5: **1.95× speedup**, saves ~975 ns/frame at 8 groups.
+First run is noisier (cold caches).  The saving scales with group
+count.
+
+### Why I didn't measure the full system
+
+`InstanceBufferBuildSystem::update` early-exits when the program
+handle is invalid (which the Noop / headless renderer always
+returns), so driving the full system from a unit test would have
+hit the early-out before the map even constructed.  Measuring the
+map allocation pattern in isolation is what the audit's claim
+actually targets — the rest of the system (cull check, encoder
+submit, instance buffer fill) is workload-dependent and would
+need a real-scene perf_smoke run to A/B end-to-end.

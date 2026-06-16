@@ -95,7 +95,19 @@ void InstanceBufferBuildSystem::update(ecs::Registry& reg, const RenderResources
         explicit GroupData(std::pmr::memory_resource* mr) : instances(mr) {}
     };
 
-    ankerl::unordered_dense::map<uint32_t, GroupData> groups;
+    // Use ankerl's pmr map alias so the groups map's bucket array, dense
+    // value array, and per-entry allocations all draw from the frame
+    // arena instead of the default heap.  Audit item line 143 — the old
+    // shape constructed an empty map on the heap every frame, paying a
+    // malloc + the first rehash for any scene with > 1 instance group.
+    //
+    // ankerl rehashes when load factor exceeds ~0.8 by default; reserving
+    // 16 buckets handles typical scenes (a handful of instance groups)
+    // without a rehash.  Larger scenes pay one rehash; still cheaper than
+    // the default-heap pattern.
+    using GroupMap = ankerl::unordered_dense::pmr::map<uint32_t, GroupData>;
+    GroupMap groups{std::pmr::polymorphic_allocator<std::pair<uint32_t, GroupData>>(alloc)};
+    groups.reserve(16);
 
     auto instView = reg.view<InstancedMeshComponent, WorldTransformComponent>();
     instView.each(

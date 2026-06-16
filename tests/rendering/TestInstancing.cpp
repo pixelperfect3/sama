@@ -1,4 +1,11 @@
+#include <ankerl/unordered_dense.h>
+
+#include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
+#include <cstdio>
+#include <memory_resource>
+#include <vector>
 
 #include "engine/ecs/Registry.h"
 #include "engine/math/Types.h"
@@ -169,4 +176,120 @@ TEST_CASE("InstanceBufferBuildSystem: multiple groups are each processed indepen
 
     bgfxCtx.renderer.endFrame();
     res.destroyAll();
+}
+
+// ---------------------------------------------------------------------------
+// Microbenchmark — audit item line 143.
+//
+// Measures the cost of constructing + populating the grouping map for one
+// frame, comparing the old default-heap shape against the new pmr-arena
+// shape.  Tagged [!benchmark] so it doesn't run by default; trigger via:
+//
+//   build/engine_tests "[instancing-bench]"
+//
+// We don't drive a full InstanceBufferBuildSystem::update() call here —
+// the audit's claim is specifically about the map allocation, and the
+// rest of the system (cull check, encoder submit, etc.) is workload-
+// dependent.  Isolating the map lets us A/B that one thing cleanly.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+struct BenchGroupData
+{
+    uint32_t meshId = 0;
+    std::pmr::vector<engine::math::Mat4> instances;
+    bool anyVisible = false;
+
+    explicit BenchGroupData(std::pmr::memory_resource* mr) : instances(mr) {}
+};
+
+template <typename T>
+inline void doNotOptimizeRef(T& value)
+{
+    asm volatile("" : "+r,m"(value) : : "memory");
+}
+
+}  // namespace
+
+TEST_CASE("BENCH: instancing groups map default-heap vs pmr-arena",
+          "[instancing-bench][!benchmark]")
+{
+    constexpr int kIterations = 10000;
+    constexpr int kGroups = 8;
+    constexpr int kInstancesPerGroup = 32;
+
+    const engine::math::Mat4 sampleMatrix(1.0f);
+
+    using Clock = std::chrono::steady_clock;
+
+    // -- Default heap (the old shape) --------------------------------------
+    const auto refStart = Clock::now();
+    for (int iter = 0; iter < kIterations; ++iter)
+    {
+        ankerl::unordered_dense::map<uint32_t, BenchGroupData> groups;
+        for (int g = 0; g < kGroups; ++g)
+        {
+            auto [it, inserted] =
+                groups.try_emplace(static_cast<uint32_t>(g), std::pmr::get_default_resource());
+            auto& gd = it->second;
+            if (inserted)
+            {
+                gd.meshId = static_cast<uint32_t>(g);
+            }
+            for (int i = 0; i < kInstancesPerGroup; ++i)
+            {
+                gd.instances.push_back(sampleMatrix);
+                gd.anyVisible = true;
+            }
+        }
+        doNotOptimizeRef(groups);
+    }
+    const auto refNs = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - refStart)
+                           .count();
+
+    // -- pmr arena (the new shape) -----------------------------------------
+    // Pre-allocate a 256 KB buffer for the monotonic resource — comfortably
+    // covers the per-frame allocations.  We release() between iterations
+    // to simulate the FrameArena::reset() that the engine performs at
+    // end-of-frame.
+    std::array<std::byte, 256 * 1024> arenaBuffer{};
+    std::pmr::monotonic_buffer_resource arena(arenaBuffer.data(), arenaBuffer.size());
+
+    const auto fastStart = Clock::now();
+    for (int iter = 0; iter < kIterations; ++iter)
+    {
+        arena.release();
+        std::pmr::polymorphic_allocator<std::pair<uint32_t, BenchGroupData>> mapAlloc(&arena);
+        ankerl::unordered_dense::pmr::map<uint32_t, BenchGroupData> groups(mapAlloc);
+        groups.reserve(16);
+        for (int g = 0; g < kGroups; ++g)
+        {
+            auto [it, inserted] = groups.try_emplace(static_cast<uint32_t>(g), &arena);
+            auto& gd = it->second;
+            if (inserted)
+            {
+                gd.meshId = static_cast<uint32_t>(g);
+            }
+            for (int i = 0; i < kInstancesPerGroup; ++i)
+            {
+                gd.instances.push_back(sampleMatrix);
+                gd.anyVisible = true;
+            }
+        }
+        doNotOptimizeRef(groups);
+    }
+    const auto fastNs =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - fastStart).count();
+
+    const double refNsPerIter = static_cast<double>(refNs) / static_cast<double>(kIterations);
+    const double fastNsPerIter = static_cast<double>(fastNs) / static_cast<double>(kIterations);
+    const double speedup = refNsPerIter / fastNsPerIter;
+
+    std::printf("\n[BENCH instancing-groups] %d iters, %d groups x %d instances: "
+                "%.0f ns/frame (default-heap) vs %.0f ns/frame (pmr) — %.2fx speedup\n",
+                kIterations, kGroups, kInstancesPerGroup, refNsPerIter, fastNsPerIter, speedup);
+
+    CHECK(fastNsPerIter < refNsPerIter);  // Sanity: pmr IS faster.
 }
