@@ -237,6 +237,43 @@ void Renderer::endFrame()
     using FloatMs = std::chrono::duration<float, std::milli>;
     frameStats_.postProcessSubmitMs = std::chrono::duration_cast<FloatMs>(t1 - t0).count();
     frameStats_.bgfxFrameMs = std::chrono::duration_cast<FloatMs>(t2 - t1).count();
+
+#ifdef __ANDROID__
+    // Diagnostic: dump bgfx's own thread-wait counters every 120 frames.
+    // The pair (waitSubmit, waitRender) disambiguates the "high
+    // bgfx::frame()" investigation (see docs/NOTES.md "Correction
+    // (2026-06-16)" + the follow-up entry).  Heavy bgfx::frameMs +
+    // large waitSubmit = game thread is back-pressured by render thread
+    // (which is itself either GPU-bound or compositor-bound).  Heavy
+    // bgfx::frameMs + small waitSubmit = the cost is in bgfx's internal
+    // bookkeeping (cmd-list build), not the hand-off.
+    //
+    // Also dumps gpuTime / cpuTime (also in microseconds) so the
+    // integrating team can see whether GPU work itself is the limiter.
+    //
+    // Gated behind frameCounter to keep logcat noise bounded — 120
+    // frames ≈ 2 s at 60 fps, plenty for diagnosis without spam.
+    static uint32_t s_frameLogCounter = 0;
+    if ((++s_frameLogCounter % 120) == 0)
+    {
+        const bgfx::Stats* stats = bgfx::getStats();
+        if (stats != nullptr)
+        {
+            const double cpuToMs = 1000.0 / static_cast<double>(stats->cpuTimerFreq);
+            const double gpuToMs = 1000.0 / static_cast<double>(stats->gpuTimerFreq);
+            __android_log_print(
+                4, "SamaEngineBgfxStats",
+                "frame=%u bgfx::frameMs=%.2f | waitSubmit=%.2f ms | waitRender=%.2f ms | "
+                "cpu=%.2f ms gpu=%.2f ms | numDraws=%u",
+                s_frameLogCounter, frameStats_.bgfxFrameMs,
+                static_cast<double>(stats->waitSubmit) * cpuToMs,
+                static_cast<double>(stats->waitRender) * cpuToMs,
+                static_cast<double>(stats->cpuTimeEnd - stats->cpuTimeBegin) * cpuToMs,
+                static_cast<double>(stats->gpuTimeEnd - stats->gpuTimeBegin) * gpuToMs,
+                static_cast<uint32_t>(stats->numDraw));
+        }
+    }
+#endif
 }
 
 RenderSettings Renderer::makeDefaultSettings()

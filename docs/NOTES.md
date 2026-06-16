@@ -334,6 +334,38 @@ When `BGFX_RESET_VSYNC` is set (it is, in `Renderer.cpp:69` + `:267`) AND GPU wo
 
 **Open item.**  The audit's `#P2` (line 138 of `docs/PERF_AUDIT_2026-05-25.md`) — `Surface.setFrameRate(targetFPS)` plumbing on Android — directly addresses the "GPU work doesn't fit in vsync" case for tiers that target 30 fps.  Currently `TierConfig::targetFPS` exists but the Android-side panel rate change isn't wired up.
 
+### Follow-up (2026-06-16, same day): vsync-off didn't help — back-pressure runs deeper
+
+The integrating team applied fix path 3 (disable vsync as a diagnostic) and reported `bgfx::frameMs` is *still* 15+ ms.  That falsifies the "vsync is the gate" framing of the previous correction in its simplest form.  Three sharper hypotheses replace it:
+
+**Hypothesis 3 — GPU is genuinely the bottleneck.**  PBR + bloom (~9 fullscreen passes at high tier) + SSAO at 1080×2424 on Mali-G715 is ~2.6 MP fragment work that can easily exceed 15 ms regardless of vsync.  The ring fills because the GPU itself is slow, not because vblank is gating.  Diagnostic: compare `gpuTime` (from `bgfx::getStats()`) to the wall-clock; if `gpuTime ≈ bgfx::frameMs`, this is it.
+
+**Hypothesis 4 — bgfx's "vsync off" silently fell back to FIFO on Android Vulkan.**  Without `BGFX_RESET_VSYNC`, bgfx requests `VK_PRESENT_MODE_MAILBOX_KHR` first, then falls back to `FIFO` (which IS vsync).  `VK_PRESENT_MODE_IMMEDIATE_KHR` (true no-vsync) is rarely supported on Android Vulkan — Pixel 9 Tensor G4 / Mali-G715 may not expose it.  Net: the "vsync off" reset flag was a no-op.  Diagnostic: dump the actual swapchain present mode bgfx picked.  bgfx's Stats struct doesn't expose this directly, so the cleanest path is `bgfx::setDebug(BGFX_DEBUG_STATS)` which renders an overlay (or watching the bgfx init log via `bgfx::Callback`).
+
+**Hypothesis 5 — Android compositor (SurfaceFlinger) back-pressure via `vkAcquireNextImageKHR`.**  Even if bgfx picked `MAILBOX`, the Android compositor still controls when swapchain images are released back to the app.  At a 60 Hz panel, SurfaceFlinger refreshes at ~16.67 ms cadence; `vkAcquireNextImageKHR` blocks waiting for a released image.  This is application-invisible vsync enforced at the compositor, independent of the bgfx-side present mode.  Diagnostic: same as 3 (gpuTime should be small, waitSubmit large).
+
+**Disambiguating instrumentation landed today.**  `engine/rendering/Renderer.cpp:236-272` now dumps `bgfx::getStats()` every 120 frames on Android via `__android_log_print`:
+
+```
+SamaEngineBgfxStats: frame=120 bgfx::frameMs=15.2 | waitSubmit=14.8 ms | waitRender=0.1 ms | cpu=2.3 ms gpu=14.6 ms | numDraws=287
+```
+
+The five numbers triage in under a minute:
+- **`waitSubmit ≈ bgfx::frameMs` and `gpuTime ≈ bgfx::frameMs`** → hypothesis 3.  GPU is the bottleneck.  Fix is to reduce GPU work — audit's perf items, drop bloom step count, lower shadow resolution, tier down.
+- **`waitSubmit ≈ bgfx::frameMs` and `gpuTime << bgfx::frameMs`** → hypothesis 4 or 5.  GPU finishes fast but submit thread still waits.  Either bgfx fell back to FIFO (hypothesis 4 — check the bgfx init log) or SurfaceFlinger is gating acquire (hypothesis 5 — confirm by running on a 120 Hz panel; if it then drops to ~8 ms, compositor refresh is the gate).
+- **`waitRender` large** → render thread is starved.  Game thread isn't keeping it fed.  Unlikely for a PBR-heavy game; would point to a different bug entirely.
+
+Two diagnostics the team can run while waiting for the next APK build:
+- *Compare on the same Pixel 9 against the simpler perf_smoke scene* (same panel, same vsync config, same APK harness).  perf_smoke's GPU work should be well under vsync — if its `bgfx::frame()` is ~0.1 ms but the shipping game's is 15 ms, that locates the cost in *their* GPU work, not the threading infrastructure.  This isolates hypothesis 3 even before the new instrumentation lands.
+- *Try the build on a 120 Hz panel.*  If `bgfx::frameMs` drops to ~8 ms (= 1/120 s vblank period), the gate is at the compositor.  If it stays at 15 ms, the GPU is the limit.
+
+**No engine fix yet.**  The right move depends on the diagnosis.  Likely outcomes:
+- Hypothesis 3 confirmed → audit's perf items + lower the game's tier on Pixel 9 + #P2 (`Surface.setFrameRate(30)`) become the path.
+- Hypothesis 4 confirmed → expose a way to set true `VK_PRESENT_MODE_IMMEDIATE_KHR` if the device supports it.  But this only matters for benchmarking; production wants tear-free.
+- Hypothesis 5 confirmed → `Surface.setFrameRate(60)` doesn't help (you ARE running at 60 Hz already).  Real fix is to render faster than vblank or accept the cadence.
+
+The integrating team should rebuild against `main` and share one of those logcat lines from a steady-state 5 s sample.  That nails the diagnosis.
+
 ---
 
 ## Physics
