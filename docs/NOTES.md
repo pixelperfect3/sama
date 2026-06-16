@@ -3946,3 +3946,124 @@ The audit assumed a more expensive slerp than the engine ships.
   compiler hoist the `==` check out of the inner loop, eliminating
   the per-call cost on misses.  Possibly worth a follow-up if
   someone wants to revisit the equal-keyframe path.
+
+## PhysicsSystem: inverseTRS for parent-local conversion (2026-06-16)
+
+Audit item line 125.  `PhysicsSystem::syncDynamicBodies` was calling
+`glm::inverse(parentWtc->matrix)` to compute the world→parent-local
+transform for every parented dynamic rigid body every frame.
+
+### Why glm::inverse is expensive
+
+`glm::inverse(Mat4)` computes a general 4x4 inverse via cofactor
+expansion — ~100 muls + 40 adds + 1 division, with branchy logic.
+Necessary for general matrices (perspective, skew, affine, whatever),
+but the engine's world matrices are *always* affine TRS — built by
+`composeLocal` as `T * R * S` with R orthonormal and S diagonal.
+The general inverse pays for capability it never needs here.
+
+### The TRS-specific inverse
+
+For `M = [R*S | t; 0 0 0 1]`:
+
+  `M^-1 = [A^-1 | -A^-1 * t; 0 0 0 1]` where `A^-1 = S^-1 * R^T = diag(1/s) * R^T`
+
+Element-wise:
+
+  `A^-1[i, j] = (1 / s_i^2) * M[j, i]`
+
+— transpose `A` and divide each row by the squared scale of the
+corresponding original column.  No cofactor expansion, no general
+4x4 inverse, no `glm::decompose`.
+
+The `s_i^2` values fall out for free: since each column of M is
+`s_i * R.col_i` and R is orthonormal, `|M.col_i|^2 = s_i^2`.
+
+### Cost
+
+| | muls | adds | divs |
+|---|---:|---:|---:|
+| `glm::inverse` (general 4x4 via cofactor) | ~100 | ~40 | 1 |
+| `math::inverseTRS` (TRS-specific) | ~30 | ~18 | 3 |
+
+### Audit's alternative: cache on WorldTransformComponent
+
+The audit's suggested fix was different — cache `inverseWorldMatrix`
+on `WorldTransformComponent` and have TransformSystem compute it
+when it writes the world matrix.  That would have meant:
+
+- `WorldTransformComponent` grows from 64 bytes (one Mat4) to 128
+  bytes — every entity in the scene pays the storage.
+- TransformSystem runs the inverse for *every* entity every frame
+  (since it doesn't know which entities a downstream consumer will
+  need the inverse for) — amortising the cost across thousands of
+  entities that never need it.
+
+In contrast, `inverseTRS` adds zero per-entity overhead and is only
+paid by the consumers that actually invert.  For the current
+PhysicsSystem use case (one call per parented dynamic body per
+frame) that's the right tradeoff.  If a future scenario needs the
+inverse on most entities every frame, the cache approach becomes
+preferable again — leave that decision to measured workloads.
+
+### Measurement
+
+Benchmark in `tests/math/TestTransform.cpp` (`[inverse-trs-bench]`,
+Catch2 `[!benchmark]` tagged so it doesn't run by default).  Uses
+`asm volatile` barriers to defeat compiler loop-invariant code
+motion — without the barriers, both forms benchmarked at 0.8
+ns/call because the optimiser hoisted them past the loop.
+
+Five runs, 1 000 000 iterations each, M-series Mac:
+
+| Run | `inverseTRS` ns/call | `glm::inverse` ns/call | Speedup |
+|---|---:|---:|---:|
+| 1 | 7.6 | 18.9 | 2.49× |
+| 2 | 4.0 | 12.5 | 3.09× |
+| 3 | 3.0 | 10.3 | 3.38× |
+| 4 | 3.0 | 10.2 | 3.43× |
+| 5 | 3.0 | 10.2 | 3.43× |
+
+Median ~3.0 vs ~10.2 = **3.4× speedup**, saves ~7 ns per call.
+The first run is noisier (cold caches / branch predictor); runs
+3-5 converged.
+
+### Why the speedup will be bigger on ARM
+
+The audit's "saves ~80 muls per parented dynamic body" projection
+maps directly to the 3.4× speedup on M-series, but the absolute
+number (~7 ns saved) is small because Apple Silicon's deep OoO
+pipeline + AMX-style matrix accelerators eat the cofactor inverse
+faster than the formula suggests.  On a Cortex-A78 with shallower
+OoO, fewer pipelines, and 5-cycle fp-multiply latency, the cofactor
+inverse will dominate more relative to the simpler TRS form —
+expected ARM speedup is closer to 4-5×.  Worth re-measuring on
+device when the engine ships to Android.
+
+### Tests
+
+6 correctness cases pin epsilon-equality with `glm::inverse`:
+
+- identity
+- pure translation
+- pure rotation (off-axis)
+- uniform scale
+- full T*R*S with non-uniform scale (looser epsilon for the
+  cumulative rounding)
+- point-roundtrip — the actual physics call shape (`inverseTRS *
+  worldPos` matches `glm::inverse * worldPos`)
+
+The point-roundtrip case is the safety guarantee: if I got the
+algebra wrong, a physics body's position would diverge over many
+frames and break things visibly.
+
+### Contract
+
+`inverseTRS` assumes the input is an affine TRS matrix (no skew,
+no perspective).  Skew matrices give wrong results *silently* —
+the assertion would catch nothing because the math just produces a
+non-inverse.  Mitigation: only one call site uses it (the physics
+call), and that call site receives a matrix built by `composeLocal`
+which is TRS by construction.  If a future caller uses it on a
+non-TRS matrix the bug surfaces as physics positions drifting away
+from where they should be.

@@ -4,6 +4,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include "engine/math/Transform.h"
 #include "engine/memory/InlinedVector.h"
 #include "engine/physics/JoltPhysicsEngine.h"
 #include "engine/physics/PhysicsComponents.h"
@@ -169,7 +170,15 @@ void PhysicsSystem::syncDynamicBodies(ecs::Registry& reg, IPhysicsEngine& physic
                 auto* parentWtc = reg.get<rendering::WorldTransformComponent>(hierarchy->parent);
                 if (parentWtc)
                 {
-                    math::Mat4 invParent = glm::inverse(parentWtc->matrix);
+                    // `math::inverseTRS` exploits the parent matrix's
+                    // affine TRS structure (~30 muls) instead of the
+                    // general cofactor inverse `glm::inverse` would do
+                    // (~100 muls).  Every world matrix the engine
+                    // produces is built by `composeLocal` as a pure TRS,
+                    // so the precondition is satisfied.  Audit item line
+                    // 125 — see also docs/NOTES.md "PhysicsSystem:
+                    // inverseTRS for parent-local conversion".
+                    math::Mat4 invParent = math::inverseTRS(parentWtc->matrix);
                     math::Vec4 localPos4 = invParent * math::Vec4(worldPos, 1.0f);
                     tc->position = math::Vec3(localPos4);
 
