@@ -1,0 +1,2192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sama Engine — Interview Overview</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --fg-dim: #555;
+    --bg: #fdfdfb;
+    --bg-code: #f3f1ec;
+    --bg-soft: #f7f5f0;
+    --accent: #b04a1f;
+    --accent-soft: #c97a4a;
+    --rule: #d8d4cc;
+    --warn-bg: #fff5e6;
+    --warn-rule: #c97a4a;
+    --code-fg: #1a1a1a;
+    --code-kw: #b04a1f;
+    --code-cmt: #6a7480;
+    --max: 900px;
+    --sidebar: 280px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+      Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    -webkit-text-size-adjust: 100%;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: var(--sidebar) minmax(0, 1fr);
+    max-width: calc(var(--max) + var(--sidebar) + 80px);
+    margin: 0 auto;
+  }
+  aside.toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 24px 18px 32px 18px;
+    border-right: 1px solid var(--rule);
+    font-size: 14px;
+    background: var(--bg);
+  }
+  aside.toc h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    margin: 0 0 8px 0;
+  }
+  aside.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  aside.toc ol ol {
+    margin: 4px 0 6px 14px;
+    font-size: 13px;
+    color: var(--fg-dim);
+  }
+  aside.toc li { margin: 3px 0; }
+  aside.toc a {
+    color: var(--fg);
+    text-decoration: none;
+    display: block;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  aside.toc a:hover { background: var(--bg-soft); color: var(--accent); }
+  main {
+    padding: 40px 40px 80px 40px;
+    max-width: var(--max);
+  }
+  h1 {
+    font-size: 32px;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    font-size: 24px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 6px;
+    margin-top: 56px;
+  }
+  h3 { font-size: 19px; margin-top: 36px; }
+  h4 { font-size: 16px; margin-top: 24px; color: var(--fg-dim); }
+  p, li { font-size: 16px; }
+  strong { font-weight: 600; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+      monospace;
+    font-size: 0.92em;
+    background: var(--bg-code);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+    color: var(--code-fg);
+  }
+  .filepath {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin: 14px 0 4px 0;
+  }
+  blockquote {
+    border-left: 3px solid var(--accent);
+    margin: 16px 0;
+    padding: 4px 16px;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-style: italic;
+  }
+  .thirty {
+    background: var(--bg-soft);
+    border-left: 3px solid var(--accent);
+    padding: 10px 16px;
+    margin: 8px 0 20px 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .thirty strong { color: var(--accent); }
+  .honesty {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-rule);
+    border-left-width: 4px;
+    padding: 8px 14px;
+    margin: 16px 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 15px;
+  }
+  .honesty::before {
+    content: "Honesty flag — ";
+    font-weight: 700;
+    color: var(--accent);
+  }
+  details {
+    margin: 12px 0;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 6px 12px;
+    background: var(--bg-soft);
+  }
+  details summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 4px 0;
+    color: var(--accent);
+  }
+  details[open] summary { border-bottom: 1px solid var(--rule); margin-bottom: 8px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+    font-size: 14.5px;
+  }
+  th, td {
+    border: 1px solid var(--rule);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--bg-soft); }
+  svg.diagram {
+    display: block;
+    margin: 16px auto;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: white;
+  }
+  .subtoc {
+    background: var(--bg-soft);
+    border: 1px solid var(--rule);
+    padding: 8px 16px;
+    border-radius: 4px;
+    margin: 12px 0 24px 0;
+    font-size: 14px;
+  }
+  .subtoc h4 { margin: 6px 0; color: var(--fg); }
+  .subtoc ul { margin: 4px 0; padding-left: 20px; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
+  .meta { color: var(--fg-dim); font-size: 14px; margin-bottom: 28px; }
+  .qa { margin: 12px 0; }
+  .qa .q { font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; }
+    aside.toc {
+      position: static;
+      max-height: none;
+      border-right: none;
+      border-bottom: 1px solid var(--rule);
+    }
+    main { padding: 24px 18px 48px 18px; }
+    h1 { font-size: 26px; }
+    h2 { font-size: 21px; }
+    h3 { font-size: 18px; }
+  }
+
+  @media print {
+    aside.toc { display: none; }
+    .layout { display: block; max-width: none; }
+    main { padding: 0; max-width: none; }
+    body { font-size: 11pt; background: white; color: black; }
+    h2 { page-break-after: avoid; }
+    pre, table, svg.diagram, details { page-break-inside: avoid; }
+    details { border: 1px solid #aaa; }
+    details > summary ~ * { display: block !important; }
+    a { color: black; text-decoration: none; }
+    .thirty, .honesty { background: #f4f4f4; border-color: #999; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#proposal">1. The initial proposal</a></li>
+    <li><a href="#arch">2. High-level architecture</a></li>
+    <li><a href="#loop">3. The game loop</a></li>
+    <li><a href="#ecs">4. ECS architecture</a></li>
+    <li><a href="#subsystems">5. Subsystems</a>
+      <ol>
+        <li><a href="#rendering">5a. Rendering</a></li>
+        <li><a href="#animation">5b. Animation</a></li>
+        <li><a href="#physics">5c. Physics</a></li>
+        <li><a href="#audio">5d. Audio</a></li>
+        <li><a href="#assets">5e. Assets</a></li>
+        <li><a href="#memory">5f. Memory</a></li>
+        <li><a href="#threading">5g. Threading</a></li>
+      </ol>
+    </li>
+    <li><a href="#editor">6. Editor</a></li>
+    <li><a href="#scene">7. Scene authoring &amp; persistence</a></li>
+    <li><a href="#mobile">8. Mobile vs desktop</a></li>
+    <li><a href="#perf">9. Performance deep-dive</a></li>
+    <li><a href="#testing">10. Testing</a></li>
+    <li><a href="#limits">11. Limitations &amp; would-do-differently</a></li>
+    <li><a href="#qa">12. Likely interview questions</a></li>
+  </ol>
+</aside>
+
+<main>
+<h1>Sama Engine</h1>
+<div class="meta">A cross-platform C++20 game engine targeting Windows, macOS,
+iOS and Android. Built on bgfx, Jolt and SoLoud. Interview prep document — read
+top to bottom for the talking track, or jump straight to a section.</div>
+
+<!-- ========================================================== -->
+<h2 id="proposal">1. The initial proposal</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> I wrote down the
+brief myself before any code existed: a custom, easy-to-use C++ engine and
+editor that runs the same game on Windows, Mac, iOS and Android, with an ECS
+data layout, Metal on Apple and Vulkan elsewhere, multi-threaded with
+per-platform thread caps, modern rendering techniques landed step by step, 60
+fps on mobile and 90–120 fps on desktop, with tests and tight binary size as
+non-negotiables.</div>
+
+<p>The proposal lives at the top of the repo in <code>CustomGameEngine.md</code>
+— the very first thing in the working tree. I'm quoting it verbatim here so
+the interviewer can see what the original intent was, before I knew where the
+tradeoffs would land.</p>
+
+<span class="filepath">/Users/shayanj/claude/engine/CustomGameEngine.md (verbatim)</span>
+<pre><code># Project Goals:
+* Create an easy to use custom game engine (primarily 3d, maybe 2d later) +
+  editor built with C++ which is performant, easy to use, and targets the
+  following platforms: Windows, Mac, Android and iOS.
+* I want to create a 3d game using this editor which can be published on
+  all platforms
+
+## Constraints:
+* Write ECS system for data structure management, which is performant and
+  targets each architecture/platform for best efficiency.
+* Built with modern C++, target c++ version which can run on all the platforms
+* Multi-threaded with flexibility (if we want only specific # of threads on
+  certain platforms)
+* 3D Rendering APIs to use: Metal for Mac/iOS, Vulkan for the rest. Suggest
+  libraries which can target both backends
+* Rendering: Implement modern techniques like ray tracing, anti-aliasing
+  solutions, step by step, discussing as we go along (what to defer to
+  long-term support)
+* Custom Scene Graph management (let's discuss)
+* Performance: upto 60fps on mobile platforms, upto 90-120 fps on desktop
+* Tooling: In-game visualizer which will show useful info like FPS, CPU/GPU
+  usage, Texture memory, etc.
+* Formats: Start with minimal set of 3d (gltf, fbx, etc), image, audio
+  formats to support.
+* Use ImGui wherever possible for simple UI
+
+## Open Questions:
+* Be very deliberate about using external libraries — Binary size is a
+  factor. Could we write up our own for our specific needs?
+* Physics Engine: Explore what are the best cross platform options
+* Audio: I don't have a background in audio architecture, walk me through it
+* Scene Graph: Write our own custom scene graph management or use an external
+  library?</code></pre>
+
+<p>What survived and what didn't, in one sentence each:</p>
+<ul>
+  <li><strong>ECS, cross-platform, C++20, Metal+Vulkan via bgfx, fps targets,
+  ImGui, glTF-first</strong> — all survived.</li>
+  <li><strong>Ray tracing</strong> — explicitly tabled long-term; bgfx doesn't
+  expose RT APIs and forking it would dwarf the rest of the engine. Documented
+  in <code>docs/NOTES.md:136-140</code>.</li>
+  <li><strong>FBX</strong> — punted in favour of glTF-only via cgltf; FBX adds
+  ~10 MB of assimp for little gain.</li>
+  <li><strong>"Be deliberate about external libraries"</strong> — drove
+  every dependency choice: rejected tinygltf and fastgltf for cgltf, rejected
+  FMOD (~3–6 MB, royalty) for SoLoud + miniaudio, rejected nlohmann/json for
+  rapidjson, rejected Diligent / Filament for bgfx.</li>
+</ul>
+
+<!-- ========================================================== -->
+<h2 id="arch">2. High-level architecture</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> The engine is a
+C++20 codebase built with CMake, layered as ECS at the core, with subsystems
+(rendering, animation, physics, audio, assets, threading, memory, input) that
+all express their state as ECS components. Games implement an
+<code>IGame</code> interface and are driven by a cross-platform
+<code>GameRunner</code> with per-platform entry points (NativeActivity on
+Android, UIApplication on iOS, GLFW on desktop). Rendering goes through bgfx,
+which gives me Metal on Apple, Vulkan everywhere else, with one source of
+shaders.</div>
+
+<h3>Layering</h3>
+
+<svg class="diagram" viewBox="0 0 720 360" role="img" aria-label="Layering diagram">
+  <style>
+    .b { fill: #fff; stroke: #1a1a1a; stroke-width: 1.5; }
+    .ba { fill: #fff5e6; stroke: #b04a1f; stroke-width: 1.5; }
+    .bs { fill: #f3f1ec; stroke: #1a1a1a; stroke-width: 1.5; }
+    .t { font: 13px -apple-system, system-ui, sans-serif; }
+    .tb { font: bold 13px -apple-system, system-ui, sans-serif; }
+    .lbl { font: 11px -apple-system, system-ui, sans-serif; fill: #555; }
+  </style>
+  <!-- Game layer -->
+  <rect x="20" y="20" width="680" height="50" class="ba" rx="3"/>
+  <text x="360" y="50" text-anchor="middle" class="tb">Game (your code) — class MyGame : public engine::IGame { ... }</text>
+
+  <!-- Runner -->
+  <rect x="20" y="85" width="680" height="40" class="bs" rx="3"/>
+  <text x="360" y="110" text-anchor="middle" class="tb">engine::GameRunner — owns Engine, drives frame loop</text>
+
+  <!-- Engine -->
+  <rect x="20" y="140" width="680" height="40" class="bs" rx="3"/>
+  <text x="360" y="165" text-anchor="middle" class="tb">engine::core::Engine — window, renderer, registry, frame arena, input, audio</text>
+
+  <!-- Subsystems -->
+  <g>
+    <rect x="20"  y="195" width="105" height="80" class="b" rx="3"/>
+    <text x="72" y="220" text-anchor="middle" class="tb">Rendering</text>
+    <text x="72" y="240" text-anchor="middle" class="lbl">bgfx</text>
+    <text x="72" y="256" text-anchor="middle" class="lbl">+ shaders</text>
+
+    <rect x="135" y="195" width="105" height="80" class="b" rx="3"/>
+    <text x="187" y="220" text-anchor="middle" class="tb">Animation</text>
+    <text x="187" y="240" text-anchor="middle" class="lbl">glTF clips</text>
+    <text x="187" y="256" text-anchor="middle" class="lbl">+ IK</text>
+
+    <rect x="250" y="195" width="105" height="80" class="b" rx="3"/>
+    <text x="302" y="220" text-anchor="middle" class="tb">Physics</text>
+    <text x="302" y="240" text-anchor="middle" class="lbl">Jolt</text>
+    <text x="302" y="256" text-anchor="middle" class="lbl">via IPhysicsEngine</text>
+
+    <rect x="365" y="195" width="105" height="80" class="b" rx="3"/>
+    <text x="417" y="220" text-anchor="middle" class="tb">Audio</text>
+    <text x="417" y="240" text-anchor="middle" class="lbl">SoLoud</text>
+    <text x="417" y="256" text-anchor="middle" class="lbl">+ miniaudio</text>
+
+    <rect x="480" y="195" width="105" height="80" class="b" rx="3"/>
+    <text x="532" y="220" text-anchor="middle" class="tb">Assets</text>
+    <text x="532" y="240" text-anchor="middle" class="lbl">cgltf, stb,</text>
+    <text x="532" y="256" text-anchor="middle" class="lbl">KTX2</text>
+
+    <rect x="595" y="195" width="105" height="80" class="b" rx="3"/>
+    <text x="647" y="220" text-anchor="middle" class="tb">Threading</text>
+    <text x="647" y="240" text-anchor="middle" class="lbl">ThreadPool +</text>
+    <text x="647" y="256" text-anchor="middle" class="lbl">SystemExecutor</text>
+  </g>
+
+  <!-- ECS -->
+  <rect x="20" y="290" width="680" height="50" class="ba" rx="3"/>
+  <text x="360" y="312" text-anchor="middle" class="tb">engine::ecs::Registry — SparseSet&lt;T&gt; per component, View&lt;...&gt; joins</text>
+  <text x="360" y="330" text-anchor="middle" class="lbl">Every subsystem stores its state as components in this registry</text>
+</svg>
+
+<h3>Target platforms &amp; backends</h3>
+
+<table>
+  <tr><th>Platform</th><th>Render backend</th><th>Window</th><th>Audio</th><th>Input</th></tr>
+  <tr><td>macOS</td><td>Metal</td><td>GLFW</td><td>SoLoud + miniaudio (CoreAudio)</td><td>GLFW</td></tr>
+  <tr><td>Windows</td><td>Vulkan</td><td>GLFW</td><td>SoLoud + miniaudio (WASAPI)</td><td>GLFW</td></tr>
+  <tr><td>Linux</td><td>Vulkan</td><td>GLFW</td><td>SoLoud + miniaudio (ALSA)</td><td>GLFW</td></tr>
+  <tr><td>iOS</td><td>Metal</td><td>UIApplication / CAMetalLayer</td><td>SoLoud + miniaudio</td><td>IosTouchInput + IosGyro</td></tr>
+  <tr><td>Android</td><td>Vulkan</td><td>NativeActivity + ANativeWindow</td><td>SoLoud + miniaudio (AAudio / OpenSL ES)</td><td>AndroidInput + GestureRecognizer</td></tr>
+</table>
+
+<p>The selector lives in <code>engine/rendering/Renderer.cpp:39-43</code>:</p>
+<pre><code>#if defined(__APPLE__)
+    init.type = bgfx::RendererType::Metal;
+#else
+    init.type = bgfx::RendererType::Vulkan;
+#endif</code></pre>
+
+<h3>The IGame / GameRunner pattern</h3>
+<p>Games never see <code>main()</code> or platform entry points — they implement
+<code>engine::IGame</code> and <code>GameRunner</code> drives them. The per-platform
+shim (NativeActivity callback on Android, UIApplicationMain on iOS, GLFW
+loop on desktop) calls into <code>GameRunner</code>. This is the load-bearing
+abstraction that makes "one game, four platforms" possible.</p>
+
+<h3>Build system</h3>
+<p>Plain CMake. External libraries via <code>FetchContent</code> (Jolt, glm,
+glfw, bgfx, Catch2, cgltf) with stb and SoLoud vendored. Key targets:
+<code>engine_tests</code>, <code>engine_screenshot_tests</code>,
+<code>helmet_demo</code>, <code>hierarchy_demo</code>, <code>physics_demo</code>,
+<code>audio_demo</code>, <code>animation_demo</code>, plus per-platform app
+shells (<code>android/</code>, <code>ios/</code>, <code>sama_editor</code>).</p>
+
+<!-- ========================================================== -->
+<h2 id="loop">3. The game loop</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Each frame the
+engine polls OS events, updates input and animation, runs physics on a fixed
+timestep with an accumulator (1/60 s, max 4 substeps), updates transforms,
+builds visibility tags + the cluster light grid, records draw calls via bgfx
+encoders, runs the post-process chain, and ends with
+<code>bgfx::frame()</code> which hands the command buffer to the bgfx render
+thread. The frame arena resets to zero allocated bytes at the end of every
+frame.</div>
+
+<h3>Per-frame diagram (by thread)</h3>
+
+<p style="color:var(--fg-dim);font-size:14px;margin:8px 0 16px">
+  <strong>Click any box</strong> to jump to that subsystem's section. Time
+  flows left → right (one 60 fps frame ≈ 16.67 ms). Lanes show the five
+  threads that contribute to a frame; only the main thread is fully drawn
+  here, the rest run continuously or asynchronously.
+</p>
+
+<svg class="diagram threadframe" viewBox="0 0 1120 510" role="img" aria-labelledby="frameTitle frameDesc">
+  <title id="frameTitle">Per-frame timeline by thread</title>
+  <desc id="frameDesc">Five horizontal lanes: main thread, bgfx render thread, Jolt
+    physics workers, Sama ThreadPool, and the audio thread. Boxes in each lane
+    show what runs when. Boxes are clickable and link to the relevant
+    subsystem section.</desc>
+  <style>
+    .threadframe { font-family: -apple-system, system-ui, sans-serif; }
+    .threadframe text { font: 11.5px -apple-system, system-ui, sans-serif; }
+    .threadframe .lane-label { font-weight: 600; font-size: 12px; fill: #1a1a1a; }
+    .threadframe .lane-sub { font-size: 10px; fill: #6a7480; }
+    .threadframe .lane-bg { fill: #faf8f3; stroke: none; }
+    .threadframe .lane-rule { stroke: #d8d4cc; stroke-width: 1; }
+    .threadframe .tick { stroke: #b8b3a8; stroke-width: 1; stroke-dasharray: 2 3; }
+    .threadframe .tick-label { font-size: 10px; fill: #6a7480; }
+    .threadframe .blk-main { fill: #fff; stroke: #1a1a1a; stroke-width: 1.4; }
+    .threadframe .blk-render { fill: #fff5e6; stroke: #b04a1f; stroke-width: 1.4; }
+    .threadframe .blk-phys { fill: #eef4ff; stroke: #2e5aac; stroke-width: 1.4; }
+    .threadframe .blk-pool { fill: #f0f8ee; stroke: #356c2e; stroke-width: 1.4; }
+    .threadframe .blk-audio { fill: #f7ecf7; stroke: #6a2e6c; stroke-width: 1.4; }
+    .threadframe .blk-frame { fill: #f3f1ec; stroke: #1a1a1a; stroke-width: 1.4; }
+    .threadframe .arrow { stroke: #555; fill: none; stroke-width: 1.2;
+      marker-end: url(#tri); }
+    .threadframe .handoff { stroke: #b04a1f; fill: none; stroke-width: 1.5;
+      stroke-dasharray: 4 3; marker-end: url(#tri-r); }
+    .threadframe a:hover rect { stroke-width: 2.4; }
+    .threadframe a:focus rect { stroke-width: 2.4; outline: none; }
+    .threadframe a { cursor: pointer; }
+    .threadframe .ghost { fill: #fff; stroke: #b8b3a8; stroke-width: 1;
+      stroke-dasharray: 3 2; }
+  </style>
+  <defs>
+    <marker id="tri-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#b04a1f"/>
+    </marker>
+  </defs>
+
+  <!-- ===== Time axis ===== -->
+  <text x="160" y="24" class="tick-label">0 ms</text>
+  <text x="290" y="24" class="tick-label">2</text>
+  <text x="420" y="24" class="tick-label">4</text>
+  <text x="550" y="24" class="tick-label">6</text>
+  <text x="680" y="24" class="tick-label">8</text>
+  <text x="810" y="24" class="tick-label">10</text>
+  <text x="940" y="24" class="tick-label">12</text>
+  <text x="1056" y="24" class="tick-label">14</text>
+  <text x="1093" y="24" class="tick-label">16.67</text>
+  <line x1="160" y1="30" x2="160" y2="490" class="tick"/>
+  <line x1="290" y1="30" x2="290" y2="490" class="tick"/>
+  <line x1="420" y1="30" x2="420" y2="490" class="tick"/>
+  <line x1="550" y1="30" x2="550" y2="490" class="tick"/>
+  <line x1="680" y1="30" x2="680" y2="490" class="tick"/>
+  <line x1="810" y1="30" x2="810" y2="490" class="tick"/>
+  <line x1="940" y1="30" x2="940" y2="490" class="tick"/>
+  <line x1="1070" y1="30" x2="1070" y2="490" class="tick"/>
+
+  <!-- ===== Lane 1: Main (game) thread ===== -->
+  <rect x="0" y="36" width="1110" height="78" class="lane-bg"/>
+  <text x="10" y="58" class="lane-label">Main thread</text>
+  <text x="10" y="74" class="lane-sub">(game / submit)</text>
+  <text x="10" y="92" class="lane-sub">Engine::beginFrame</text>
+  <text x="10" y="106" class="lane-sub">→ ::endFrame</text>
+
+  <a href="#arch">
+    <rect x="160" y="44" width="50" height="62" class="blk-frame" rx="3"/>
+    <text x="170" y="68">begin</text>
+    <text x="170" y="82">Frame</text>
+    <text x="170" y="96" font-size="9.5" fill="#555">(events, input)</text>
+  </a>
+  <a href="#assets">
+    <rect x="212" y="44" width="60" height="62" class="blk-frame" rx="3"/>
+    <text x="220" y="68">process</text>
+    <text x="220" y="82">Uploads</text>
+    <text x="220" y="96" font-size="9.5" fill="#555">(GPU create)</text>
+  </a>
+  <a href="#physics">
+    <rect x="274" y="44" width="98" height="62" class="blk-phys" rx="3"/>
+    <text x="284" y="68">PhysicsSystem</text>
+    <text x="284" y="84" font-size="10.5" fill="#555">step(dt, 4 substeps)</text>
+    <text x="284" y="98" font-size="9.5" fill="#555">→ Jolt internal pool</text>
+  </a>
+  <a href="#animation">
+    <rect x="374" y="44" width="86" height="62" class="blk-main" rx="3"/>
+    <text x="382" y="68">Animation</text>
+    <text x="382" y="82">System</text>
+    <text x="382" y="96" font-size="9.5" fill="#555">sample+blend</text>
+  </a>
+  <a href="#ecs">
+    <rect x="462" y="44" width="76" height="62" class="blk-main" rx="3"/>
+    <text x="470" y="68">Transform</text>
+    <text x="470" y="82">System</text>
+    <text x="470" y="96" font-size="9.5" fill="#555">subtree-dirty</text>
+  </a>
+  <a href="#rendering">
+    <rect x="540" y="44" width="60" height="62" class="blk-render" rx="3"/>
+    <text x="548" y="68">Frustum</text>
+    <text x="548" y="82">Cull</text>
+    <text x="548" y="96" font-size="9.5" fill="#555">VisibleTag</text>
+  </a>
+  <a href="#r-csm">
+    <rect x="602" y="44" width="60" height="62" class="blk-render" rx="3"/>
+    <text x="610" y="68">Shadow</text>
+    <text x="610" y="82">Cull</text>
+    <text x="610" y="96" font-size="9.5" fill="#555">cascadeMask</text>
+  </a>
+  <a href="#r-forward">
+    <rect x="664" y="44" width="68" height="62" class="blk-render" rx="3"/>
+    <text x="672" y="68">LightCluster</text>
+    <text x="672" y="82">Builder</text>
+    <text x="672" y="96" font-size="9.5" fill="#555">16×9×24 grid</text>
+  </a>
+  <a href="#r-draw">
+    <rect x="734" y="44" width="92" height="62" class="blk-render" rx="3"/>
+    <text x="742" y="68">DrawCallBuild</text>
+    <text x="742" y="82">System</text>
+    <text x="742" y="96" font-size="9.5" fill="#555">bgfx::Encoder</text>
+  </a>
+  <a href="#r-inst">
+    <rect x="828" y="44" width="56" height="62" class="blk-render" rx="3"/>
+    <text x="836" y="68">Instance</text>
+    <text x="836" y="82">Buffer</text>
+    <text x="836" y="96" font-size="9.5" fill="#555">grouped</text>
+  </a>
+  <a href="#r-post">
+    <rect x="886" y="44" width="86" height="62" class="blk-render" rx="3"/>
+    <text x="894" y="68">PostProcess</text>
+    <text x="894" y="82">System</text>
+    <text x="894" y="96" font-size="9.5" fill="#555">bloom→ACES→FXAA</text>
+  </a>
+  <a href="#arch">
+    <rect x="974" y="44" width="58" height="62" class="blk-frame" rx="3"/>
+    <text x="982" y="68">end</text>
+    <text x="982" y="82">Frame</text>
+    <text x="982" y="96" font-size="9.5" fill="#555">arena reset</text>
+  </a>
+  <a href="#r-bgfx">
+    <rect x="1034" y="44" width="74" height="62" class="blk-frame" rx="3"/>
+    <text x="1042" y="68">bgfx::</text>
+    <text x="1042" y="82">frame()</text>
+    <text x="1042" y="96" font-size="9.5" fill="#555">async hand-off</text>
+  </a>
+
+  <line x1="0" y1="124" x2="1120" y2="124" class="lane-rule"/>
+
+  <!-- ===== Lane 2: bgfx render thread ===== -->
+  <rect x="0" y="132" width="1110" height="78" class="lane-bg"/>
+  <text x="10" y="156" class="lane-label">bgfx render thread</text>
+  <text x="10" y="172" class="lane-sub">(internal, spawned</text>
+  <text x="10" y="186" class="lane-sub">by bgfx::init unless</text>
+  <text x="10" y="200" class="lane-sub">singleThreaded=true)</text>
+
+  <a href="#r-bgfx">
+    <rect x="160" y="142" width="640" height="58" class="blk-render" rx="3"/>
+    <text x="170" y="166">Drains frame N−1 command buffer</text>
+    <text x="170" y="184" font-size="10.5" fill="#555">submits Vulkan/Metal/D3D commands · waits on prior swapchain image · presents</text>
+  </a>
+  <a href="#r-bgfx">
+    <rect x="802" y="142" width="160" height="58" class="ghost" rx="3"/>
+    <text x="810" y="166" fill="#555">idle / vsync wait</text>
+    <text x="810" y="184" font-size="10.5" fill="#555">(until frame N hand-off)</text>
+  </a>
+  <a href="#r-bgfx">
+    <rect x="964" y="142" width="146" height="58" class="blk-render" rx="3"/>
+    <text x="972" y="166">Begins frame N</text>
+    <text x="972" y="184" font-size="10.5" fill="#555">(rolls into next 16.67 ms)</text>
+  </a>
+
+  <!-- Hand-off arrow from bgfx::frame() to render-thread "begins frame N" -->
+  <path d="M 1070 106 C 1070 120, 1040 130, 1040 142" class="handoff"/>
+
+  <line x1="0" y1="220" x2="1120" y2="220" class="lane-rule"/>
+
+  <!-- ===== Lane 3: Jolt physics workers ===== -->
+  <rect x="0" y="228" width="1110" height="68" class="lane-bg"/>
+  <text x="10" y="252" class="lane-label">Jolt worker pool</text>
+  <text x="10" y="268" class="lane-sub">(JobSystemThread-</text>
+  <text x="10" y="282" class="lane-sub">Pool, owned by Jolt)</text>
+
+  <a href="#physics">
+    <rect x="288" y="236" width="22" height="50" class="blk-phys" rx="2"/>
+    <text x="293" y="266" font-size="10" transform="rotate(-90 298 266)">broad</text>
+  </a>
+  <a href="#physics">
+    <rect x="312" y="236" width="22" height="50" class="blk-phys" rx="2"/>
+    <text x="318" y="266" font-size="10" transform="rotate(-90 323 266)">narrow</text>
+  </a>
+  <a href="#physics">
+    <rect x="336" y="236" width="22" height="50" class="blk-phys" rx="2"/>
+    <text x="341" y="266" font-size="10" transform="rotate(-90 346 266)">solve</text>
+  </a>
+  <text x="364" y="266" font-size="10.5" fill="#555">(only during PhysicsSystem::step — otherwise idle)</text>
+
+  <line x1="0" y1="304" x2="1120" y2="304" class="lane-rule"/>
+
+  <!-- ===== Lane 4: Sama ThreadPool ===== -->
+  <rect x="0" y="312" width="1110" height="78" class="lane-bg"/>
+  <text x="10" y="336" class="lane-label">Sama ThreadPool</text>
+  <text x="10" y="352" class="lane-sub">(POD submitTask</text>
+  <text x="10" y="366" class="lane-sub">+ counting_sem,</text>
+  <text x="10" y="380" class="lane-sub">workers default 6)</text>
+
+  <a href="#assets">
+    <rect x="160" y="322" width="500" height="28" class="blk-pool" rx="2"/>
+    <text x="170" y="341">Async asset loads (file I/O + glTF parse) — runs across frames; results pumped to GPU via processUploads()</text>
+  </a>
+
+  <a href="#threading">
+    <rect x="540" y="356" width="270" height="28" class="ghost" rx="2"/>
+    <text x="550" y="375">opt-in: SystemExecutor dispatches phases (only when EngineDesc::useSystemThreadPool=true)</text>
+  </a>
+
+  <line x1="0" y1="400" x2="1120" y2="400" class="lane-rule"/>
+
+  <!-- ===== Lane 5: Audio thread ===== -->
+  <rect x="0" y="408" width="1110" height="78" class="lane-bg"/>
+  <text x="10" y="432" class="lane-label">Audio thread</text>
+  <text x="10" y="448" class="lane-sub">(AAudio / CoreAudio</text>
+  <text x="10" y="462" class="lane-sub">callback, spawned by</text>
+  <text x="10" y="476" class="lane-sub">miniaudio backend)</text>
+
+  <a href="#audio">
+    <rect x="160" y="418" width="120" height="58" class="blk-audio" rx="3"/>
+    <text x="170" y="442">mix callback</text>
+    <text x="170" y="458" font-size="10.5" fill="#555">SoLoud → output buffer</text>
+    <text x="170" y="471" font-size="9.5" fill="#555">(~10 ms slice)</text>
+  </a>
+  <a href="#audio">
+    <rect x="460" y="418" width="120" height="58" class="blk-audio" rx="3"/>
+    <text x="470" y="442">mix callback</text>
+    <text x="470" y="458" font-size="10.5" fill="#555">SoLoud → output buffer</text>
+  </a>
+  <a href="#audio">
+    <rect x="760" y="418" width="120" height="58" class="blk-audio" rx="3"/>
+    <text x="770" y="442">mix callback</text>
+    <text x="770" y="458" font-size="10.5" fill="#555">SoLoud → output buffer</text>
+  </a>
+  <text x="900" y="450" font-size="10" fill="#6a7480">(continuous, latency-bound)</text>
+
+</svg>
+
+<p style="color:var(--fg-dim);font-size:13px;margin:10px 0 18px">
+  <strong>Lane colour legend:</strong>
+  <span style="background:#f3f1ec;border:1px solid #1a1a1a;padding:1px 6px;border-radius:2px">frame bracket</span>
+  <span style="background:#fff;border:1px solid #1a1a1a;padding:1px 6px;border-radius:2px">main-thread CPU</span>
+  <span style="background:#fff5e6;border:1px solid #b04a1f;padding:1px 6px;border-radius:2px">render / GPU prep</span>
+  <span style="background:#eef4ff;border:1px solid #2e5aac;padding:1px 6px;border-radius:2px">Jolt physics</span>
+  <span style="background:#f0f8ee;border:1px solid #356c2e;padding:1px 6px;border-radius:2px">Sama ThreadPool</span>
+  <span style="background:#f7ecf7;border:1px solid #6a2e6c;padding:1px 6px;border-radius:2px">audio</span>
+  <span style="background:#fff;border:1px dashed #b8b3a8;padding:1px 6px;border-radius:2px">opt-in / idle</span>
+</p>
+
+<h4>Thread responsibilities</h4>
+<table>
+<tr><th>Thread</th><th>Owner</th><th>Always on?</th><th>What lives there</th></tr>
+<tr><td><strong>Main</strong></td><td>Sama / GameRunner</td><td>Yes</td>
+  <td>OS event pump, input update, every ECS system, all <code>bgfx::Encoder::submit</code> calls, frame arena reset</td></tr>
+<tr><td><strong>bgfx render</strong></td><td>bgfx (internal)</td><td>Default on; opt-out via <code>EngineDesc::singleThreaded</code></td>
+  <td>Drains the lock-free command queue from <code>bgfx::frame()</code>, makes the Vulkan/Metal/D3D calls, waits on swapchain, presents</td></tr>
+<tr><td><strong>Jolt workers</strong></td><td>Jolt (<code>JobSystemThreadPool</code>)</td><td>Active only during <code>physics.step()</code></td>
+  <td>Broadphase, narrowphase, constraint solver — sleeps between physics ticks</td></tr>
+<tr><td><strong>Sama ThreadPool</strong></td><td>Sama (<code>engine/threading/ThreadPool</code>)</td><td>Workers exist; idle when no tasks submitted</td>
+  <td>Async asset I/O (always), per-frame system dispatch (only when game opts into <code>EngineDesc::useSystemThreadPool</code>)</td></tr>
+<tr><td><strong>Audio</strong></td><td>miniaudio backend (AAudio / CoreAudio / WASAPI)</td><td>Continuous, latency-bound</td>
+  <td>Pull-model mix callback fires every ~10 ms and asks SoLoud to fill the output buffer. Race-fix via <code>gAudioReady</code> atomic gate — see <a href="#audio">§5d</a></td></tr>
+</table>
+
+<h3>Timing budget (60 fps = 16.67 ms)</h3>
+<p>From <code>docs/FRAME_ANATOMY.md</code>, with per-phase budget estimates:</p>
+<table>
+<tr><th>Phase</th><th>CPU/GPU</th><th>Budget</th></tr>
+<tr><td>Window events + input + ImGui begin</td><td>CPU</td><td>&lt; 0.15 ms</td></tr>
+<tr><td>Asset uploads (amortised)</td><td>CPU+GPU</td><td>0–2 ms</td></tr>
+<tr><td>Animation</td><td>CPU</td><td>0.1–1.0 ms</td></tr>
+<tr><td>Transform</td><td>CPU</td><td>0.05–0.5 ms</td></tr>
+<tr><td>Physics (Jolt internal pool)</td><td>CPU</td><td>0.5–4.0 ms</td></tr>
+<tr><td>Light cluster build (CPU + GPU upload)</td><td>CPU+GPU</td><td>0.1–0.5 ms</td></tr>
+<tr><td>Frustum + shadow cull</td><td>CPU</td><td>0.05–0.3 ms</td></tr>
+<tr><td>Draw call submission (shadow + opaque + skinned)</td><td>CPU→GPU</td><td>0.3–1.5 ms</td></tr>
+<tr><td>Post-process chain</td><td>CPU→GPU</td><td>0.1–0.5 ms</td></tr>
+<tr><td>endFrame + arena reset + bgfx::frame()</td><td>CPU→GPU</td><td>0.05–0.5 ms</td></tr>
+</table>
+
+<h3>bgfx threading model</h3>
+<p>bgfx ships with an internal render thread by default; the user thread
+records commands, and <code>bgfx::frame()</code> is an asynchronous hand-off
+via a lock-free ring. On Pixel 9 this saves ~20 ms/frame versus the
+single-threaded path (<code>docs/NOTES.md "bgfx threading mode" 2026-05-24</code>).
+The engine picks single-threaded mode only when <code>EngineDesc::singleThreaded
+= true</code> by calling <code>bgfx::renderFrame()</code> before
+<code>bgfx::init()</code> — that pre-init call is the documented way to
+inhibit the render thread. See <code>engine/rendering/Renderer.cpp:48-65</code>
+for the comment block.</p>
+
+<details>
+<summary>Follow-up: how is the variable-step update reconciled with fixed-step physics?</summary>
+<p>The engine calls <code>physics.step(deltaTime, kMaxSubSteps=4)</code> in
+<code>PhysicsSystem::update</code>. Jolt manages the accumulator internally
+with a fixed 1/60 s timestep, running up to 4 substeps if the frame falls
+behind. Everything else (Animation, Transform, Render) is variable-step. This
+is the standard accumulator pattern; no interpolation between physics ticks
+is performed, which is a known limitation for very slow frames.</p>
+</details>
+
+<!-- ========================================================== -->
+<h2 id="ecs">4. ECS architecture</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Sparse-set ECS,
+custom, no external library. Entities are 64-bit IDs with a generation
+counter; components are stored in a <code>SparseSet&lt;T&gt;</code> per type
+(sparse index array, packed dense data array, parallel
+<code>denseEntities_</code> array for reverse lookup); queries go through
+<code>View&lt;Components...&gt;</code> which picks the smallest store as the
+outer loop and filters by the others. Systems declare
+<code>Reads</code> and <code>Writes</code> as <code>TypeList</code>s and a
+<code>constexpr buildSchedule&lt;...&gt;()</code> bakes phase groupings into
+the binary at compile time. ~57 test cases / 3423 assertions on the ECS alone.</div>
+
+<h3>Sparse set in pictures</h3>
+
+<pre><code>Entity indices:    0     1     2     3     4     5
+                   ┌─────┬─────┬─────┬─────┬─────┬─────┐
+sparse_:           │  2  │  ∅  │  0  │  1  │  ∅  │  3  │  entity index → dense index
+                   └─────┴─────┴─────┴─────┴─────┴─────┘
+                     ↓              ↓    ↓              ↓
+                   ┌─────┬─────┬─────┬─────┐
+dense_:            │ C2  │ C0  │ C3  │ C5  │  packed T (cache-friendly outer loop)
+denseEntities_:    │ E2  │ E0  │ E3  │ E5  │  parallel: which entity owns each slot
+                   └─────┴─────┴─────┴─────┘</code></pre>
+
+<p>Insert is O(1). Remove is swap-and-pop: copy the tail slot into the removed
+slot, update its sparse entry, shrink by one. Iteration over
+<code>dense_</code> is a tight loop over a packed array — exactly what the
+CPU prefetcher wants.</p>
+
+<h3>Entity IDs with generations</h3>
+<p>An <code>EntityID</code> is a <code>uint64_t</code> packed as
+<code>[generation : 32 | index : 32]</code>. Destroying an entity increments
+the generation at that index, so any stale copy of the old ID fails the
+<code>isValid()</code> check. If the generation wraps to zero the index is
+retired permanently — that's the conservative choice over silently letting
+stale IDs ride.</p>
+
+<h3>Views and multi-component join</h3>
+<p><code>reg.view&lt;Position, Velocity&gt;().each(fn)</code> picks the smaller
+of the two sparse sets as the outer loop, then probes the other for
+<code>contains()</code> on each entity. Null stores (component type never
+emplaced) are treated as size 0 and the view immediately yields nothing.</p>
+
+<span class="filepath">engine/ecs/Registry.h (typical use)</span>
+<pre><code>// Movement system body — note the smallest-set outer-loop happens implicitly.
+reg.view&lt;Position, Velocity&gt;().each([dt](EntityID e, Position& p, Velocity& v) {
+    p.x += v.x * dt;
+    p.y += v.y * dt;
+    p.z += v.z * dt;
+});</code></pre>
+
+<h3>System base + compile-time schedule</h3>
+
+<span class="filepath">engine/ecs/System.h + Schedule.h (sketch)</span>
+<pre><code>struct MovementSystem : ISystem {
+    using Reads  = TypeList&lt;Velocity&gt;;
+    using Writes = TypeList&lt;Position&gt;;
+    void update(Registry&amp;, float dt) override;
+};
+
+// buildSchedule&lt;...&gt;() is constexpr: builds an N×N conflict matrix from
+// Reads/Writes, topologically sorts, groups into phases, returns a plain
+// array baked into the binary. ~100-500 bytes, no heap, no RTTI.
+constexpr auto schedule = buildSchedule&lt;InputSystem, PhysicsSystem,
+                                        MovementSystem, AudioSystem,
+                                        RenderSystem&gt;();</code></pre>
+
+<h3>Pros / Cons (interview-ready)</h3>
+<table>
+<tr><th>Pros</th><th>Cons</th></tr>
+<tr><td>Cache-friendly iteration: dense arrays are tight.</td>
+    <td>Structural mutations during iteration (<code>emplace</code>/<code>remove</code>) are unsafe → need command buffers for parallel cull.</td></tr>
+<tr><td>Zero-overhead component access through <code>SparseSet&lt;T&gt;</code>.</td>
+    <td>Type-level conflict matrix is conservative: two systems that write the same component on <em>disjoint entities</em> still serialise.</td></tr>
+<tr><td>Compile-time conflict detection — data races impossible by construction once <code>Reads</code>/<code>Writes</code> are declared.</td>
+    <td>Runtime-typed component lookup goes through <code>unordered_dense::map&lt;type_index, ...&gt;</code> — one hash + virtual dispatch per access (<code>findStore&lt;T&gt;</code>).</td></tr>
+<tr><td>No runtime registration — all systems known at compile time.</td>
+    <td>Means no runtime scripting layer in the ECS itself — gameplay is C++.</td></tr>
+<tr><td>Empty-type specialisation: <code>VisibleTag</code> on 50k entities costs only the 200 KB sparse index array, no dense storage.</td>
+    <td>Entities aren't move-constructible in some patterns; care needed in test fixtures.</td></tr>
+</table>
+
+<div class="honesty">None of the built-in render systems
+(<code>TransformSystem</code>, <code>FrustumCullSystem</code>,
+<code>DrawCallBuildSystem</code>, <code>ShadowCullSystem</code>,
+<code>LightClusterBuilder</code>) actually declare
+<code>Reads</code>/<code>Writes</code> yet. The scheduler is real and tested,
+but the schedule can't reason about the built-in systems yet — wiring those
+declarations is per-system follow-up work, gated on per-tier device
+measurement. <code>docs/THREADING_ARCHITECTURE.md</code> says so explicitly
+at the top.</div>
+
+<!-- ========================================================== -->
+<h2 id="subsystems">5. Subsystems</h2>
+
+<!-- ============= Rendering ============= -->
+<h3 id="rendering">5a. Rendering — the big one</h3>
+
+<div class="subtoc">
+  <h4>Rendering sub-TOC</h4>
+  <ul>
+    <li><a href="#r-bgfx">Why bgfx</a></li>
+    <li><a href="#r-forward">Forward clustered lighting</a></li>
+    <li><a href="#r-csm">Cascaded shadow maps</a></li>
+    <li><a href="#r-pbr">PBR (Cook-Torrance + IBL split-sum)</a></li>
+    <li><a href="#r-post">Post-process pipeline</a></li>
+    <li><a href="#r-skin">Skinning</a></li>
+    <li><a href="#r-draw">Draw call submission</a></li>
+    <li><a href="#r-inst">Instancing</a></li>
+  </ul>
+</div>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Forward+ clustered
+PBR pipeline on bgfx. The renderer is ECS-driven — there's no separate scene
+representation. Lighting is a 16×9×24 cluster grid with up to 256 lights
+packed into three GPU textures. Shadows are CSM with a hybrid log/uniform
+split, three cascades by default, packed into a single 2048² atlas with
+<code>cascadeMask</code> bits driving the cull. PBR is Cook-Torrance GGX +
+Smith + Fresnel-Schlick with split-sum IBL. Post-process is HDR → bloom (2N-1
+passes, tier-aware) → ACES tonemap → FXAA. Skinning uses
+<code>u_model[128]</code> as the bone palette. Draw calls go through
+<code>bgfx::Encoder</code> so they record thread-local instead of through the
+global mutex.</div>
+
+<h4 id="r-bgfx">Why bgfx</h4>
+
+<p><strong>Chosen over a custom HAL, IGL, Filament, Magnum, and Diligent.</strong>
+The reasoning is in <code>docs/NOTES.md:121-141</code>:</p>
+
+<ul>
+  <li><strong>Versus custom HAL:</strong> "binary size savings (~1–2 MB) do
+  not justify months of low-level Vulkan/Metal boilerplate." With one
+  developer on a multi-platform engine, every month spent on
+  <code>VkInstance</code> + <code>VkPhysicalDevice</code> +
+  <code>VkSwapchainKHR</code> + Metal layer plumbing is a month not spent on
+  the actual graphics techniques.</li>
+  <li><strong>Versus IGL (Meta):</strong> "bgfx has stronger game engine
+  track record, more documentation/examples, includes shader tooling
+  (shaderc)." IGL is noted as stronger on Android long-tail device
+  fragmentation — flagged as revisit-if-it-becomes-a-pain-point.</li>
+  <li><strong>Versus Filament/Magnum:</strong> Filament is a renderer, not a
+  rendering abstraction — using it would have meant inheriting its scene
+  graph, its material model, its asset pipeline. The whole point was to own
+  those parts.</li>
+  <li><strong>What bgfx gives:</strong> one shader source (.sc) → compiled to
+  Metal MSL, SPIR-V, HLSL via <code>shaderc</code>. Encoder API for
+  multi-threaded draw recording. Threading model built around a render
+  thread + async hand-off (so <code>bgfx::frame()</code> doesn't block the
+  game thread). MIT license. Mature on mobile, MoltenVK fallback on macOS
+  unused because Metal is first-class there.</li>
+</ul>
+
+<p><strong>The threading model is the load-bearing detail.</strong> The
+default mode has bgfx spawn its own render thread. <code>bgfx::frame()</code>
+hands the command buffer off through a lock-free ring and returns
+immediately; the render thread does the actual <code>vkSubmit</code> /
+<code>MTLCommandBuffer::commit</code>. Single-threaded mode (used for tests
+and the Noop backend) is opted into by calling <code>bgfx::renderFrame()</code>
+<em>before</em> <code>bgfx::init()</code>.</p>
+
+<h4 id="r-forward">Forward clustered lighting</h4>
+
+<p>The frustum is sliced into a <strong>16×9×24 cluster grid (3,456 clusters
+total)</strong>. Cluster ID is computed as:</p>
+<pre><code>tile.xy   = floor(gl_FragCoord.xy / vec2(screenW/16, screenH/9));
+sliceIdx  = int(log(viewZ / nearPlane) / log(farPlane/nearPlane) * 24);
+clusterIdx = sliceIdx * 144 + tile.y * 16 + tile.x;   // 144 = 16*9</code></pre>
+
+<p>Logarithmic depth slicing concentrates clusters near the camera (where
+small lights matter most) without hand-tuning the per-slice depth bounds.</p>
+
+<p><strong>Light assignment to clusters</strong> happens CPU-side in
+<code>LightClusterBuilder</code>: for each cluster, build an AABB by
+unprojecting tile corners + near/far slice planes, then sphere-vs-AABB test
+every light. Two-pass: count, then prefix-sum offsets, then fill.</p>
+
+<p><strong>GPU layout — three textures</strong>, because uniform arrays
+can't hold 256 lights × 4 vec4s (bgfx's <code>BGFX_CONFIG_MAX_UNIFORMS=512</code>
+caps that at 512 vec4s total):</p>
+<table>
+<tr><th>Texture</th><th>Size</th><th>Format</th><th>Content</th></tr>
+<tr><td><code>s_lightData</code></td><td>256 × 4</td><td>RGBA32F</td>
+  <td>Row 0: position.xyz + radius (highp); Row 1: color × intensity, type;
+      Row 2: spotDir, cos(outerAngle); Row 3: cos(innerAngle), 0, 0, 0</td></tr>
+<tr><td><code>s_lightGrid</code></td><td>3456 × 1</td><td>RGBA32F</td>
+  <td>One texel per cluster: <code>.x = offset, .y = count</code></td></tr>
+<tr><td><code>s_lightIndex</code></td><td>8192 × 1</td><td>R32F</td>
+  <td>Flat light-index list (offset + count window into this)</td></tr>
+</table>
+
+<p>The <strong>indirection chain in the fragment shader</strong> is:
+<code>fragCoord → cluster → (offset, count) → light indices → light data</code>.
+Code in <code>engine/shaders/fs_pbr.sc:245-345</code>:</p>
+
+<span class="filepath">engine/shaders/fs_pbr.sc:265-285</span>
+<pre><code>int clusterIdx = sliceIdx * 144 + int(tile.y) * 16 + int(tile.x);
+clusterIdx = clamp(clusterIdx, 0, 3455);
+
+vec4 gridEntry = texture2D(s_lightGrid,
+    vec2((float(clusterIdx) + 0.5) / 3456.0, 0.5));
+int lightOffset = int(gridEntry.x);
+int lightCount  = int(gridEntry.y);
+
+for (int li = 0; li &lt; lightCount; ++li)
+{
+    float idx = texture2D(s_lightIndex,
+        vec2((float(lightOffset + li) + 0.5) / 8192.0, 0.5)).x;
+    int i = int(idx);
+
+    vec4         ld0 = texture2D(s_lightData, vec2((float(i)+0.5)/256.0, 0.5/4.0));
+    mediump vec4 ld1 = texture2D(s_lightData, vec2((float(i)+0.5)/256.0, 1.5/4.0));
+    // ...</code></pre>
+
+<p><strong>Why forward + clustered, not deferred?</strong> Three reasons,
+all mobile-driven:</p>
+<ul>
+  <li><strong>TBDR-friendly.</strong> Apple and Mali / Adreno are tile-based
+  deferred renderers. A G-buffer (4–5 fullscreen RTs) flushes tile memory on
+  every store, costing main-memory bandwidth that's the actual bottleneck on
+  mobile.</li>
+  <li><strong>Transparency works naturally.</strong> Deferred needs a
+  parallel forward path for translucents anyway — clustered just runs the
+  same lighting loop.</li>
+  <li><strong>Lower memory footprint.</strong> No G-buffer textures.</li>
+</ul>
+
+<h4 id="r-csm">Cascaded shadow maps (CSM)</h4>
+
+<p>Three cascades by default (configurable up to 4 via
+<code>RenderSettings</code>). Splits via a hybrid log/uniform scheme — the
+Nvidia GPU Gems 3 formula:</p>
+<pre><code>C_i = lambda * C_log_i + (1 - lambda) * C_uni_i</code></pre>
+<p>Code in <code>engine/rendering/CsmSplitCalculator.cpp</code>. lambda=0 →
+linear (equal-size slices), lambda=1 → logarithmic (geometric growth). Useful
+default is around 0.5.</p>
+
+<p>Per cascade, <code>cascadeLightProj()</code> fits a tight orthographic
+projection around the camera sub-frustum slice transformed into light space.
+The shadow atlas packs all cascades into a single texture (2048² with four
+1024×2048 columns for 4 cascades, or 4096² for 2048-res cascades) — one
+<code>SAMPLER2DSHADOW</code> in the shader instead of one sampler per
+cascade.</p>
+
+<p><strong>Single-pass multi-cascade culling.</strong>
+<code>ShadowCullSystem::update(reg, res, span&lt;Frustum&gt;, baseCascadeIdx)</code>
+walks the mesh view <em>once</em>, builds the world AABB once per entity,
+tests against every frustum in the span and accumulates the result as a bit
+mask in <code>ShadowVisibleTag::cascadeMask</code>. Was 3× iteration before;
+this was the audit win (<code>#cull-shadow-multi</code>) — about 66% less
+shadow-cull work at 3 cascades.</p>
+
+<p>Sampling in <code>fs_pbr.sc</code> uses <strong>PCF 2×2</strong> with
+slope-scaled bias clamped to [0.002, 0.02]:</p>
+
+<span class="filepath">engine/shaders/fs_pbr.sc:215-228</span>
+<pre><code>float texelSize = 1.0 / 2048.0;
+mediump float slopeFactor = clamp(1.0 - dot(Ngeom, L), 0.0, 1.0);
+mediump float shadowBias  = mix(0.002, 0.02, slopeFactor);
+float shadowZ = shadowCoord.z - shadowBias;
+shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
+shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));
+shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowZ));
+shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowZ));
+shadow *= 0.25;</code></pre>
+
+<div class="honesty">No cascade-transition blending — there's a visible seam
+where one cascade hands off to the next. It's a known follow-up; the fix is
+to sample both cascades in a transition zone and lerp.</div>
+
+<h4 id="r-pbr">PBR (Cook-Torrance + IBL)</h4>
+
+<p><strong>BRDF:</strong> the standard Cook-Torrance microfacet model.</p>
+<ul>
+  <li><strong>D (normal distribution):</strong> GGX / Trowbridge-Reitz
+  (<code>distributionGGX</code> at <code>fs_pbr.sc:78-86</code>).</li>
+  <li><strong>G (geometry):</strong> Smith with Schlick-GGX (<code>geometrySchlick</code>
+  + <code>geometrySmith</code>).</li>
+  <li><strong>F (Fresnel):</strong> Schlick approximation (<code>fresnelSchlick</code>).</li>
+</ul>
+<p><strong>Energy conservation:</strong> the diffuse term is multiplied by
+<code>kD = (1 - F) * (1 - metallic)</code> — metals have no diffuse, dielectrics
+attenuate diffuse by the part of incoming light not reflected specularly.</p>
+
+<p><strong>Material textures</strong>, slot map:</p>
+<table>
+<tr><th>Slot</th><th>Sampler</th><th>Content</th></tr>
+<tr><td>0</td><td>s_albedo</td><td>Base color (sRGB)</td></tr>
+<tr><td>1</td><td>s_normal</td><td>Tangent-space normal map</td></tr>
+<tr><td>2</td><td>s_orm</td><td>R unused, G=roughness, B=metallic</td></tr>
+<tr><td>3</td><td>s_emissive</td><td>Emissive (sRGB)</td></tr>
+<tr><td>4</td><td>s_occlusion</td><td>AO (R8)</td></tr>
+<tr><td>5</td><td>s_shadowMap</td><td>Shadow atlas (D24/D32F)</td></tr>
+<tr><td>6/7/8</td><td>s_irradiance / s_prefiltered / s_brdfLut</td><td>IBL split-sum</td></tr>
+<tr><td>12/13/14</td><td>s_lightData / s_lightGrid / s_lightIndex</td><td>Cluster lighting</td></tr>
+</table>
+
+<p><strong>Tangent-space normal mapping:</strong> TBN is reconstructed from
+the interpolated tangent + bitangent + geometry normal. The transform is
+expanded manually (<code>T*ns.x + B*ns.y + Ngeom*ns.z</code>) instead of using
+<code>mtxFromCols</code> because Metal's shader path transposes on
+<code>mtxFromCols</code>.</p>
+
+<p><strong>IBL — split-sum approximation</strong> (Karis SIGGRAPH '13):</p>
+<ul>
+  <li><strong>Irradiance cubemap</strong> (RGBA16F) — pre-convolved diffuse,
+  sampled by surface normal.</li>
+  <li><strong>Prefiltered specular cubemap</strong> (RGBA16F, mip chain) —
+  sampled by reflection vector, LOD = <code>roughness *
+  kMaxMipLevels</code>.</li>
+  <li><strong>BRDF integration LUT</strong> (RG16F) — 2D LUT indexed by
+  <code>(NdotV, roughness)</code>.</li>
+</ul>
+
+<p><strong>mediump precision policy.</strong> One of the audit wins
+(<code>#S1 precision half</code>) was annotating <code>fs_pbr.sc</code> with
+per-variable <code>mediump</code> instead of a blanket
+<code>precision mediump float</code>. The policy is documented at the top
+of the shader and is interview-relevant:</p>
+<ul>
+  <li><code>mediump</code>: BRDF helpers (D/G/F), 8-bit-texture samples,
+  light colour, cone factors, IBL samples, accumulators (Lo / ambient /
+  emissive). Bounded values that fit in fp16.</li>
+  <li><code>highp</code>: world/view-space positions, camera position, shadow
+  UVs, cluster index math (fp16 stores integers exactly only up to 2048; the
+  flat light index can reach 8191), and the light-position-in-view-space row
+  (because <code>distance()</code> against radius needs to be accurate at the
+  radius boundary).</li>
+</ul>
+<p>On Mali Bifrost / Valhall the ESSL <code>mediump</code> keyword routes to
+fp16 ALU + bandwidth; on SPIR-V it emits <code>RelaxedPrecision</code> which
+SPIRV-Cross translates to <code>half</code> in MSL. Desktop GLSL ignores the
+keyword. Net effect: real fp16 paths on the mobile targets that matter, no
+desktop regression.</p>
+
+<h4 id="r-post">Post-process pipeline</h4>
+
+<p>HDR → bloom → ACES tonemap → FXAA. Each stage is its own bgfx view in
+the range 16+. Bloom uses <strong>2N-1 fullscreen passes for N steps</strong>:
+1 threshold + (N-1) downsamples + (N-1) upsamples. The pass count is now
+tier-aware (audit <code>#T3</code>):</p>
+
+<table>
+<tr><th>Tier</th><th>bloomDownsampleSteps</th><th>Passes/frame</th></tr>
+<tr><td>Low</td><td>0 (bloom off entirely)</td><td>0</td></tr>
+<tr><td>Mid</td><td>3</td><td>5</td></tr>
+<tr><td>High</td><td>5</td><td>9</td></tr>
+</table>
+
+<p>This was a "wired from two directions" fix: the
+<code>TierConfig::bloomDownsampleSteps</code> field existed but didn't
+forward into <code>RenderSettings</code>, <em>and</em>
+<code>PostProcessSystem::submit</code> was iterating
+<code>resources_.steps()</code> (an init-time constant) instead of the
+settings field. Both ends had to land before the toggle actually did
+anything.</p>
+
+<p>Tonemap is ACES (the filmic-shoulder approximation, not the full RRT). FXAA is
+the standard 3.11 implementation.</p>
+
+<h4 id="r-skin">Skinning</h4>
+
+<p>Bone palette goes through bgfx's built-in <code>u_model[]</code> uniform
+array, with the cap set by <code>BGFX_CONFIG_MAX_BONES=128</code>. Static and
+skinned paths are separate shader programs to avoid a runtime branch on every
+vertex. Skinned-shadow is its own program too — depth-only output but with
+the same bone blend in the VS.</p>
+
+<span class="filepath">engine/shaders/vs_pbr_skinned.sc:26-40</span>
+<pre><code>// Skinned path: blend bone matrices from u_model[] using vertex weights.
+vec4 weights = a_weight;
+int idx0 = int(a_indices.x);
+int idx1 = int(a_indices.y);
+int idx2 = int(a_indices.z);
+int idx3 = int(a_indices.w);
+mat4 skinMatrix = weights.x * u_model[idx0]
+                + weights.y * u_model[idx1]
+                + weights.z * u_model[idx2]
+                + weights.w * u_model[idx3];
+
+vec4 worldPos = mul(skinMatrix, vec4(a_position, 1.0));
+gl_Position = mul(u_viewProj, worldPos);</code></pre>
+
+<div class="honesty"><code>BGFX_CONFIG_MAX_BONES=128</code> is global —
+even low-tier devices, which declare <code>maxBones=64</code> in their
+<code>TierConfig</code>, compile in a 128-bone uniform array. This is audit
+item <code>#T2</code>, still open: needs a per-tier shader variant.</div>
+
+<h4 id="r-draw">Draw call submission</h4>
+
+<p>This is the headline rendering optimisation (<code>#R1</code>).
+<code>DrawCallBuildSystem</code> opens a <code>bgfx::Encoder</code> once per
+system call (<code>bgfx::begin()</code>), then every
+<code>setTransform</code> / <code>setTexture</code> / <code>submit</code>
+runs <strong>thread-local</strong> (~50 ns) instead of grabbing the global
+bgfx command-list mutex (~1–2 μs on Pixel-5a-class CPUs).</p>
+
+<p>Measured on the Android emulator (702-entity perf_smoke, 600 frames, A/B
+same session):</p>
+<ul>
+  <li>Mean: 0.043 → 0.042 ms (flat within noise — uncontested mutex is fast)</li>
+  <li><strong>p99: 0.167 → 0.116 ms (−30%)</strong></li>
+  <li><strong>Max: 0.348 → 0.174 ms (−50%)</strong></li>
+</ul>
+<p>The tail-latency drop is the signature of removed mutex contention — mean
+is flat because uncontested grabs are fast, p99/max capture the times another
+thread held it. On real ARM hardware the mean would also drop because the
+emulator's x86_64 translation has lower native mutex cost than the target.</p>
+
+<details>
+<summary>Follow-up: didn't the audit originally suggest hoisting frame-constant uniforms?</summary>
+<p>Yes — and the investigation found the suggestion would have made things
+worse. <code>BGFX_DISCARD_NONE</code>-style uniform preservation captures the
+<code>[m_uniformBegin, m_uniformEnd]</code> range per draw and the kept range
+grows unboundedly, producing O(N²) GPU-side uniform processing for N
+draws. The actual win came from the Encoder route, which is a different
+mechanism entirely. The audit note (<code>#R1</code>) preserves the discovery
+so future engineers don't redo the same investigation.</p>
+</details>
+
+<h4 id="r-inst">Instancing</h4>
+
+<p><code>InstancedMeshComponent</code> groups entities by
+<code>instanceGroupId</code>; <code>InstanceBufferBuildSystem</code> walks
+the visible groups, calls <code>bgfx::allocInstanceDataBuffer()</code> for
+each, and submits one draw per group. Caps that don't support instancing
+fall back to non-instanced draws. Recent audit win
+(<code>#instance-pmr-map</code>): the group map switched from
+<code>ankerl::unordered_dense::map</code> on the default heap to the
+<code>pmr::map</code> alias backed by the frame arena — measured 1.95×
+faster (1973 ns → 998 ns per frame at 8 groups × 32 instances).</p>
+
+<!-- ============= Animation ============= -->
+<h3 id="animation">5b. Animation</h3>
+
+<div class="thirty"><strong>The 30-second answer.</strong> glTF clip loading
+via cgltf, keyframe sampling with Vec3 <code>mix</code> + Quat <code>slerp</code>,
+pose blending, CCD and FABRIK IK solvers. The skeleton uses a hot/cold split —
+<code>parentIndices</code> in one contiguous array, <code>inverseBindMatrices</code>
+in a second, <code>nameHashes</code> in a third — so the parent walk touches
+~20× less cache than the old AoS layout.</div>
+
+<p>Data structures: <code>Skeleton</code> with parallel arrays (parentIndices,
+inverseBindMatrices, nameHashes), <code>AnimationClip</code> with sorted
+keyframe channels per joint, <code>Pose</code> as an array of TRS
+<code>JointPose</code>s parallel to the skeleton. Animation events are sorted
+by time, fired in window.</p>
+
+<p>Bone matrix composition is a single forward pass — joints are topologically
+sorted so parent always precedes child:</p>
+<pre><code>worldTransforms[i] = worldTransforms[parent[i]] * localTRS(pose[i]);
+boneMatrix[i]      = worldTransforms[i] * inverseBindMatrices[i];</code></pre>
+
+<p>Output is appended to a shared per-frame bone buffer allocated from the
+FrameArena, with <code>SkinComponent::boneMatrixOffset</code> +
+<code>boneCount</code> recording each entity's window.</p>
+
+<p>The audit landed several wins here:</p>
+<ul>
+  <li><strong>#M1 Skeleton hot/cold split</strong> — the headline win. The
+  old <code>Joint</code> struct was 80 B AoS (full inverseBindMatrix + parent +
+  hash + padding); the parent walk read 4 B of that per joint. Now three
+  parallel arrays: parent walk touches ~4 cache lines per 64-joint character
+  instead of ~80.</li>
+  <li><strong>#anim-pose-by-value</strong> — <code>PoseComponent::pose</code>
+  is now <code>Pose</code> by value, so the <code>InlinedVector&lt;JointPose,
+  128&gt;</code> inside reuses its inline / heap buffer frame-over-frame
+  instead of re-allocating from the arena.</li>
+  <li><strong>#anim-trs</strong> — per-joint local matrix construction
+  rewritten from <code>translate * mat4_cast(quat) * scale</code> (~176 muls)
+  to direct TRS via <code>mat3_cast(q) * diag(s)</code> (~29 muls).</li>
+  <li><strong>#anim-worldT</strong> — <code>reserve + emplace_back</code>
+  instead of value-initialising the bone buffer to identity then overwriting.</li>
+</ul>
+
+<details>
+<summary>Animation wins that DIDN'T pan out (be honest about these)</summary>
+<p>Two items got investigated and rejected (<code>[skip]</code> in the
+audit):</p>
+<ul>
+  <li><strong>Skip rest-pose init for joints touched by channels</strong>
+  (AnimationSampler.cpp:79-93). Microbench showed +6% to +10% regression
+  because the rest-pose copy runs at ~0.7 ns/joint out of L1 cache; the
+  bitmask construction + restPose-as-default loads inside the channel-sampling
+  loop added more work than they saved.</li>
+  <li><strong>glm::slerp short-circuit on equal keyframes.</strong> No
+  measurable improvement: <code>glm::slerp</code> already internally checks
+  <code>dot(a, b) &gt; 0.9995</code> and falls to nlerp, so the equal-quats
+  case was already cheap.</li>
+</ul>
+<p>The audit projections were wrong about the workload being memory-bandwidth
+bound. The microbenchmark is preserved at <code>tests/animation/TestAnimationSampler.cpp</code>
+with <code>[anim-bench]</code> for future re-evaluation.</p>
+</details>
+
+<!-- ============= Physics ============= -->
+<h3 id="physics">5c. Physics</h3>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Jolt Physics
+behind an <code>IPhysicsEngine</code> interface — Jolt is multi-threaded,
+mature, and ships with Horizon Zero Dawn. The abstraction lets a
+<code>NullPhysicsEngine</code> swap in for headless tests. Box / sphere /
+capsule / mesh shapes; Static / Kinematic / Dynamic body types. The system
+fixes a 1/60 s timestep with the accumulator pattern (max 4 substeps). The
+nontrivial bit is hierarchy-aware sync: parented bodies are converted between
+world and local space using a custom <code>math::inverseTRS()</code> helper
+that's 3.4× faster than <code>glm::inverse</code>.</div>
+
+<p>Components:</p>
+<ul>
+  <li><code>RigidBodyComponent</code> (28 B) — Jolt body ID, mass, damping,
+  friction, restitution, type (Static / Kinematic / Dynamic), collision
+  layer.</li>
+  <li><code>ColliderComponent</code> (32 B) — shape (Box / Sphere / Capsule /
+  Mesh), offset, half-extents, radius.</li>
+  <li><code>PhysicsBodyCreatedTag</code> — zero-size tag, set once the Jolt
+  body exists.</li>
+</ul>
+
+<p><strong>Frame flow:</strong></p>
+<ol>
+  <li>Register new bodies: entities with <code>RigidBody + Collider</code>
+  but no <code>PhysicsBodyCreatedTag</code> get a Jolt body created from
+  their world-space transform.</li>
+  <li>Sync kinematic bodies: read <code>WorldTransformComponent</code>,
+  decompose, call <code>physics.moveKinematic()</code>.</li>
+  <li>Step physics: <code>physics.step(deltaTime, kMaxSubSteps=4)</code> —
+  Jolt runs broadphase + narrowphase + constraint solve on its internal
+  thread pool.</li>
+  <li>Write back dynamic bodies: read new pose from Jolt, convert world →
+  local if parented (using <code>math::inverseTRS()</code>), write
+  <code>TransformComponent</code>, set the dirty flag so
+  <code>TransformSystem</code> picks it up next frame.</li>
+</ol>
+
+<p><strong>The <code>inverseTRS</code> story</strong> (audit
+<code>#phys-inverse-trs</code>) is a nice talking point. For
+<code>M = [R*S | t]</code> with R orthonormal and S diagonal, the inverse is
+computable in ~30 muls without cofactor expansion: per-column
+<code>|M.col_i|² = s_i²</code>, then <code>A⁻¹[i,j] = M[j,i] / s_i²</code> and
+<code>t' = -A⁻¹ * t</code>. <code>glm::inverse</code> does general 4×4
+cofactor (~100 muls). Measured 3.4× speedup: median 3.0 ns vs 10.2 ns per
+call on M-series Mac, with the speedup growing on slower ARM little cores.</p>
+
+<!-- ============= Audio ============= -->
+<h3 id="audio">5d. Audio</h3>
+
+<div class="thirty"><strong>The 30-second answer.</strong> SoLoud is the
+audio engine (mixing, voices, 3D positional, distance attenuation, Doppler,
+fading), miniaudio is the backend abstraction (CoreAudio on macOS/iOS,
+AAudio on Android with OpenSL ES fallback, WASAPI on Windows).
+<code>IAudioEngine</code> abstraction makes a <code>NullAudioEngine</code>
+swap in for tests. The interesting war story is the AAudio gate race —
+SoLoud's init sequence meant AAudio could fire its first callback before
+SoLoud finished allocating its resample buffers, causing a 100%-reproducible
+crash on Pixel 9. I fixed it with an atomic publish/acquire gate.</div>
+
+<p><strong>SoLoud chosen over FMOD</strong> primarily for binary size
+(~1.5 MB vs 3–6 MB) and licensing (FMOD has royalty terms above $200k
+revenue). FMOD is documented as the upgrade path for AAA polish (HRTF,
+geometry-aware reverb, occlusion, sound designer workflow).</p>
+
+<p>3D positional audio uses two components: <code>AudioListenerComponent</code>
+(typically on the camera) and <code>AudioSourceComponent</code> (on any
+sound-emitting entity). <code>AudioSystem</code> reads
+<code>WorldTransformComponent</code> for both — no separate audio transform.
+Forward/up vectors are extracted from columns 2/1 of the world matrix.</p>
+
+<h4>War story: the AAudio gate race</h4>
+
+<p>Documented at <code>docs/NOTES.md:2785-2867</code>. <strong>The
+problem:</strong> SoLoud's <code>Soloud::init</code> calls in this order:</p>
+
+<pre><code>ma_device_init(NULL, &amp;config, &amp;gDevice);  // AAudio callback thread starts HERE
+aSoloud-&gt;postinit_internal(...);          // allocates mResampleData[] HERE
+ma_device_start(&amp;gDevice);               // intended-but-irrelevant start point</code></pre>
+
+<p>On Pixel 9 / Android 16, AAudio's callback fires within microseconds of
+<code>ma_device_init</code> returning — <em>before</em>
+<code>postinit_internal</code> allocates the resample arrays. First callback
+calls <code>Soloud::mix</code> → <code>mapResampleBuffers_internal</code> →
+null-deref at +120 (mResampleDataOwner[i]). 100% reproducible. OpenSL ES
+doesn't have this behaviour (it waits for <code>ma_device_start</code>), which
+is why a previous "force OpenSL ES" workaround stopped the crash — at the
+cost of ~30 ms latency vs AAudio's ~10 ms.</p>
+
+<p><strong>The fix:</strong> a vendored
+<code>third_party/soloud_patches/soloud_miniaudio.cpp</code> wraps the
+SoLoud-mix callback in an <code>std::atomic&lt;bool&gt; gAudioReady</code>
+gate. Store-release after <code>postinit_internal</code> returns, acquire-load
+on every callback. While the flag is false, the callback memsets the output
+buffer to zero and returns.</p>
+
+<p><strong>Why this works:</strong> release/acquire ordering guarantees that
+every prior store in <code>postinit_internal</code> is visible to any callback
+that observes <code>gAudioReady = true</code>. Standard one-shot
+publisher/consumer pattern. Cost: one atomic load per audio callback (~1 ns
+on ARM with <code>ldar</code>). The silence-output window is the few ms
+between <code>ma_device_init</code> and <code>postinit_internal</code> —
+inaudible at startup, no sounds are loaded that early.</p>
+
+<p><strong>Bonus:</strong> backend-agnostic. Runs on every backend, so if a
+future miniaudio backend ever pre-starts its callback the same way (current
+candidate: WASAPI exclusive-mode), the same code catches it without a
+per-backend <code>#ifdef</code>.</p>
+
+<p><strong>Why not fix this in SoLoud upstream?</strong> Cleanest "real" fix
+would be reordering <code>Soloud::init</code> so <code>postinit_internal</code>
+runs before backend init. Requires patching SoLoud's 2k-line
+<code>soloud.cpp</code> (a vendored fork forever) or upstreaming to a
+maintainer-quiet project. The wrapper-side gate is small, contained, and in
+a file we already own.</p>
+
+<!-- ============= Assets ============= -->
+<h3 id="assets">5e. Assets</h3>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Handle-based
+typed asset table (<code>AssetHandle&lt;T&gt;</code> = 8-byte
+index+generation pair, phantom T for compile-time safety). Load is two-phase:
+worker threads do file I/O + CPU decode and push to a lock-free queue; the
+main thread drains the queue once per frame via
+<code>assets.processUploads()</code> and creates the bgfx resources (which
+must be main-thread on most backends). glTF via cgltf, KTX2 textures, ASTC
+on mobile, BC7 on desktop.</div>
+
+<p>The constraint that shapes everything: <strong>bgfx does not allow GPU
+resource creation from worker threads</strong>. So I/O and CPU decode
+parallelise; GPU upload stays on the main thread.</p>
+
+<p>Lock-free MPSC upload queue connects them. Game code polls
+<code>state(handle)</code> each frame; once <code>Ready</code>, the asset
+is usable.</p>
+
+<p><strong>Tier-aware asset resolver</strong>
+(<code>engine/assets/TierAssetResolver.cpp</code>) lets the same content
+ship at low / mid / high quality. The resolver falls back from
+<code>low/foo.ktx</code> to <code>foo.ktx</code> when a tier-specific
+variant isn't present, so games can selectively author per-tier assets
+without duplicating everything.</p>
+
+<p>Compound assets: a <code>.gltf</code> file produces one
+<code>GltfAsset</code> with sub-handles per mesh, texture, material. Game
+code references the sub-handles. Editor hot-reload via <code>FileWatcher</code>
+is stripped from shipping builds via <code>#ifdef ENGINE_EDITOR</code>.</p>
+
+<!-- ============= Memory ============= -->
+<h3 id="memory">5f. Memory</h3>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Per-frame
+<code>FrameArena</code> is a <code>std::pmr::monotonic_buffer_resource</code>
+wrapped in a <code>TrackingResource</code> for HUD diagnostics. O(1) bump
+allocate, O(1) reset (just move the pointer back to the buffer start; no
+destructors). <code>InlinedVector&lt;T, N&gt;</code> gives SBO storage for
+small vectors. C++20 PMR was the deliberate choice over a custom arena
+because it interops with <code>std::pmr::vector</code>, the
+<code>ankerl::unordered_dense::pmr::map</code>, etc.</div>
+
+<p>Default arena size: 2 MB
+(<code>EngineDesc::frameArenaSize</code>). Per-frame consumers include the
+animation bone buffer (16 KB for 256 joints; lazy-reserved so empty-view
+scenes pay zero) and the InstanceBufferBuildSystem group map.</p>
+
+<p>Memory-layout-awareness is a recurring theme:</p>
+<ul>
+  <li>Components are laid out with explicit padding and
+  <code>static_assert</code> on <code>sizeof</code> and
+  <code>offsetof</code>. <code>WorldTransformComponent</code> is exactly
+  64 bytes / 16-byte aligned — one cache line per entity's world matrix.</li>
+  <li>The <code>SparseSet</code> dense storage is the textbook example —
+  packed array → cache prefetcher-friendly.</li>
+  <li>Skeleton hot/cold split (#M1) was the big audit win in this category.</li>
+</ul>
+
+<!-- ============= Threading ============= -->
+<h3 id="threading">5g. Threading</h3>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Custom
+<code>ThreadPool</code> v2 with a POD <code>submitTask(fn, arg)</code> path
+(no <code>std::function</code> allocation), a bounded ring buffer (not
+<code>std::deque</code>), <code>std::counting_semaphore</code> for
+work-available wakeup, and an atomic <code>activeTasks_</code> counter that
+notifies only on the transition-to-zero edge. The compile-time
+<code>SystemExecutor</code> dispatches phases through that POD path.
+Single-threaded by default; opt-in via <code>EngineDesc::useSystemThreadPool</code>
+because the per-system <code>Reads</code>/<code>Writes</code> declarations
+aren't on the built-in systems yet.</div>
+
+<p><strong>The ThreadPool v2 rewrite</strong> (audit <code>#H1</code>) was
+three changes in one:</p>
+
+<ul>
+  <li><strong>Storage half:</strong> was
+  <code>std::deque&lt;std::function&lt;void()&gt;&gt;</code> — heap allocation
+  per submit when the closure exceeded SBO. Now
+  <code>std::array&lt;Task, 1024&gt;</code> ring where
+  <code>Task = {void(*)(void*); void*}</code> is 16-byte POD.
+  <code>submit(std::function)</code> kept as back-compat wrapper that
+  heap-allocates a <code>std::function*</code> and dispatches via
+  <code>submitTask</code> with a free-on-run trampoline.</li>
+  <li><strong>Wakeup half:</strong> workers waiting on <code>workCv_</code>
+  with the queue mutex held serialised wakeups. Now
+  <code>std::counting_semaphore&lt;INT32_MAX&gt;</code> for work-available
+  — <code>submitTask</code> does <code>workSem_.release()</code> outside the
+  ring mutex; workers do <code>workSem_.acquire()</code> without holding any
+  other lock.</li>
+  <li><strong>Notify half:</strong> was <code>--activeTasks_</code> inside
+  lock then unconditional <code>doneCv_.notify_one()</code>. Now atomic
+  <code>activeTasks_.fetch_sub(1, acq_rel)</code>;
+  <code>doneCv_.notify_all()</code> fires only when the returned prior value
+  is 1.</li>
+</ul>
+
+<p><code>SystemExecutor</code> drives phases through this POD path. 7 unit
+tests pin behaviour including a 10000-frame conservation race-check that's
+TSAN-friendly.</p>
+
+<div class="honesty">The "DAG scheduler" exists as scaffolding but
+isn't yet steering the built-in systems. <code>EngineDesc::useSystemThreadPool</code>
+defaults to <code>false</code> so historical single-threaded behaviour is
+preserved. The per-system <code>Reads</code>/<code>Writes</code> declarations
+on <code>TransformSystem</code>, <code>FrustumCullSystem</code>,
+<code>DrawCallBuildSystem</code>, etc. are deferred to per-tier device
+measurement. Still TODO: per-worker queues + work-stealing for true MPMC
+scaling — the current ring uses one short-held mutex.</div>
+
+<!-- ========================================================== -->
+<h2 id="editor">6. Editor</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> <code>sama_editor</code>
+is a panel-based editor (Hierarchy, Properties, Console, Viewport) that
+embeds the engine's bgfx viewport. The design goes <em>native</em> on each
+platform — AppKit on macOS, Win32 on Windows — rather than Qt or
+ImGui-everywhere, because native gives better text rendering and system
+integration (drag-drop, file dialogs, dark mode) without a 200 MB Qt
+dependency. Inspector abstraction (<code>IComponentInspector</code>),
+undo/redo via <code>CommandStack</code>, live ECS editing.</div>
+
+<p>The viewport renders through bgfx like the runtime; the editor's bgfx
+views start at 48 (16+ are reserved for post-process). The platform
+abstraction extends <code>engine::platform::IWindow</code> with editor-level
+panel layout. Linux support is deferred — when it lands, GTK4 is the
+recommended choice.</p>
+
+<!-- ========================================================== -->
+<h2 id="scene">7. Scene authoring &amp; persistence</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Scenes are
+authored interactively in the editor and saved as human-readable JSON via
+<code>SceneSerializer</code> — a registry of named per-component
+(<code>serialize</code>, <code>deserialize</code>) handler pairs.  The same
+serializer drives both editor save/load and runtime loads.  The runtime
+adds <code>SceneManager</code> for lifecycle (load / unload / reload,
+persistent entities that survive scene transitions).  Project-level
+configuration (window, tier, physics, audio defaults) lives separately in
+<code>project.json</code> parsed by <code>ProjectConfig</code>.</div>
+
+<h3>Two persistence layers, deliberately separate</h3>
+<table>
+<tr><th>Layer</th><th>What it describes</th><th>Loaded by</th><th>Format</th></tr>
+<tr><td><strong><code>project.json</code></strong></td>
+  <td>Window size + title, frame arena size, active tier, per-tier
+    quality knobs (<code>shadowMapSize</code>,
+    <code>bloomDownsampleSteps</code>, …), physics defaults, audio
+    defaults, startup scene path.</td>
+  <td><code>ProjectConfig::loadFromFile</code> /
+    <code>loadFromString</code> at engine init.</td>
+  <td>JSON. One per game.</td></tr>
+<tr><td><strong>Scene file (e.g. <code>level1.json</code>)</strong></td>
+  <td>Live entity contents: every entity's components (Transform,
+    Camera, lights, Mesh+Material, RigidBody+Collider, …), the
+    parent → child hierarchy, names.</td>
+  <td><code>SceneSerializer::loadScene</code> from the editor or
+    <code>SceneManager::loadScene</code> at runtime.</td>
+  <td>JSON.  Many per game.</td></tr>
+</table>
+<p>The two split deliberately: changing the active tier or window size
+shouldn't touch the scene's entity graph, and replacing the active scene
+shouldn't reset audio volumes or tier settings.  See
+<code>engine/game/ProjectConfig.h</code> + <code>engine/scene/SceneSerializer.h</code>.</p>
+
+<h3>The scene file format</h3>
+<p>Versioned (<code>"version": 1</code>) JSON.  Entities are an array;
+each entry has a scene-local <code>id</code> (assigned by save, not the
+runtime entity ID — runtime IDs include a generation counter and aren't
+stable across loads), an optional <code>name</code>, an optional
+<code>parent</code> (another scene-local <code>id</code>), and a
+<code>components</code> object keyed by component-type name.</p>
+
+<pre><code>{
+  "version": 1,
+  "entities": [
+    {
+      "id": 0,
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [0, 5, 10],
+          "rotation": [0, 0, 0, 1],
+          "scale": [1, 1, 1]
+        },
+        "Camera": {
+          "fovY": 60.0, "nearPlane": 0.1, "farPlane": 1000.0,
+          "type": "Perspective", "viewLayer": 0
+        }
+      }
+    },
+    {
+      "id": 1,
+      "name": "Hero",
+      "components": {
+        "Transform": { "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
+        "Mesh":      { "mesh": 1 },
+        "Material":  { "material": 3 },
+        "RigidBody": { "type": "Dynamic", "mass": 1.0 },
+        "Collider":  { "shape": "Capsule", "halfExtents": [0.4, 0.8, 0.4] },
+        "Visible":   {}
+      }
+    },
+    {
+      "id": 2,
+      "name": "Weapon",
+      "parent": 1,
+      "components": {
+        "Transform": { "position": [0.3, 0.8, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
+        "Mesh": { "mesh": 7 }
+      }
+    }
+  ]
+}</code></pre>
+
+<p>Design notes:</p>
+<ul>
+  <li><strong>Human-readable on purpose</strong>.  An artist can
+  diff two scene files in a code review and see exactly what
+  changed.  Binary formats would be smaller but opaque.</li>
+  <li><strong>Scene-local IDs</strong> (not runtime <code>EntityID</code>s) — the
+  runtime ID has a generation field that changes across loads, and the
+  same scene loaded twice should produce the same parent → child
+  topology even though the underlying entity slots are
+  different.  The loader builds a
+  <code>localId → EntityID</code> map and resolves the
+  <code>parent</code> reference in a second pass.  See
+  <code>engine/scene/SceneSerializer.cpp:520-590</code>.</li>
+  <li><strong>Mesh / Material as integer handles</strong> into
+  <code>RenderResources</code>, not paths.  This decouples the scene
+  format from asset paths and lets the editor track an unsaved
+  scene against unsaved-asset state.  Downside: the same scene
+  loaded with a different <code>RenderResources</code> would
+  reference the wrong meshes — out-of-scope for the current
+  single-project assumption but noted as a future hardening
+  target.</li>
+  <li><strong>Unknown components are silently ignored on load</strong> —
+  forward-compatibility for game code that registered its own
+  components against a scene saved by an older build.</li>
+</ul>
+
+<h3>The component handler registry</h3>
+<p>The serializer doesn't know about specific components at compile time.
+Game / engine code registers (name, <code>SerializeFn</code>,
+<code>DeserializeFn</code>) triples via
+<code>SceneSerializer::registerComponent</code>:</p>
+
+<pre><code>using SerializeFn   = std::function&lt;void(EntityID, const Registry&amp;, const RenderResources&amp;,
+                                          JsonWriter&amp;)&gt;;
+using DeserializeFn = std::function&lt;void(EntityID, Registry&amp;, RenderResources&amp;,
+                                          AssetManager&amp;, JsonValue)&gt;;
+
+void registerComponent(const char* name, SerializeFn, DeserializeFn);
+void registerEngineComponents();   // wires up the 12 built-ins</code></pre>
+
+<p>The twelve built-in components currently wired by
+<code>registerEngineComponents()</code> (see
+<code>engine/scene/SceneSerializer.cpp:29-415</code>):</p>
+
+<div style="columns:3;column-gap:24px;font-size:14px">
+  <ul style="margin:0;padding-left:18px">
+    <li>Transform</li>
+    <li>Camera</li>
+    <li>DirectionalLight</li>
+    <li>PointLight</li>
+    <li>SpotLight</li>
+    <li>Mesh</li>
+    <li>Material</li>
+    <li>RigidBody</li>
+    <li>Collider</li>
+    <li>Name</li>
+    <li>Visible (tag)</li>
+    <li>ShadowVisible (tag)</li>
+  </ul>
+</div>
+
+<p>A game adds its own component types by registering them <em>before</em>
+calling <code>loadScene</code>:</p>
+
+<pre><code>SceneSerializer serializer;
+serializer.registerEngineComponents();
+serializer.registerComponent(
+    "HealthBar",
+    [](EntityID e, const Registry&amp; reg, const RenderResources&amp;, JsonWriter&amp; w) {
+        auto* hb = reg.get&lt;HealthBarComponent&gt;(e);
+        if (hb) { w.key("HealthBar"); w.startObject(); w.key("hp"); w.writeInt(hb-&gt;hp); w.endObject(); }
+    },
+    [](EntityID e, Registry&amp; reg, RenderResources&amp;, AssetManager&amp;, JsonValue v) {
+        reg.emplace&lt;HealthBarComponent&gt;(e, HealthBarComponent{ v["hp"].getInt(100) });
+    });</code></pre>
+
+<h3>How the editor uses it</h3>
+<p>The editor (<code>editor/EditorApp.cpp</code>) wires the serializer to
+the platform's native file dialogs (<code>IWindow::showSaveDialog</code>
+/ <code>showOpenDialog</code>).  Relevant flows:</p>
+
+<table>
+<tr><th>Action</th><th>What happens</th><th>Source</th></tr>
+<tr><td><code>save_scene</code> (Cmd+S)</td>
+  <td>If a scene path is already tracked, calls
+    <code>serializer.saveScene(registry, resources, path)</code>
+    directly.  Otherwise falls through to the <code>save_scene_as</code>
+    flow.</td>
+  <td>EditorApp.cpp:2973-2997</td></tr>
+<tr><td><code>save_scene_as</code> (Cmd+Shift+S)</td>
+  <td>Opens the native save dialog, then writes JSON.  Updates the
+    window title with the scene name.</td>
+  <td>EditorApp.cpp:2978</td></tr>
+<tr><td><code>open_scene</code> (Cmd+O)</td>
+  <td>Opens the native open dialog.  Before loading: destroys every
+    entity in the registry, hard-resets editor-owned textures,
+    clears the undo/redo stack.  After loading: marks
+    <code>hierarchyDirty</code>, <code>propertiesDirty</code>,
+    <code>viewportDirty</code> so each panel re-syncs from the
+    fresh entity set.</td>
+  <td>EditorApp.cpp:2998-3022</td></tr>
+</table>
+
+<p>Editor edits between saves go through a separate
+<code>CommandStack</code> with <code>ICommand</code>-derived undo/redo
+(<code>editor/undo/CommandStack.h</code>) — totally decoupled from the
+scene file; the file only holds the committed state.  Saving doesn't
+clear the undo stack (so you can undo past a save), but loading does
+(the stack would be referring to entities that no longer exist).</p>
+
+<details>
+<summary>Follow-up: why JSON and not a binary format?</summary>
+<p>Three reasons.  (1) The format is small enough that the parse cost is
+invisible — <code>rapidjson</code> handles a typical level in &lt;5 ms.
+(2) Diff-ability in code review: artists and gameplay engineers can both
+read it.  (3) The editor saves often; readable failures (line + column
+in the error) beat opaque "corrupt save."  The cost is file size — a
+binary format would be ~3× smaller for the same scene.  If we ever hit
+the size ceiling, the migration path is documented: switch the writer
+to write CBOR while keeping the same key names; loader auto-detects via
+the leading byte.</p>
+</details>
+
+<details>
+<summary>Follow-up: what about <code>SceneManager</code> at runtime?</summary>
+<p>The editor uses <code>SceneSerializer</code> directly because it
+wants fine-grained control over the registry (undo stack, dirty
+panels).  Games use the higher-level
+<code>SceneManager</code> wrapper
+(<code>engine/scene/SceneManager.{h,cpp}</code>) which adds:</p>
+<ul>
+  <li><strong>Active-scene tracking</strong> via
+  <code>SceneHandle</code> — one int per loaded scene; the manager
+  remembers which entities belong to which scene file.</li>
+  <li><strong>Persistent entities</strong> — call
+  <code>sceneManager.markPersistent(player)</code> and that entity
+  survives the next
+  <code>unloadScene()</code> / <code>loadScene("level2.json")</code>
+  pair.  Useful for the player avatar, inventory, persistent
+  UI.</li>
+  <li><strong>Reload</strong> for dev iteration —
+  <code>reloadScene()</code> does <code>unload + load(samePath)</code>
+  so a designer can save in the editor and immediately re-run the
+  game without restarting the process.</li>
+  <li><strong>Onload callback</strong> for gameplay code to
+  wire up references after entities exist
+  (<code>sceneManager.setOnSceneLoaded([](SceneHandle h){ … })</code>).</li>
+</ul>
+</details>
+
+<details>
+<summary>Follow-up: what about glTF — that's a "scene" too, isn't it?</summary>
+<p>glTF is treated as an <em>asset</em>, not a scene.
+<code>engine/assets/GltfSceneSpawner.cpp</code> imports a glTF model
+into the running registry (one entity per glTF node, with
+<code>Transform</code> / <code>Mesh</code> / <code>Material</code>
+populated).  The result can then be saved into the engine's
+<code>.json</code> scene format like anything else.  glTF is the
+"DCC bridge"; the JSON scene is the engine's native authored layer
+that sits on top.  Tests in
+<code>tests/scene/TestSceneSerializer.cpp</code> cover round-trip
+fidelity for the built-in components.</p>
+</details>
+
+<h3>Honesty flags</h3>
+<ul>
+  <li>The <strong>Mesh / Material handles are not portable</strong>
+  across <code>RenderResources</code> instances yet.  In practice
+  that means a scene file is implicitly tied to the project that
+  saved it; loading it into a different project may bind the wrong
+  meshes silently.  A future hardening pass would store stable asset
+  names (or content hashes) and resolve at load.</li>
+  <li>The <strong>"unknown component" silent-ignore</strong> is good
+  for forward-compat but means a typo in a registered component
+  name fails open — the data is silently dropped on load.  A
+  validation pass that diffs registered names against the file's
+  keys would catch this.</li>
+  <li>The <strong>scene-local ID assignment</strong> is sequential by
+  iteration order through <code>Registry::forEachEntity</code>.
+  Saving the same scene twice can produce different IDs if entity
+  creation order shifts.  Doesn't affect correctness (the parent
+  references are rewritten consistently inside the file) but does
+  produce noisy diffs.  A future fix: sort entities by name before
+  ID assignment.</li>
+  <li>The serializer is <strong>not thread-safe</strong> — runs on
+  whichever thread called <code>save</code>/<code>load</code>.
+  Editor / runtime both call from the main thread, so this hasn't
+  bitten yet.</li>
+</ul>
+
+<!-- ========================================================== -->
+<h2 id="mobile">8. Mobile vs desktop</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Same engine on
+all platforms, with per-platform backends (Metal on Apple, Vulkan on
+Android, Vulkan / D3D11 / OpenGL on desktop via bgfx) and a tier system
+(low / mid / high) that scales texture resolution, shadow map size, cascade
+count, light budget, post-process steps, target FPS, and feature toggles.
+Mobile concerns I addressed explicitly: TBDR (no depth prepass, careful
+about full-screen colour clears), thermal throttling (target 30 fps on low
+tier), battery (gyro opt-in + 30 Hz), and the AAudio race-fix.</div>
+
+<h3>Tier matrix (representative, see <code>docs/IOS_SUPPORT.md</code>
+and <code>docs/ANDROID_SUPPORT.md</code> for the per-device tables)</h3>
+
+<table>
+<tr><th>Setting</th><th>Low</th><th>Mid</th><th>High</th></tr>
+<tr><td>Max texture size</td><td>512</td><td>1024</td><td>2048</td></tr>
+<tr><td>Texture compression</td><td>ASTC 8×8</td><td>ASTC 6×6</td><td>ASTC 4×4</td></tr>
+<tr><td>Shadow map size</td><td>512</td><td>1024</td><td>2048</td></tr>
+<tr><td>Shadow cascades</td><td>1</td><td>2</td><td>3</td></tr>
+<tr><td>Shadow filter</td><td>Hard</td><td>PCF 2×2</td><td>PCF 2×2</td></tr>
+<tr><td>Max bones</td><td>64</td><td>128</td><td>128</td></tr>
+<tr><td>IBL</td><td>Off</td><td>On</td><td>On</td></tr>
+<tr><td>SSAO</td><td>Off</td><td>Off</td><td>On</td></tr>
+<tr><td>Bloom downsample steps</td><td>0 (off)</td><td>3</td><td>5</td></tr>
+<tr><td>FXAA</td><td>On (todo: flip off)</td><td>On</td><td>On</td></tr>
+<tr><td>Depth prepass</td><td>Off (TBDR)</td><td>Off (TBDR)</td><td>Off (TBDR)</td></tr>
+<tr><td>Target FPS</td><td>30</td><td>30</td><td>60</td></tr>
+<tr><td>Render scale</td><td>0.75</td><td>1.0</td><td>1.0</td></tr>
+</table>
+
+<h3>Mobile-specific topics</h3>
+<ul>
+  <li><strong>TBDR.</strong> All Apple GPUs are tile-based deferred
+  renderers; Mali / Adreno too. Depth prepass is a desktop IMR optimisation
+  that's an anti-pattern on TBDR — duplicate vertex work, no bandwidth win.
+  <code>RenderSettings::depthPrepassEnabled</code> default flipped to
+  <code>false</code> in audit <code>#R-audit</code>.</li>
+  <li><strong>Thermal throttling.</strong> Low-tier targets 30 fps to give
+  the SoC headroom; the next sustained-load run won't be at the same
+  thermal state as the first frame.</li>
+  <li><strong>Battery.</strong> Audit <code>#P1</code>: AndroidGyro was
+  running at 60 Hz unconditionally; now opt-in via
+  <code>EngineDesc::enableGyro</code> and 30 Hz default. Sensor pair is
+  off by default; only the games that read the data turn it on.</li>
+  <li><strong>Audio backend.</strong> miniaudio's NULL-context init walks
+  AAudio → OpenSL ES priority. AAudio gives ~10 ms latency vs OpenSL's
+  ~30 ms. The race-fix story is in <a href="#audio">section 5d</a>.</li>
+  <li><strong>Touch input.</strong> <code>AndroidInput</code> maps
+  <code>AInputEvent</code> to stable-id <code>TouchPoint</code>s in
+  <code>InputState::touches_</code>. <code>IosTouchInput</code> does the
+  same on iOS. Cross-platform
+  <code>engine::input::GestureRecognizer</code> reads from
+  <code>InputState</code> — zero platform headers, host-testable.</li>
+  <li><strong>Lifecycle.</strong> Android: <code>APP_CMD_PAUSE</code> /
+  <code>APP_CMD_RESUME</code> pause SoLoud + gyro and flip the looper
+  poll from non-blocking to blocking so the OS can suspend the thread.
+  <code>APP_CMD_TERM_WINDOW</code> clears the cached
+  <code>ANativeWindow*</code> so rendering doesn't crash inside
+  <code>vkAcquireNextImageKHR</code>. iOS: handled via
+  <code>applicationWillResignActive</code>.</li>
+  <li><strong>Asset compression.</strong> ASTC for mobile, BC7 for desktop
+  via the <code>sama-asset-tool</code>.</li>
+</ul>
+
+<!-- ========================================================== -->
+<h2 id="perf">9. Performance optimisation deep-dive</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Ran a structured
+audit starting May 2026 against low-tier Android (Mali-G57 / G610 class).
+103 items total; 27 landed, 71 open, 3 in progress, 2 explicitly skipped
+after investigation. Methodology: find work, measure, land, verify with the
+test suite, document the delta in <code>docs/NOTES.md</code>. The audit is
+public at <code>docs/PERF_AUDIT_2026-05-25.md</code>.</div>
+
+<h3>Methodology</h3>
+<p>Every audit item is <code>file:line — what — why — expected impact — risk</code>.
+Risk: trivial / low / medium / high refactor. Status is one of
+<code>[ ] [~] [x] [skip]</code>. Items are ranked impact-per-risk inside
+each section; ⭐ marks suggested first-sprint quick wins.</p>
+
+<p>The honest discipline: when an item gets investigated and doesn't pan out,
+mark it <code>[skip]</code> with the measurement and reasoning. Don't quietly
+drop it.</p>
+
+<h3>Standout wins — the ones to talk about</h3>
+
+<table>
+<tr><th>Tag</th><th>Change</th><th>Measured delta</th></tr>
+
+<tr><td><strong>#R1</strong></td>
+    <td><code>DrawCallBuildSystem</code> via <code>bgfx::Encoder</code> —
+        thread-local set/submit instead of global mutex</td>
+    <td>p99 −30%, max −50% (Android emulator A/B). Mean flat — the win is
+        tail latency under contention.</td></tr>
+
+<tr><td><strong>#M1</strong></td>
+    <td><code>Skeleton</code> hot/cold split into three parallel arrays</td>
+    <td>~20× less cache traffic in the AnimationSystem parent walk
+        (4 vs 80 cache lines per 64-joint character)</td></tr>
+
+<tr><td><strong>#C-xform</strong></td>
+    <td><code>TransformSystem</code> hierarchical subtree-dirty bit</td>
+    <td>Algorithmic — O(1) skip of clean subtrees in the top-down recursion.
+        Two pinning tests prove the recursion never enters a clean subtree.</td></tr>
+
+<tr><td><strong>#C-xform-trs</strong></td>
+    <td>Direct TRS construction in <code>composeLocal</code></td>
+    <td>176 muls → 29 muls per call. Combined with <code>#C-xform-cache</code>:
+        <code>--dirty-all</code> mean −26%.</td></tr>
+
+<tr><td><strong>#H1</strong></td>
+    <td><code>ThreadPool</code> v2: POD path + bounded ring +
+        counting_semaphore + atomic active count</td>
+    <td>Zero-allocation submit. No mutex-held wake. Notify only on
+        transition-to-zero.</td></tr>
+
+<tr><td><strong>#P1</strong></td>
+    <td>AndroidGyro opt-in + 30 Hz default</td>
+    <td>Battery — sensors fully off unless game opts in</td></tr>
+
+<tr><td><strong>#T3</strong></td>
+    <td><code>TierConfig::bloomDownsampleSteps</code> wired through to
+        <code>PostProcessSystem</code></td>
+    <td>Was inert from two directions; now Mid drops 9 → 5 fullscreen passes
+        per frame</td></tr>
+
+<tr><td><strong>#S1 (precision half)</strong></td>
+    <td><code>fs_pbr.sc</code> per-variable <code>mediump</code> annotations</td>
+    <td>Mali fp16 ALU + bandwidth on the BRDF + samples + accumulators;
+        positions / shadow UVs / cluster indices kept <code>highp</code></td></tr>
+
+<tr><td><strong>#phys-inverse-trs</strong></td>
+    <td>Custom <code>math::inverseTRS()</code> exploiting affine structure</td>
+    <td>3.4× vs <code>glm::inverse</code> (3.0 ns vs 10.2 ns median on
+        M-series; bigger on ARM little cores)</td></tr>
+
+<tr><td><strong>#instance-pmr-map</strong></td>
+    <td><code>InstanceBufferBuildSystem</code> group map → pmr arena</td>
+    <td>1.95× per frame (1973 ns → 998 ns at 8 groups × 32 instances)</td></tr>
+
+<tr><td><strong>#cull-shadow-multi</strong></td>
+    <td><code>ShadowCullSystem</code> single-pass multi-cascade</td>
+    <td>~66% reduction at 3 cascades — walk mesh view once, test against
+        every frustum, accumulate cascadeMask bits</td></tr>
+
+</table>
+
+<h3>Wins that didn't pan out</h3>
+<details>
+<summary>Two items got <code>[skip]</code>'d after microbench investigation — say so plainly in the interview</summary>
+<ul>
+  <li><strong>AnimationSampler 122 — skip rest-pose init for joints touched
+  by channels.</strong> Projected: save jointCount × 40 B of writes.
+  Measured: net-zero to +6/+10% regression. Reason: the rest-pose copy runs
+  at ~0.7 ns/joint out of L1; the bitmask + restPose-as-default loads inside
+  the channel-sampling loop add more work than they save. The audit projection
+  assumed memory-bandwidth-bound writes — wrong for this workload at this
+  size.</li>
+  <li><strong>AnimationSampler 123 — glm::slerp short-circuit on equal
+  keyframes.</strong> Microbench flat (575 vs 579 ns/call within run-to-run
+  noise). Reason: <code>glm::slerp</code> already internally checks
+  <code>dot(a, b) &gt; 0.9995</code> and falls to nlerp, so the equal-quats
+  case was already cheap.</li>
+</ul>
+<p>Microbenchmarks preserved at <code>tests/animation/TestAnimationSampler.cpp</code>
+under <code>[anim-bench]</code> for future re-evaluation. The honest answer
+to "every optimisation paid off?" is "no — and here's exactly what
+didn't and why."</p>
+</details>
+
+<!-- ========================================================== -->
+<h2 id="testing">10. Testing</h2>
+
+<div class="thirty"><strong>The 30-second answer.</strong> Catch2 v3 unit
+tests live alongside implementation under <code>tests/</code>. Screenshot
+tests render to an offscreen framebuffer and compare against golden images,
+regenerated with <code>--update-goldens</code>. A <code>perf_smoke</code>
+harness pins per-phase budgets. Microbenchmarks tagged
+<code>[!benchmark]</code> exist for the items where I needed to investigate
+projected wins. ~27,000 unit assertions / 750+ test cases at the time of
+writing.</div>
+
+<p>What's covered:</p>
+<ul>
+  <li><strong>Per-subsystem unit tests</strong>:
+  <code>tests/ecs/</code>, <code>tests/rendering/</code>,
+  <code>tests/animation/</code>, <code>tests/physics/</code>,
+  <code>tests/audio/</code>, <code>tests/assets/</code>,
+  <code>tests/scene/</code>, <code>tests/memory/</code>,
+  <code>tests/threading/</code>, <code>tests/json/</code>,
+  <code>tests/input/</code>, <code>tests/platform/</code>.</li>
+  <li><strong>Screenshot tests</strong> at <code>tests/screenshot/</code> —
+  render-to-FB, hash compare against goldens. 22 cases.</li>
+  <li><strong>perf_smoke</strong> harness with per-phase budgets — caught
+  the cull-cache + cull-AABB combo at −29% mean.</li>
+  <li><strong>Microbenchmarks</strong> tagged <code>[!benchmark]</code> and
+  per-subject tags like <code>[anim-bench]</code>,
+  <code>[instancing-bench]</code> — used to validate projected wins before
+  landing them.</li>
+  <li><strong>Race-checks</strong>: 10,000-frame conservation test for the
+  SystemExecutor, TSAN-friendly.</li>
+</ul>
+
+<!-- ========================================================== -->
+<h2 id="limits">11. Known limitations &amp; what I'd do differently</h2>
+
+<p>Better to lead with these than be caught off guard:</p>
+
+<ul>
+  <li><strong>The DAG scheduler is scaffolding-only for now.</strong>
+  Built-in systems don't declare <code>Reads</code>/<code>Writes</code>;
+  <code>useSystemThreadPool</code> defaults to false. Real frame parallelism
+  is per-game opt-in until the per-tier device measurement happens.</li>
+  <li><strong>ThreadPool is single-mutex MPMC, not work-stealing.</strong>
+  Per-worker queues + work-stealing would help under heavy submit contention.</li>
+  <li><strong>GLTF texture ownership refactor.</strong>
+  <code>UiRenderSystem::update</code> still takes
+  <code>bgfx::ProgramHandle</code> + <code>bgfx::UniformHandle</code>
+  directly — the bgfx-free wrapper layer hasn't closed that boundary yet.</li>
+  <li><strong>Tier-aware shader variants are stubs.</strong>
+  <code>BGFX_CONFIG_MAX_BONES=128</code> applies even on low-tier
+  (<code>maxBones=64</code>); the deferred <code>LOW_TIER</code> PBR variant
+  that would skip the cluster loop on no-lights scenes is open
+  (<code>#S1 texture-indirection half</code>).</li>
+  <li><strong><code>Surface.setFrameRate</code> plumbing on Android is
+  missing.</strong> <code>TierConfig::targetFPS=30</code> is honoured on iOS
+  but not Android — the panel will still drive 60 Hz vsync and the engine
+  produces extra frames that don't matter (<code>#P2</code>).</li>
+  <li><strong>No cascade-transition blending</strong> in CSM.</li>
+  <li><strong>Audio is single-listener.</strong> Multi-listener (split-screen)
+  is unimplemented; the priority field exists but only the highest wins.</li>
+  <li><strong>No render graph.</strong> Passes are a hardcoded linear
+  pipeline. A proper RG is the natural next step beyond ~6 passes — noted
+  in <code>docs/RENDERING_ARCHITECTURE.md</code> as a future upgrade.</li>
+</ul>
+
+<h3>Deliberate exclusions (mention these so the interviewer knows scope was considered)</h3>
+<ul>
+  <li><strong>Networking / multiplayer</strong> — intentionally not in
+  scope. Single-player engine. libcurl is wired for asset/update downloads
+  only.</li>
+  <li><strong>VR / AR</strong> — out of scope.</li>
+  <li><strong>Localisation</strong> — out of scope.</li>
+  <li><strong>Scripting layer</strong> — the
+  <code>IGame</code> pattern + C++ gameplay is the model. No Lua, no
+  C#, no embedded VM.</li>
+  <li><strong>Ray tracing</strong> — explicitly tabled long-term in the
+  initial proposal. bgfx doesn't expose RT APIs; forking bgfx would be a
+  larger project than the engine itself.</li>
+  <li><strong>Logging strategy</strong> — currently just bgfx's callback +
+  per-platform <code>__android_log_print</code> / <code>NSLog</code>; no
+  structured logging library. Acceptable scope decision.</li>
+</ul>
+
+<!-- ========================================================== -->
+<h2 id="qa">12. Likely interview questions &amp; ready-to-use answers</h2>
+
+<div class="qa">
+<div class="q">"Why bgfx and not your own abstraction?"</div>
+<p>The binary-size win was ~1–2 MB; the cost would be months of
+<code>VkInstance</code>+swapchain+pipeline-cache boilerplate per backend. As
+a solo developer on a multi-platform engine, that's months not spent on the
+rendering techniques I actually wanted to build. bgfx gives me one shader
+source → MSL/SPIR-V/HLSL via shaderc, the Encoder API for multi-threaded draw
+recording, and a render thread by default so <code>bgfx::frame()</code> is an
+async hand-off. MIT-licensed, mature on mobile.</p>
+</div>
+
+<div class="qa">
+<div class="q">"Walk me through a frame from input to pixel."</div>
+<p>GLFW (or NativeActivity / UIApplication on mobile) hands events to
+<code>InputSystem</code>, which diffs against last frame to produce
+pressed/released state in <code>InputState</code>. Game tick runs animation
+(sample clips, blend, compose bones into a per-frame arena buffer), then
+physics fixed-step (1/60s, up to 4 substeps via Jolt), then
+<code>TransformSystem</code> recursively rebuilds dirty world matrices.
+Visibility pass: <code>FrustumCullSystem</code> sets
+<code>VisibleTag</code>, <code>ShadowCullSystem</code> sets
+<code>ShadowVisibleTag</code> cascade bits, <code>LightClusterBuilder</code>
+fills the 16×9×24 grid into three GPU textures. Render pass:
+<code>DrawCallBuildSystem</code> opens a <code>bgfx::Encoder</code>, walks
+the visible entities, records draw calls per shadow cascade and the opaque
+pass. Post-process: SSAO, bloom (2N-1 passes), ACES tonemap, FXAA. Then
+<code>endFrame()</code> resets the FrameArena and calls
+<code>bgfx::frame()</code> which hands off to bgfx's render thread for the
+actual GPU submit.</p>
+</div>
+
+<div class="qa">
+<div class="q">"How does forward clustered lighting compare to deferred?"</div>
+<p>For mobile and TBDR specifically, clustered forward wins. A G-buffer is
+4–5 fullscreen render targets, and on TBDR every store flushes tile memory
+to main RAM — that's the actual bandwidth bottleneck. Forward+ keeps shading
+in-tile. Transparency works naturally (no parallel forward path needed).
+Memory footprint is lower. The cost is shading the same fragment more times
+under overdraw, but with depth prepass disabled on TBDR (also for bandwidth
+reasons) and decent occlusion culling, overdraw isn't catastrophic. For a
+desktop AAA renderer at 4K with hundreds of lights and complex post-process
+chains, deferred or visibility buffer would be a different conversation.</p>
+</div>
+
+<div class="qa">
+<div class="q">"What's the performance bottleneck on low-tier Android?"</div>
+<p>Fragment shader cost and main-memory bandwidth, both fed by Mali-G57's
+modest ALU throughput. Two specific paths: the clustered light loop in
+<code>fs_pbr.sc</code> samples three RGBA32F textures per light, and tonemap's
+<code>pow(x, 1/2.2)</code> chokes Mali. Tier-aware fixes addressed by the
+audit: cap bloom downsample steps to 0 on low (off entirely), force depth
+prepass off (TBDR), <code>mediump</code> on BRDF / sample paths for fp16, and
+target 30 fps to give the SoC thermal headroom. Open items I'd land next:
+<code>pow → sqrt</code> in tonemap, <code>setTexture</code> batching for
+frame-constant slots, and a <code>LOW_TIER</code> PBR variant that skips the
+cluster loop for no-lights scenes.</p>
+</div>
+
+<div class="qa">
+<div class="q">"How do you avoid races in ECS access?"</div>
+<p>Three layers. First, <code>SparseSet::get / contains</code> are pure
+reads — concurrent reads are safe by construction as long as no one mutates
+the registry. Second, structural mutations (<code>emplace</code>,
+<code>remove</code>, <code>destroyEntity</code>) are NOT safe; the design is
+to defer them through a <code>CommandBuffer</code> and play back on the main
+thread after a phase barrier. Third, the compile-time conflict detection in
+<code>buildSchedule&lt;...&gt;()</code> places systems that write the same
+component type in serial phases, so even if two systems would only ever
+touch disjoint entity sets, the type-level rule keeps them safe by being
+conservative.</p>
+</div>
+
+<div class="qa">
+<div class="q">"What was the hardest bug you fixed?"</div>
+<p>The AAudio race in SoLoud's init. 100% reproducible SIGSEGV on Pixel 9 in
+<code>mapResampleBuffers_internal</code>. The problem was that SoLoud calls
+<code>ma_device_init</code> <em>before</em> <code>postinit_internal</code>,
+but on Android 16 the AAudio backend starts its callback thread inside
+<code>ma_device_init</code> and the first callback fires before SoLoud
+allocates the resample arrays. OpenSL ES doesn't have this behaviour, which
+is why "force OpenSL ES" stopped the crash — at the cost of 30 ms latency
+vs AAudio's 10 ms. I fixed it with an atomic publish/acquire gate in our
+vendored <code>soloud_miniaudio.cpp</code>: store-release after
+<code>postinit_internal</code> returns, acquire-load on every callback. While
+the flag is false, the callback memsets the output buffer to zero. Costs one
+atomic load per callback (~1 ns with <code>ldar</code> on ARM). The
+release/acquire ordering guarantees every prior store in
+<code>postinit_internal</code> is visible to any callback that observes
+<code>true</code>. Bonus: it's backend-agnostic, so the next miniaudio
+backend that pre-starts its callback (likely WASAPI exclusive-mode) gets the
+same protection without a <code>#ifdef</code>.</p>
+</div>
+
+<div class="qa">
+<div class="q">"How would you scale this to 10,000 entities?"</div>
+<p>The frame-anatomy estimate puts a 10k-entity scene at ~10 ms on a single
+thread — over budget. The plan is the work that's already scaffolded: turn on
+the <code>SystemExecutor</code> with the per-system
+<code>Reads</code>/<code>Writes</code> declarations, run
+<code>FrustumCull</code> + <code>ShadowCull</code> + <code>LightCluster</code>
+in parallel via deferred command buffers, run AnimationSystem in parallel
+with AudioSystem on the simulation phase, and split <code>DrawCallBuildSystem</code>'s
+entity list across worker Encoders. Estimated saving ~3.5 ms — gets it back
+under 60 fps budget. Memory-side: the <code>LightClusterBuilder</code> fixed
+arrays (~150 KB always-resident) should become tier-aware (low → 8×4×8 grid
+instead of 16×9×24).</p>
+</div>
+
+<div class="qa">
+<div class="q">"Why ECS over an OO scene graph?"</div>
+<p>Cache locality is the practical answer. Iterating 50k <code>Velocity</code>
+components linearly through a packed dense array is what the prefetcher
+expects; chasing virtual-dispatch <code>GameObject*</code> through a tree
+isn't. The structural answer is composition: a "player" isn't <em>a kind of</em>
+anything, it's <em>has-a</em> transform + mesh + animator + rigidbody + audio
+listener — each owned by a different subsystem. ECS expresses that natively.
+Note though: the engine does still have a hierarchy via
+<code>HierarchyComponent</code> + <code>ChildrenComponent</code> and a
+<code>TransformSystem</code> that does top-down recursive composition.
+"ECS-as-scene-graph" — the hierarchy is encoded directly in ECS components,
+no separate scene graph object. Best of both.</p>
+</div>
+
+<div class="qa">
+<div class="q">"How big is the engine?"</div>
+<p>Roughly: ~4k lines of design notes in <code>docs/NOTES.md</code>, 27
+landed perf-audit items, 750+ test cases / 27,000 assertions. Source covers
+ECS, rendering (~30 files), animation, physics, audio, assets, threading,
+memory, input, math, scene, JSON, platform shims for Android / iOS /
+desktop, a panel-based editor, and per-platform app shells.</p>
+</div>
+
+<hr>
+<p class="meta">Document version: 2026-06-16. Sources cited throughout point
+to actual files in <code>/Users/shayanj/claude/engine</code>. When code and
+docs disagree, trust the code — some architecture docs are partially
+aspirational and call this out at the top (notably
+<code>docs/THREADING_ARCHITECTURE.md</code>).</p>
+
+</main>
+</div>
+</body>
+</html>
