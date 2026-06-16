@@ -3813,3 +3813,136 @@ PoseComponent-by-value win removes one heap alloc per skinned entity
 per frame (was bounded by jointCount > 128 spilling Pose's inline
 buffer; rare in practice).  All four items are low-risk and the
 existing screenshot fixture confirms no visual drift.
+
+## AnimationSampler — audit items investigated, measured, declined (2026-06-16)
+
+Two audit items (`docs/PERF_AUDIT_2026-05-25.md` lines 122 + 123)
+were investigated and rejected after microbenchmark measurement
+showed the projected wins don't materialize at the engine's scale.
+
+This entry exists to document **why** so the same investigation
+doesn't get re-attempted without new evidence.
+
+### Microbenchmark infrastructure (the win that DID land)
+
+`tests/animation/TestAnimationSampler.cpp` gains three Catch2
+benchmark cases tagged `[anim-bench]` plus `[!benchmark]` so they
+don't run on the default test suite:
+
+```
+build/engine_tests "[anim-bench]"
+```
+
+Three workloads (50 000 iters / run, M-series Mac):
+
+| Bench | Setup | Median ns/call |
+|-------|-------|---------------:|
+| Full 64-channel | 64 joints, 64 channels, 4 varying-value keyframes/channel | ~1126 |
+| Half-untouched 32-channel | 64 joints, 32 channels (so 32 joints rest-init only) | ~591 |
+| Static-keyframes 64-channel | 64 joints, 64 channels, 4 identical-value keyframes/channel | ~575 |
+
+The bench is the right tool for the next person who tackles
+AnimationSampler — A/B their change against these numbers.
+
+### Item 1 (line 122) — "skip rest-pose init for touched joints"
+
+**Projection:** `sampleClip` initializes every joint to rest pose,
+then the channel loop overwrites the touched ones.  Skip the
+redundant init.  Saves `jointCount * 40 bytes/frame`.
+
+**Implementation tried:**
+
+- Walk `clip.channels` once to build a 128-bit stack bitmask of
+  "joint touched by ≥ 1 channel."
+- Skip rest-pose init for touched joints.
+- Pass rest-pose values as `sampleChannel`'s default so empty
+  per-field keyframes still produce bind values for the touched
+  joint.
+
+**Measurement:**
+
+| Bench | Baseline | After | Delta |
+|-------|---------:|------:|------:|
+| Full 64-channel | 1126 ns | 1196 ns | **+6.2%** (regression) |
+| Half-untouched 32-channel | 591 ns | 653 ns | **+10.5%** (regression) |
+| Static-keyframes 64-channel | 575 ns | 583 ns | **+1.4%** (within noise) |
+
+**Why it regressed:**
+
+- Modern CPUs hide the rest-pose init cost.  Per-joint
+  init = ~0.7 ns at L1 (32 contiguous bytes for `JointRestPose`,
+  fully cached across consecutive joints).
+- The bitmask requires walking `clip.channels` twice (once to
+  build the mask, once to sample).  At 64 channels each scan
+  costs ~1 µs of cache traffic vs the ~50 ns the bitmask check
+  is meant to save per untouched joint.
+- Channel-loop loads of `skeleton.restPoses[idx]` for the
+  default argument (3 separate loads per channel) cost more
+  than the single sequential pass at init.
+
+The audit's projection was bandwidth-bound; the real workload is
+ALU- + branch-bound on hot data.  Different bottleneck.
+
+### Item 2 (line 123) — "equal-keyframe fast path"
+
+**Projection:** When `kf1.value == kf2.value`, skip `glm::mix` or
+`glm::slerp` and return the constant directly.  Common in glTF
+where exporters stamp the bind pose at every keyframe for joints
+the artist never moved.
+
+**Implementation tried:**
+
+```cpp
+if (kfBefore.value == kfAfter.value) {
+    return kfBefore.value;
+}
+const float lerpT = ...;
+return glm::mix(kfBefore.value, kfAfter.value, lerpT);
+```
+
+(Same shape for the `Quat` specialization with `glm::slerp`.)
+
+**Measurement on the static-keyframes bench (where the fast path
+fires every call):**
+
+| | Baseline | After | Delta |
+|---|---------:|------:|------:|
+| Static-keyframes ns/call | 575 ns | 579 ns | flat (within noise) |
+
+The dynamic benches showed a slight regression (~3-5%) from the
+added `==` check on every call where the fast path *doesn't* fire.
+
+**Why it didn't help:**
+
+- `glm::slerp` already internally checks `dot(a, b) > 0.9995` and
+  falls to nlerp on near-parallel quats.  So slerp-on-equal-quats
+  is already cheap (~5 ns) — the projected ~30-mul slerp cost is
+  what slerp pays on *truly* different quats.
+- `glm::mix(Vec3, Vec3, t) = a + (b - a) * t` is 6 ops on vec3 —
+  about as cheap as the `==` check that's supposed to skip it.
+- Net: the fast-path check costs about as much as it saves on
+  hits, and costs extra on misses.  Wash.
+
+The audit assumed a more expensive slerp than the engine ships.
+
+### What to keep from this investigation
+
+- Microbenchmark stays — exercises a real sampler workload and
+  becomes the foundation for future A/B work.
+- `AnimationSampler.cpp` unchanged — original code is still the
+  fastest.
+- Audit items marked `[skip]` with the measurement evidence
+  embedded so anyone re-evaluating sees the numbers.
+
+### Open questions that could re-open these items
+
+- **On Mali / Adreno mobile CPUs** the L1 / cache hierarchy is
+  different; the bitmask path *might* win there.  Would need a
+  device-side rerun before drawing conclusions.
+- **On very deep skeletons (> 100 joints)** with very few touched
+  joints (< 10), the bitmask might pay off — the proportional
+  saving grows.  No real workload like that in the engine today.
+- **A `[[gnu::always_inline]]` on `sampleChannel`** might let the
+  compiler hoist the `==` check out of the inner loop, eliminating
+  the per-call cost on misses.  Possibly worth a follow-up if
+  someone wants to revisit the equal-keyframe path.
