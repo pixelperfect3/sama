@@ -787,6 +787,28 @@ pre-init call is the documented way to inhibit the render thread. See
 logcat so integrators can verify multi-threaded is actually engaged
 (rules out a silent fallback before investigating back-pressure).</p>
 
+<div class="thirty" style="border-color:#c97a4a;background:#fff5e6">
+  <strong>Honesty flag — investigation update.</strong>  After the
+  vsync-off result (15+ ms) and a follow-up worst-case GPU test by
+  the integrating team (stripped GPU work to almost nothing — still
+  15+ ms), hypotheses 3 (GPU bottleneck) and 5 (compositor back-
+  pressure on render thread) are both dead.  The remaining explanation
+  is that bgfx is silently running in <em>single-threaded</em> mode
+  at runtime on Pixel 9 / Android Vulkan despite our build flag and
+  desc plumbing being correct.  The build-time
+  <code>BGFX_CAPS_RENDERER_MULTITHREADED</code> log only confirmed the
+  build setting; the runtime is decided inside <code>bgfx.cpp:2169</code>
+  by a <code>BX_TRACE("Running in %s-threaded mode", …)</code> that
+  routes through a <code>CallbackI::traceVargs</code> we hadn't wired.
+  <code>Renderer.cpp:23-105</code> now sets a
+  <code>BgfxLogcatCallback</code> that forwards bgfx's own trace stream
+  to Android logcat under tag <code>SamaEngineBgfx</code>.  Next APK
+  rebuild will show one of two decisive lines: "Running in multi-
+  threaded mode" or "Running in single-threaded mode".  See
+  <code>docs/NOTES.md</code> "Follow-up (2026-06-16, same day,
+  decisive)" for the full evidence chain.
+</div>
+
 <details>
 <summary>Follow-up: how is the variable-step update reconciled with fixed-step physics?</summary>
 <p>The engine calls <code>physics.step(deltaTime, kMaxSubSteps=4)</code> in

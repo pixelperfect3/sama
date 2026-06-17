@@ -366,6 +366,46 @@ Two diagnostics the team can run while waiting for the next APK build:
 
 The integrating team should rebuild against `main` and share one of those logcat lines from a steady-state 5 s sample.  That nails the diagnosis.
 
+### Follow-up (2026-06-16, same day, decisive): GPU stripped to floor, still 15+ ms — hypothesis 1 (silent fallback) is back
+
+The team did the absolute-worst-case GPU test: 0.5× resolution, no IBL, no bloom, no SSAO, no FXAA, no depth prepass, 512² shadows.  `bgfx::frameMs` *still* 15+ ms.  Combined with the earlier vsync-off-also-15+-ms result, the evidence rules out:
+
+- **Hypothesis 3 (GPU bottleneck)** — dead.  No GPU work and still 15 ms.
+- **Hypothesis 5 (compositor back-pressure on the render thread)** — dead too, because if the render thread were the one waiting on `vkAcquireNextImageKHR`, the game thread's `bgfx::frame()` hand-off would still return fast UNLESS the ring is exactly 1 slot deep (in which case the wait migrates to the game thread).  But a 1-slot ring is the *single-threaded* configuration in disguise.
+
+The remaining explanation: **bgfx is silently running in single-threaded mode at runtime on Pixel 9 / Android Vulkan.**  Either bgfx is taking the `m_singleThreaded = true` path inside `bgfx::Init` despite our `desc.singleThreaded == false`, OR the bgfx Android Vulkan backend has its own internal fallback that flattens to single-threaded for reasons we can't see from the engine's vantage point.
+
+**Build-time fact (confirmed clean):** bgfx's `BGFX_CONFIG_MULTITHREADED` defaults to `1` on non-Emscripten platforms (`build/_deps/bgfx_cmake-src/bgfx/src/config.h:237-239`).  Android is non-Emscripten, so the build picks 1.  `BGFX_CAPS_RENDERER_MULTITHREADED` (the cap we logged earlier) reports this fact and will say "yes" — but that's the build flag, not the runtime mode.
+
+**The decisive runtime evidence** is `bgfx.cpp:2169`:
+
+```cpp
+BX_TRACE("Running in %s-threaded mode", m_singleThreaded ? "single" : "multi");
+```
+
+That `BX_TRACE` macro routes through `bgfx::CallbackI::traceVargs` — a virtual that we had never wired up.  So bgfx was telling us the answer all along; we just weren't listening.
+
+**Fix landed today** (`engine/rendering/Renderer.cpp:23-105` + `:133-142`): on Android, we set `init.callback` to a static `BgfxLogcatCallback` that forwards `traceVargs` and `fatal` to `__android_log_print` under tag `SamaEngineBgfx`.  All other CallbackI methods (profiler / cache / screenshot / capture) default to no-op so existing behaviour is unchanged.
+
+After the next APK rebuild, the team's `adb logcat` filtered to `SamaEngineBgfx` will show one of two lines at init time:
+
+```
+I SamaEngineBgfx: Running in multi-threaded mode    ← multi-threading IS engaged, the slowness has a different cause
+I SamaEngineBgfx: Running in single-threaded mode   ← bgfx fell back; hypothesis 1 confirmed
+```
+
+The full bgfx init stream (renderer selection, swapchain probe, capabilities, present mode picked) will also land under the same tag — surrounding context for the threading line.
+
+**If the line says "single-threaded mode" — which is what the evidence now points to** — three things to check next, in order:
+
+1. *Is bgfx's `s_renderFrameCalled` static somehow set to `true` despite our code only calling `bgfx::renderFrame()` when `singleThreaded == true`?*  Could a static initializer or third-party code (screenshot fixture inadvertently linked in?  bgfx debug-text overlay's init path?) be flipping it.  Add a `bgfx_p.h`-style assert log right before our own `bgfx::renderFrame()` call site to confirm whether *we're* the ones calling it.
+2. *Does the Android Vulkan backend have a fallback path that flattens to single-threaded* on missing device features (no compute queue, no timeline semaphores, no separate transfer queue)?  Check `renderer_vk.cpp` on the bgfx fork we're on for any `m_singleThreaded = true` branches.
+3. *Is `m_thread.init` failing silently* and bgfx then masquerading as multi-threaded?  Unlikely (bgfx asserts on `bx::Thread::init` failure) but worth a `__android_log_print(... "thread init returned")` patch to confirm.
+
+**If the line says "multi-threaded mode" — but `bgfx::frameMs` is still 15+ ms:** then there's a back-pressure shape I haven't accounted for, almost certainly inside bgfx's Android Vulkan command-recording or queue-submit path.  At that point the diagnostic moves to a Vulkan capture (RenderDoc Android or Android GPU Inspector) to see exactly which `vk*` call the render thread is blocked on.
+
+This is the conclusive diagnostic.  No further engine-side guessing; one log line resolves it.
+
 ---
 
 ## Physics

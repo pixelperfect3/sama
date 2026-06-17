@@ -8,6 +8,7 @@
 #endif
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 
 #include "engine/rendering/RenderPass.h"
@@ -18,6 +19,90 @@
 
 namespace engine::rendering
 {
+
+#ifdef __ANDROID__
+namespace
+{
+
+// bgfx::CallbackI implementation that forwards bgfx's internal BX_TRACE +
+// fatal output to Android logcat.  Without this, bgfx prints to its own
+// debug-text overlay (off in production) and to a callback we hadn't
+// wired — so its decisive "Running in single-threaded mode" /
+// "Running in multi-threaded mode" line at init was invisible.
+//
+// See bgfx.cpp:2169 BX_TRACE("Running in %s-threaded mode", ...) — that's
+// the conclusive evidence for whether bgfx's render thread was spawned.
+// All other capability flags + caps bits report build-time facts, not
+// runtime engagement.
+//
+// Default-implements the non-trace virtuals so existing behaviour (no
+// shader cache, no screenshot, no capture) is preserved.
+class BgfxLogcatCallback : public bgfx::CallbackI
+{
+public:
+    ~BgfxLogcatCallback() override = default;
+
+    void fatal(const char* filePath, uint16_t line, bgfx::Fatal::Enum code,
+               const char* str) override
+    {
+        __android_log_print(ANDROID_LOG_FATAL, "SamaEngineBgfx", "FATAL %d at %s:%u: %s",
+                            static_cast<int>(code), filePath != nullptr ? filePath : "?", line,
+                            str != nullptr ? str : "?");
+    }
+
+    void traceVargs(const char* /*filePath*/, uint16_t /*line*/, const char* format,
+                    va_list argList) override
+    {
+        // bgfx traces are noisy at startup (~50-100 lines) so log at INFO
+        // not VERBOSE — that matches the engine's own info level and stays
+        // visible without explicit filtering.  The "Running in
+        // single-/multi-threaded mode" line is the one we're hunting; it
+        // fires once at init.
+        char buf[512];
+        vsnprintf(buf, sizeof(buf), format, argList);
+        __android_log_print(ANDROID_LOG_INFO, "SamaEngineBgfx", "%s", buf);
+    }
+
+    void profilerBegin(const char* /*name*/, uint32_t /*abgr*/, const char* /*filePath*/,
+                       uint16_t /*line*/) override
+    {
+    }
+    void profilerBeginLiteral(const char* /*name*/, uint32_t /*abgr*/, const char* /*filePath*/,
+                              uint16_t /*line*/) override
+    {
+    }
+    void profilerEnd() override {}
+
+    uint32_t cacheReadSize(uint64_t /*id*/) override
+    {
+        return 0;
+    }
+    bool cacheRead(uint64_t /*id*/, void* /*data*/, uint32_t /*size*/) override
+    {
+        return false;
+    }
+    void cacheWrite(uint64_t /*id*/, const void* /*data*/, uint32_t /*size*/) override {}
+
+    void screenShot(const char* /*filePath*/, uint32_t /*width*/, uint32_t /*height*/,
+                    uint32_t /*pitch*/, bgfx::TextureFormat::Enum /*format*/,
+                    const void* /*data*/, uint32_t /*size*/, bool /*yflip*/) override
+    {
+    }
+    void captureBegin(uint32_t /*width*/, uint32_t /*height*/, uint32_t /*pitch*/,
+                      bgfx::TextureFormat::Enum /*format*/, bool /*yflip*/) override
+    {
+    }
+    void captureEnd() override {}
+    void captureFrame(const void* /*data*/, uint32_t /*size*/) override {}
+};
+
+// Single static instance — bgfx::init copies the pointer, not the object,
+// so the callback must outlive bgfx itself.  Living for the process is
+// the simplest correct lifetime.
+BgfxLogcatCallback g_bgfxLogcatCallback;
+
+}  // namespace
+#endif  // __ANDROID__
 
 bool Renderer::init(const RendererDesc& desc)
 {
@@ -44,6 +129,17 @@ bool Renderer::init(const RendererDesc& desc)
         init.platformData.nwh = desc.nativeWindowHandle;
         init.platformData.ndt = desc.nativeDisplayHandle;
     }
+
+#ifdef __ANDROID__
+    // Route bgfx's internal BX_TRACE output into Android logcat under
+    // tag SamaEngineBgfx.  The decisive line we need to see at init is
+    // bgfx.cpp:2169 "Running in single-threaded mode" / "Running in
+    // multi-threaded mode" — without this callback wired it goes
+    // nowhere on Android.  Static lifetime is fine; bgfx stores the
+    // pointer, not the object.  See the class definition at the top
+    // of this file for the rationale.
+    init.callback = &g_bgfxLogcatCallback;
+#endif
 
     // Threading mode selection.
     //
