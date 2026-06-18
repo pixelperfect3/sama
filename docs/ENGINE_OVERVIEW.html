@@ -788,25 +788,29 @@ logcat so integrators can verify multi-threaded is actually engaged
 (rules out a silent fallback before investigating back-pressure).</p>
 
 <div class="thirty" style="border-color:#c97a4a;background:#fff5e6">
-  <strong>Honesty flag — investigation update.</strong>  After the
-  vsync-off result (15+ ms) and a follow-up worst-case GPU test by
-  the integrating team (stripped GPU work to almost nothing — still
-  15+ ms), hypotheses 3 (GPU bottleneck) and 5 (compositor back-
-  pressure on render thread) are both dead.  The remaining explanation
-  is that bgfx is silently running in <em>single-threaded</em> mode
-  at runtime on Pixel 9 / Android Vulkan despite our build flag and
-  desc plumbing being correct.  The build-time
-  <code>BGFX_CAPS_RENDERER_MULTITHREADED</code> log only confirmed the
-  build setting; the runtime is decided inside <code>bgfx.cpp:2169</code>
-  by a <code>BX_TRACE("Running in %s-threaded mode", …)</code> that
-  routes through a <code>CallbackI::traceVargs</code> we hadn't wired.
-  <code>Renderer.cpp:23-105</code> now sets a
-  <code>BgfxLogcatCallback</code> that forwards bgfx's own trace stream
-  to Android logcat under tag <code>SamaEngineBgfx</code>.  Next APK
-  rebuild will show one of two decisive lines: "Running in multi-
-  threaded mode" or "Running in single-threaded mode".  See
-  <code>docs/NOTES.md</code> "Follow-up (2026-06-16, same day,
-  decisive)" for the full evidence chain.
+  <strong>Honesty flag — investigation closed.</strong>  Multi-threaded
+  mode <em>was</em> engaged the whole time; the conclusive bgfx trace
+  routed through our new <code>BgfxLogcatCallback</code> confirmed it.
+  Real root cause: bgfx defaults <code>Resolution::numBackBuffers = 2</code>
+  (<code>bgfx.cpp:3764</code>).  With a 2-image swapchain on Android
+  Vulkan the render thread can be at most ONE frame ahead of
+  SurfaceFlinger; the next <code>vkAcquireNextImageKHR</code> blocks
+  ~16 ms waiting for the compositor to release an image.  That wait
+  shows up on the render thread, fills the bgfx ring, and back-pressures
+  the game thread's <code>bgfx::frame()</code> handoff — producing the
+  team's measured 13.84 ms <code>waitSubmit</code>.  Fix landed today:
+  <code>Renderer.cpp:167-192</code> requests <code>numBackBuffers = 3</code>
+  on Android (triple-buffering).  Tradeoff: one frame of additional
+  input latency (~16 ms at 60 Hz).  Acceptable for the engine's
+  PBR-heavy 3D workload; for input-sensitive games we'd expose the
+  count via <code>EngineDesc</code>.  Earlier vsync-off and GPU-strip
+  diagnostics were both red herrings — SurfaceFlinger paces at panel
+  refresh independent of bgfx's present-mode request, and dropping
+  GPU work doesn't free swapchain images faster.  See
+  <code>docs/NOTES.md</code> "Follow-up (2026-06-18, conclusive)" for
+  the full forensic chain and the two remaining hypotheses (semaphore-
+  driven acquire pipeline / Choreographer cadence floor) if 3 images
+  doesn't fully close the gap.
 </div>
 
 <details>

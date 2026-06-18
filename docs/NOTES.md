@@ -406,6 +406,41 @@ The full bgfx init stream (renderer selection, swapchain probe, capabilities, pr
 
 This is the conclusive diagnostic.  No further engine-side guessing; one log line resolves it.
 
+### Follow-up (2026-06-18, conclusive): hypothesis 5 was right all along — Pixel 9 swapchain is 2-deep
+
+The team got the trace callback wired and reports: **multi-threaded mode IS engaged**.  The full forensic picture from the new instrumentation:
+
+- *Game thread (submit):* 0.38 ms of bgfx work, then 13.84 ms waiting for the render thread to drain the ring.
+- *Render thread:* ~14 ms per frame wall-clock, but CPU + GPU only sums to ~3.7 ms.
+- *The 10+ ms gap:* almost certainly `vkAcquireNextImageKHR` blocking against Android SurfaceFlinger / swapchain image-count starvation.
+
+So hypothesis 5 (compositor back-pressure) was right — I'd ruled it out incorrectly earlier on the grounds that vsync-off and the GPU strip should have shown the same back-pressure if compositor was the gate.  Both diagnostics were misleading: vsync-off doesn't change SurfaceFlinger pacing (it paces independently at panel refresh regardless of bgfx's present-mode request), and dropping GPU work doesn't free swapchain images any faster (the compositor still holds them for one refresh).  Lesson: when the wall-clock-floor is `~vsync_period`, the gate is *probably* SurfaceFlinger, not anything inside bgfx or the GPU.
+
+**Root cause: bgfx defaults `Resolution::numBackBuffers = 2`** (`bgfx.cpp:3764`).  With a 2-image swapchain, the render thread can be at most ONE frame ahead of the compositor; the next `vkAcquireNextImageKHR` blocks until SurfaceFlinger releases an image, which it does at 60 Hz panel refresh.  That ~16 ms wait shows up on the render thread, fills the ring, back-pressures the game thread's `bgfx::frame()` handoff, and produces the exact 13.84 ms `waitSubmit` the team measured.
+
+**Fix landed today** (`engine/rendering/Renderer.cpp:167-192`): on Android, `init.resolution.numBackBuffers = 3`.  bgfx clamps the requested count to `[surfaceCapabilities.minImageCount, surfaceCapabilities.maxImageCount, BGFX_CONFIG_MAX_BACK_BUFFERS]` (`renderer_vk.cpp:7697-7713`) so requesting 3 on a surface that requires fewer / allows more is safe.  Apple / Metal and desktop bgfx backends manage swapchain depth differently and weren't part of the reported problem, so the change is Android-only.
+
+**Verification on the team's side.**  Rebuild against `main`, then `adb logcat -s SamaEngineBgfx`.  At init time bgfx now prints (because we have the trace callback wired):
+
+```
+I SamaEngineBgfx: Create swapchain numSwapChainImages 3, minImageCount 3, BX_COUNTOF(m_backBufferColorImage) 8
+```
+
+If `numSwapChainImages` comes back as 3, this fix took effect.  If it's still 2, the device's `maxImageCount` clamps it to 2 (unlikely on Pixel 9 but possible on lower-tier devices) and we need hypothesis 2 (semaphore-driven acquire pipeline) instead.
+
+Expected per-frame numbers if this hypothesis is correct:
+- `waitSubmit` drops from ~14 ms toward 0 (or whatever fraction of one vsync period the GPU work + 3-frame buffering still leaves).
+- `bgfx::frameMs` drops correspondingly — likely to the ~0.1 ms range when GPU work fits comfortably inside vsync.
+- Steady-state FPS climbs from 45-50 toward the panel's 60.
+
+**Tradeoff accepted.** Triple-buffering adds one frame of input latency.  At 60 Hz that's ~16.67 ms additional delay between an input event and the pixel it affects.  Acceptable for the engine's current target workload (3D games with PBR, not competitive twitch shooters); for input-sensitive games we'd expose this via `EngineDesc` so games can opt back to 2.
+
+**If hypothesis 1 doesn't fully close the gap.**  Two remaining paths the integrating team identified:
+- *Hypothesis 2 — semaphore-driven acquire pipeline.*  Even with 3 images, if bgfx's Vulkan path calls `vkAcquireNextImageKHR` inline on the render thread (synchronously) rather than feeding the acquire semaphore into the next frame's submit, the render thread still blocks on acquire.  This is a bgfx upstream investigation — read `renderer_vk.cpp` around `m_backBuffer.acquire` to see whether bgfx uses the acquire-semaphore pattern or polls.
+- *Hypothesis 3 — Choreographer cadence is the floor.*  Android's SurfaceFlinger respects `Choreographer` callbacks; an app can't beat the panel's refresh cadence regardless of swapchain depth.  If the ~16 ms floor is fundamental, the doc's old "~0.1 ms" claim was always wrong for Android and the doc needs an Android-specific acceptance bar (target: `bgfx::frameMs` ≤ vsync_period − (CPU work + GPU work), not ≤ 0.1 ms).
+
+The team will report after they rebuild and try the 3-image fix.
+
 ---
 
 ## Physics
