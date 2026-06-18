@@ -737,6 +737,32 @@ The team's `sample_game` Android build tree was extracted in April.  Every commi
 
 This trap exists for every `FetchContent_Declare` we have with `PATCH_COMMAND` — not just bgfx.  Audit candidates: any future fetched dependency that we patch.  Currently bgfx is the only one in the chain.
 
+### Skybox renders uniform colour on Metal (2026-06-18)
+
+Separate rendering bug surfaced by sample_game on macOS 14 / M-series Metal: `SkyboxRenderer` painted the entire viewport with a single uniform colour matching whichever cube face the camera happened to point at.  Cubemap appeared "missing" (no gradient, no horizon, no per-pixel direction).  GLSL desktop, Vulkan SPIRV, and Android GLES all rendered the cubemap correctly — Metal only.
+
+**Root cause.**  `vs_skybox.sc:34` extracted the camera world position via direct column element access:
+
+```glsl
+vec3 camPos = vec3(u_invView[3][0], u_invView[3][1], u_invView[3][2]);
+```
+
+In GLSL with column-major matrices (bgfx default), `u_invView[3]` is the 4th column (translation) and `[col][row]` indexing returns `(Tx, Ty, Tz)` — correct.  bgfx-shaderc's GLSL and SPIRV outputs preserve this access pattern faithfully.
+
+bgfx's spirv-cross MSL emitter, however, transcribes the access as `u_invView[0u][3], u_invView[1u][3], u_invView[2u][3]` — reading the matrix's *bottom row* instead of its *translation column*.  For an affine view matrix the bottom row is `(0, 0, 0, 1)`, so `camPos = vec3(0)` and `v_worldPos = nearWorld - vec3(0) = nearWorld`.  After the fragment shader's `normalize()`, `nearWorld` (= `camera_world + tiny_perpendicular_offset`) is dominated by the camera position vector — every fragment gets essentially the same direction → every fragment samples the same cube face.
+
+**Fix.**  Use a matrix-vector multiply that transforms the origin to world space — mathematically identical, but spirv-cross emits a clean `mat4 × vec4` on every backend:
+
+```glsl
+vec3 camPos = mul(u_invView, vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+```
+
+Patch artifact at `patches/sama_skybox_metal_camera_pos_fix.patch`.  GLSL / SPIRV / ESSL outputs unchanged after compile (the optimizer collapses the multiply by zero columns).  MSL output now reads the translation column correctly.
+
+**Authoring rule for future shaders.**  Prefer `mul(M, vec4(0,0,0,1)).xyz` over direct column element access (`M[3].xyz` / `M[3][i]`) when extracting a matrix translation.  Insulates the shader from spirv-cross's MSL emit quirks.  The same `u_invView[3][i]` pattern doesn't appear elsewhere in `engine/shaders/`; vs_skybox.sc:34 was the only occurrence to fix.  But every C++ engineer who writes a shader in the future should be aware of this — element-access on matrices is a portability footgun on the Metal backend specifically.
+
+**Verification.**  Engine-side: all four shader backends (`vs_skybox_mtl/_spv/_glsl/_essl`) recompile clean; engine_tests 26981/753 pass.  This is a runtime visual bug — no unit-test regression possible from the shader change.  Visual verification requires sample_game on Mac (the editor uses the skybox but launches at no-level state by default).  Awaiting team's confirmation on macOS — expected: park cubemap visible behind the plank at level 0, with per-pixel direction changing as the camera moves.
+
 ---
 
 ## Physics

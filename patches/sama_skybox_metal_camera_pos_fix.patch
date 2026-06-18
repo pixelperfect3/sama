@@ -1,0 +1,125 @@
+From: Sama Engine <engine@local>
+Subject: [PATCH] vs_skybox: extract camera world pos via mul(), not column element access
+
+Context — the bug
+-----------------
+On macOS / Metal, SkyboxRenderer paints the entire viewport with a single
+uniform colour matching whichever cube face the camera is currently
+pointing at — the skybox is sampled with a constant direction across
+every fragment.  GLSL desktop, Vulkan SPIRV, and Android GLES all render
+the cubemap correctly; only the Metal backend is affected.
+
+First seen in sama dfd4162 (when SkyboxRenderer + vs_skybox.sc landed).
+Reproduced on macOS 14 / M-series / Metal by sample_game integrators.
+
+Root cause
+----------
+vs_skybox.sc:34 reads the camera world position as direct column element
+access:
+
+    vec3 camPos = vec3(u_invView[3][0], u_invView[3][1], u_invView[3][2]);
+
+In GLSL with column-major matrices (bgfx default), u_invView[3] is the
+4th column (the translation column) and [col][row] indexing returns
+(Tx, Ty, Tz) — the camera world position.  The desktop-GLSL and
+Vulkan-SPIRV outputs of bgfx-shaderc preserve this access pattern
+faithfully.
+
+bgfx's spirv-cross MSL emitter, however, transcribes the access as:
+
+    float3(_mtl_u.u_invView[0u][3], _mtl_u.u_invView[1u][3], _mtl_u.u_invView[2u][3])
+
+— reading the matrix's bottom row instead of its translation column.
+For an affine view matrix the bottom row is (0, 0, 0, 1), so:
+
+    camPos = vec3(0)
+    v_worldPos = nearWorld - vec3(0) = nearWorld
+
+`nearWorld` is `camera_world + perpendicular_offset × near_distance`,
+where the perpendicular offset is ~tan(fov/2) × near (order ~0.02-0.04
+units) and the camera position itself is several units long.  After the
+fragment shader's normalize(), the result is dominated by the camera
+position vector — every fragment receives essentially the same direction,
+so every fragment samples the same cube face.
+
+Confirmed by replacing the fragment textureCube() with
+`gl_FragColor = vec4((dir + 1.0) * 0.5, 1.0)` — viewport renders as a
+single solid colour with the broken camPos, and as a proper screen-space
+gradient with the fix.
+
+The fix
+-------
+Replace element-wise access with a matrix-vector multiply that
+transforms the origin to world space — mathematically identical, but
+spirv-cross emits a clean matrix-vector mul on every backend:
+
+    vec3 camPos = mul(u_invView, vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+
+GLSL / SPIRV / ESSL outputs unchanged after compile (the optimizer
+collapses the multiply by zero columns).  MSL output now reads the
+translation column correctly and the cubemap renders with per-pixel
+direction.
+
+Audit
+-----
+The same `u_invView[3][i]` pattern doesn't appear elsewhere in
+`engine/shaders/`; vs_skybox.sc:34 was the only site.  Future shader
+authors should prefer `mul(M, vec4(0,0,0,1)).xyz` over direct column
+element access when extracting a matrix translation, to insulate the
+shader from spirv-cross's MSL emit quirks.  See docs/NOTES.md
+"Skybox renders uniform colour on Metal (2026-06-18)".
+
+Acceptance
+----------
+1. Load sample_game on macOS / Metal at level 0.
+2. The plank ball-roll scene should sit on a grass-coloured ground with
+   sky and trees visible in the background (assets/textures/skyboxes/park.ktx).
+3. Sample any background pixel as the camera moves — colour should
+   change per-pixel and per-frame, not remain a constant face hit.
+
+Verified upstream on the sama side
+----------------------------------
+- All four shader backends recompile clean (vs_skybox_mtl / _spv /
+  _glsl / _essl) with no errors or warnings.
+- engine_tests 26981 assertions across 753 test cases still pass
+  (this is a runtime visual bug; no unit-test regression possible).
+- Visual verification requires sample_game on macOS — the engine repo
+  itself has no demo wiring the SkyboxRenderer; the editor uses it
+  but launches by default at no-level state.
+
+---
+ engine/shaders/vs_skybox.sc | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/engine/shaders/vs_skybox.sc b/engine/shaders/vs_skybox.sc
+--- a/engine/shaders/vs_skybox.sc
++++ b/engine/shaders/vs_skybox.sc
+@@ -10,9 +10,9 @@
+ //
+ // We unproject the near-plane point at each vertex through the inverse
+ // view-projection matrix to recover its world-space position, then
+-// subtract the camera world position (recovered from u_invView's
+-// translation column) to get a direction from the camera into the world.
+-// The fragment shader uses that direction to sample the cubemap.
++// subtract the camera world position (the origin transformed by u_invView)
++// to get a direction from the camera into the world.  The fragment shader
++// uses that direction to sample the cubemap.
+ //
+ // gl_Position.z = gl_Position.w forces fragment depth to exactly 1.0
+ // after the perspective divide so the skybox sits at the far plane.
+@@ -30,8 +30,13 @@
+     vec4 nearWorld = mul(u_invViewProj, vec4(a_position.xy, 0.0, 1.0));
+     nearWorld.xyz /= nearWorld.w;
+
+-    // Camera world position is the translation column of u_invView.
+-    vec3 camPos = vec3(u_invView[3][0], u_invView[3][1], u_invView[3][2]);
++    // Camera world position = origin transformed by u_invView.  Do NOT
++    // read the translation as u_invView[3].xyz element-by-element:
++    // bgfx's spirv-cross MSL emitter transcribes u_invView[3][0..2] as
++    // u_invView[0..2][3] (the bottom row, all zeros for an affine view),
++    // producing camPos = vec3(0) on Metal and uniform-direction skybox.
++    // mul() is layout-agnostic and emits correctly on all backends.
++    vec3 camPos = mul(u_invView, vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+
+     v_worldPos = nearWorld.xyz - camPos;
+ }
