@@ -120,6 +120,49 @@ endif()
 # (stbtt_GetGlyphShape+2680) on first ImGui::Text in several demos on
 # arm64 macOS — codegen loads the allocator pointer from the wrong
 # global. Bypassing stb_truetype avoids the crash class entirely.
+
+# bgfx patch-set staleness check.  FetchContent_Declare's PATCH_COMMAND
+# only runs on first extraction — adding new patches to an existing
+# _deps/bgfx_cmake-src/ tree silently no-ops, so consumers can ship
+# unpatched bgfx for weeks while every git pull "looks right."  This
+# bit the sample_game integrators during the 2026-06 B2 hunt.
+#
+# Fix: hash all bgfx_*.patch files and store the hash in a stamp file
+# inside the extracted source dir.  Before FetchContent_Declare runs,
+# if the extracted dir exists but the stamp is absent or hash differs,
+# wipe _deps/bgfx_cmake-{src,subbuild} so FetchContent re-extracts and
+# re-runs PATCH_COMMAND.  After FetchContent_MakeAvailable, write the
+# current hash to the stamp so the next configure can compare against it.
+#
+# Cost: one full bgfx rebuild whenever patches change (~30-60 s).
+# Acceptable because patch changes are rare and the alternative is
+# silent-wrong-binary on every consumer.
+file(GLOB SAMA_BGFX_PATCH_FILES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_*.patch")
+list(SORT SAMA_BGFX_PATCH_FILES)
+set(SAMA_BGFX_PATCH_HASH_INPUT "")
+foreach(_p ${SAMA_BGFX_PATCH_FILES})
+    file(SHA256 "${_p}" _h)
+    string(APPEND SAMA_BGFX_PATCH_HASH_INPUT "${_h}")
+endforeach()
+string(SHA256 SAMA_BGFX_PATCH_HASH "${SAMA_BGFX_PATCH_HASH_INPUT}")
+
+set(SAMA_BGFX_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/bgfx_cmake-src")
+set(SAMA_BGFX_SUBBUILD_DIR "${CMAKE_BINARY_DIR}/_deps/bgfx_cmake-subbuild")
+set(SAMA_BGFX_STAMP "${SAMA_BGFX_SRC_DIR}/.sama_patches_applied")
+set(_sama_existing_hash "")
+if(EXISTS "${SAMA_BGFX_STAMP}")
+    file(READ "${SAMA_BGFX_STAMP}" _sama_existing_hash)
+endif()
+if(EXISTS "${SAMA_BGFX_SRC_DIR}"
+   AND NOT "${_sama_existing_hash}" STREQUAL "${SAMA_BGFX_PATCH_HASH}")
+    message(STATUS "Sama: bgfx patch set hash changed (or stamp missing) — "
+                   "wiping _deps/bgfx_cmake-{src,subbuild} to force clean "
+                   "re-extract + re-patch")
+    file(REMOVE_RECURSE "${SAMA_BGFX_SRC_DIR}")
+    file(REMOVE_RECURSE "${SAMA_BGFX_SUBBUILD_DIR}")
+endif()
+
 FetchContent_Declare(
     bgfx_cmake
     GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
@@ -159,6 +202,12 @@ if(SAMA_ANDROID OR SAMA_IOS)
 else()
     FetchContent_MakeAvailable(Catch2 glm glfw bgfx_cmake cgltf JoltPhysics)
 endif()
+
+# Record the bgfx patch-set hash so the next configure can detect a
+# stale extract.  Idempotent — same hash → same file content.  See
+# the SAMA_BGFX_PATCH_HASH block above for the staleness check that
+# reads this stamp.
+file(WRITE "${SAMA_BGFX_STAMP}" "${SAMA_BGFX_PATCH_HASH}")
 
 # Suppress warnings from third-party dependencies — we don't own this code.
 # All compiled third-party targets go through FetchContent and land here.
