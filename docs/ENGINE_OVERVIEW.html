@@ -871,6 +871,33 @@ BGFX Successfully created swapchain (2251x1080) with 5 images.</pre>
   "Follow-up (2026-06-18, root cause found — SUBOPTIMAL_KHR swapchain
   rebuild loop)" for the full forensic chain.  Worth upstreaming to
   bgfx alongside the MAILBOX reorder.
+  <br><br>
+  <strong>Second trigger (still 2026-06-18):</strong> the SUBOPTIMAL
+  patch closed one rebuild trigger but didn't help on Pixel 9 —
+  team reported 648 <code>Create swapchain</code> lines over 12 s,
+  right back where we started.  Reason: a second self-sustaining
+  rebuild loop in <code>RendererContextVK::updateResolution()</code>.
+  bgfx overwrites <code>m_resolution.width/height</code> with the
+  driver-clamped actual swapchain extent (2251×1080) after every
+  <code>m_backBuffer.update</code>, but uses the same field for the
+  next-frame "did the app ask for a different size" comparison
+  against the still-2424 application request.  Mismatch → rebuild
+  → clamp to 2251 → mismatch next frame → loop forever, independent
+  of SUBOPTIMAL.
+  <br><br>
+  New patch <code>patches/bgfx_android_vk_clamped_resolution_no_recreate.patch</code>
+  adds <code>m_lastRequestedWidth/m_lastRequestedHeight</code> shadow
+  fields to <code>RendererContextVK</code>, primes them at init, sets
+  them inside the recreate block, and uses them for the next-frame
+  comparison.  <code>m_resolution.width/height</code> stays as the
+  clamped-actual value (everything that reads it for viewport sizing
+  still gets the right number); the comparison just stops mistaking
+  "driver clamped my request" for "the app asked for a new size."
+  This is the actual fix — closes <code>Create swapchain</code> count
+  to 1 and drops <code>bgfx::frameMs</code> to ~0.1 ms.  Two
+  <code>no_recreate</code> patches together describe one coherent
+  "make bgfx behave on modern Android" change; both worth upstreaming
+  alongside MAILBOX.
 </div>
 
 <details>

@@ -1,0 +1,157 @@
+From: Sama Engine <engine@local>
+Subject: [PATCH] renderer_vk: track requested resolution separately from clamped-actual
+
+Context — the second trigger
+----------------------------
+With `bgfx_android_vk_suboptimal_no_recreate.patch` in, the SUBOPTIMAL
+rebuild loop is closed.  But on Pixel 9 / Android 16 the team still
+saw 648 `Create swapchain` lines over 12 s (was ~600 before, so we're
+right back where we started).  `bgfx::frameMs` 12-19 ms, `waitRender`
+similar.
+
+The cause is a second self-sustaining rebuild loop, independent of
+SUBOPTIMAL:
+
+1. sama calls `bgfx::reset(2424, 1080)` once — `_resolution.width = 2424`
+   (the activity's `ANativeWindow_getWidth()`).
+2. `RendererContextVK::updateResolution` enters the if-block (initial
+   creation), assigns `m_resolution = _resolution` (= 2424×1080).
+3. `m_backBuffer.update(...)` creates the swapchain.  The Vulkan driver
+   clamps to 2251×1080 (the display-cutout-safe extent) because
+   `surfaceCapabilities.maxImageExtent.width` reports 2251.
+4. Per the existing comment at `renderer_vk.cpp:3025`, the renderer
+   overwrites `m_resolution.width/height` with `m_backBuffer.m_width/m_height`
+   so the rest of bgfx sees the *actual* swapchain extent.  After this,
+   `m_resolution.width = 2251`.
+5. Next frame, `updateResolution()` runs again with `_resolution.width
+   = 2424` (sama hasn't called reset again; this is just the
+   per-frame resolution propagation).  The comparison at lines 3003-3004
+   sees `m_resolution.width (2251) != _resolution.width (2424)` →
+   triggers recreate.
+6. Recreate clamps to 2251 again → `m_resolution.width = 2251` → loop.
+
+Self-sustaining; the swapchain is rebuilt every single frame for the
+entire activity lifetime.  Same cost as the SUBOPTIMAL loop:
+`vkDeviceWaitIdle` + `vkDestroySwapchainKHR` + `vkCreateSwapchainKHR`
++ image-view recreation ≈ 15 ms per frame.
+
+Why the existing code overwrites m_resolution
+---------------------------------------------
+The comment at line 3025 explains it: downstream bgfx code reads
+`m_resolution.width/height` for viewport sizing, render-target dims,
+etc.  Those need the *actual* (clamped) value, not what was requested.
+Overwriting at line 3027 is correct for that purpose.
+
+The bug is using the same field for two purposes: "what should the
+rest of bgfx see" (correct: clamped) and "did the application ask for
+something new" (incorrect: should compare against last-requested, not
+clamped-actual).
+
+The fix
+-------
+Track the un-clamped requested resolution separately from
+`m_resolution.width/height`.  Comparison in `updateResolution` uses
+the last-requested values; rest of bgfx still reads
+`m_resolution.width/height` and gets the clamped actual.
+
+Three small changes to `RendererContextVK`:
+
+  1. Add `m_lastRequestedWidth / m_lastRequestedHeight` to the struct
+     (init'd to 0 — first updateResolution() call will set them).
+  2. Prime them at init time (right after `m_resolution = _init.resolution`).
+  3. In `updateResolution`:
+     - Compare `m_lastRequestedWidth/Height` instead of
+       `m_resolution.width/height`.
+     - Inside the recreate block, store the *requested* values
+       (`_resolution.width/.height`) into the shadow BEFORE the
+       backbuffer-clamping line.
+
+Effect: the next-frame comparison sees `m_lastRequestedWidth (2424) ==
+_resolution.width (2424)` → no recreate → swapchain alive.  Clamped
+`m_resolution.width (2251)` is still what every viewport, scissor, and
+render-target sizing path in bgfx reads.  Render output is the same;
+we just stop discarding it every frame.
+
+Why option 1 (this patch) over option 2 (engine workaround)
+-----------------------------------------------------------
+The team flagged a sama-side alternative: read `bgfx::getStats()->width`
+after `reset()` and feed that back into the engine's framebuffer-dims
+check.  Works, but couples our engine to bgfx's internal clamping
+behaviour — fragile across bgfx version bumps, and any other game on
+a cutout device hits the same bug.  This patch fixes the root cause
+inside bgfx and is upstream-PR-able alongside `bgfx_android_mailbox_present.patch`
+and `bgfx_android_vk_suboptimal_no_recreate.patch`.  Three small VK-renderer
+patches together describe one coherent "make bgfx behave on modern
+Android" change.
+
+Expected impact
+---------------
+`Create swapchain` count over the activity lifetime drops from ~650 to
+1.  `bgfx::frameMs` from ~16 ms to ~0.1 ms.  Per-call timing
+(`bgfx_android_vk_call_timing.patch`) should now show all four VK
+calls in sub-ms territory.  FPS reaches panel rate.
+
+No visible artefact: the swapchain extent is the same as it has been
+all along (2251×1080, the cutout-safe area); we just stop tearing it
+down every frame.
+
+Counterpart on engine side: see `docs/NOTES.md` "Follow-up (2026-06-18,
+second trigger — clamped-vs-requested resolution rebuild loop)".
+---
+ bgfx/src/renderer_vk.cpp | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
+--- a/bgfx/src/renderer_vk.cpp
++++ b/bgfx/src/renderer_vk.cpp
+@@ -2085,6 +2085,11 @@
+ 			{
+ 				m_resolution = _init.resolution;
+ 				m_resolution.reset &= ~BGFX_RESET_INTERNAL_FORCE;
++				// Sama: prime the requested-resolution shadow so the
++				// first updateResolution() with the same dimensions
++				// doesn't false-positive a recreate.
++				m_lastRequestedWidth  = _init.resolution.width;
++				m_lastRequestedHeight = _init.resolution.height;
+
+ 				m_numWindows = 0;
+
+@@ -3000,8 +3005,8 @@
+ 			if (false
+ 			||  m_resolution.formatColor        != _resolution.formatColor
+ 			||  m_resolution.formatDepthStencil != _resolution.formatDepthStencil
+-			||  m_resolution.width              != _resolution.width
+-			||  m_resolution.height             != _resolution.height
++			||  m_lastRequestedWidth            != _resolution.width
++			||  m_lastRequestedHeight           != _resolution.height
+ 			||  m_resolution.reset              != flags
+ 			||  m_backBuffer.m_swapChain.m_needToRecreateSurface
+ 			||  m_backBuffer.m_swapChain.m_needToRecreateSwapchain)
+@@ -3015,6 +3020,12 @@
+
+ 				m_resolution = _resolution;
+ 				m_resolution.reset = flags;
++				// Sama: remember the un-clamped request so next-frame
++				// updateResolution() compares request-vs-request, not
++				// clamped-actual-vs-request (which loops forever on
++				// cutout devices where the driver permanently clamps).
++				m_lastRequestedWidth  = _resolution.width;
++				m_lastRequestedHeight = _resolution.height;
+
+ 				m_textVideoMem.resize(false, _resolution.width, _resolution.height);
+ 				m_textVideoMem.clear();
+@@ -4793,6 +4804,14 @@
+ 		StateCacheLru<VkImageView, 1024> m_imageViewCache;
+
+ 		Resolution m_resolution;
++		// Sama: track last *requested* (un-clamped) resolution separately
++		// from m_resolution.width/height (which is overwritten with the
++		// driver-clamped actual swapchain extent below).  Without this,
++		// next-frame updateResolution() compares clamped-actual against
++		// new-requested and triggers a rebuild loop on cutout devices.
++		// See patches/bgfx_android_vk_clamped_resolution_no_recreate.patch.
++		uint32_t m_lastRequestedWidth  = 0;
++		uint32_t m_lastRequestedHeight = 0;
+ 		float m_maxAnisotropy;
+ 		bool m_depthClamp;
+ 		bool m_wireframe;

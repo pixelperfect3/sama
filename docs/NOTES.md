@@ -612,6 +612,54 @@ Path 1 lands now and unblocks the team; Path 2 is the proper long-term answer wh
 
 **Upstream PR.**  Worth proposing to bgfx alongside the MAILBOX reorder.  Either ignore SUBOPTIMAL entirely or expose a flag (`BGFX_RESET_TOLERATE_SUBOPTIMAL` or similar).  Both patches share a theme: "bgfx's defaults are conservative in ways that misfire on modern Android."
 
+### Follow-up (2026-06-18, second trigger — clamped-vs-requested resolution rebuild loop)
+
+With the SUBOPTIMAL patch in, the team reported back: still 648 `Create swapchain` lines over 12 s (was ~600 before, so right back where we started).  `bgfx::frameMs` 12-19 ms, `waitRender` 11-17 ms.  SUBOPTIMAL closed one trigger; a second one independent of it was perpetuating the rebuild loop.
+
+**The second trigger.**  In `RendererContextVK::updateResolution()` (renderer_vk.cpp:2964), the comparison that decides "did the app ask for a different swapchain" is at lines 3003-3004:
+
+```cpp
+||  m_resolution.width  != _resolution.width
+||  m_resolution.height != _resolution.height
+```
+
+`m_resolution.width/height` is overwritten with the *clamped* swapchain extent at lines 3027-3028 (with an explanatory comment at line 3025: *"Update the resolution again here, as the actual width and height is now final (as it was potentially clamped by the Vulkan driver)"*).  So after a clamp, `m_resolution.width = 2251` (the cutout-safe extent).  But `_resolution.width` next frame is still 2424 (what sama asked for from `ANativeWindow_getWidth()`).  Mismatch → recreate → clamp → mismatch → loop.  Self-sustaining; SUBOPTIMAL doesn't even need to fire.
+
+The bug is using the same field for two purposes: "what should the rest of bgfx see" (correct: clamped) and "did the application ask for something new" (incorrect — should compare against last-requested, not clamped-actual).
+
+**Fix.**  New patch `patches/bgfx_android_vk_clamped_resolution_no_recreate.patch` — three small changes to `RendererContextVK`:
+
+1. Add `uint32_t m_lastRequestedWidth / m_lastRequestedHeight` to the struct (shadow the un-clamped request).
+2. Prime them at init time alongside `m_resolution`.
+3. In `updateResolution`:
+   - Compare `m_lastRequestedWidth/Height` instead of `m_resolution.width/height`.
+   - Inside the recreate block, store the *requested* values into the shadow BEFORE the backbuffer-clamping line.
+
+Next-frame comparison sees `m_lastRequestedWidth(2424) == _resolution.width(2424)` → no recreate.  `m_resolution.width(2251)` is still what every viewport / scissor / render-target sizing path in bgfx reads.
+
+**Why the bgfx patch over the engine workaround.**  The team flagged a sama-side alternative: read `bgfx::getStats()->width` after `bgfx::reset()` and feed *that* into our engine's framebuffer-dims check.  It would work for sama specifically (single line), but couples the engine to bgfx's internal clamping behaviour — fragile across bgfx version bumps, and any other game on a cutout device hits the same bug.  The bgfx patch fixes the root cause and joins the upstream PR chain alongside MAILBOX + SUBOPTIMAL.  Three small renderer_vk patches together describe one coherent "make bgfx behave on modern Android" change.
+
+**Expected.**  `Create swapchain` count drops from ~650 to 1 over the activity lifetime.  `bgfx::frameMs` from ~16 ms to ~0.1 ms.  Per-call timing from `bgfx_android_vk_call_timing.patch` should now show all four VK calls sub-ms.  FPS at panel rate.  Render output identical — clamped 2251×1080 was the correct visible area all along.
+
+**Audit of the patch surface.**  Five renderer_vk patches now:
+
+| Patch | What it does | Triggered the bug? |
+|---|---|---|
+| `bgfx_emulator_compat.patch` | Gate VK_KHR_fragment_shading_rate chaining on extension support | (Unrelated — Android emulator gfxstream crash) |
+| `bgfx_mali_shadow_fix.patch` | Mali-specific shadow rendering fix | (Unrelated) |
+| `bgfx_android_mailbox_present.patch` | Reorder present mode table so MAILBOX is checked first | Speculative fix; landed before SUBOPTIMAL was found |
+| `bgfx_android_vk_call_timing.patch` | Time vkAcquire/Submit/Present/WaitFences per-frame | Diagnostic only; stays in for future regressions |
+| `bgfx_android_vk_suboptimal_no_recreate.patch` | Treat VK_SUBOPTIMAL_KHR as success | Closed trigger 1 (every present returned SUBOPTIMAL) |
+| `bgfx_android_vk_clamped_resolution_no_recreate.patch` | Compare last-requested resolution, not clamped-actual | Closes trigger 2 (this commit) |
+
+The MAILBOX patch is still wanted — it's an unrelated improvement that lets us run "vsync-on without acquire blocking" when the panel can accept it.  The timing patch stays in.  The two `no_recreate` patches are the actual fix.
+
+**Status.**  Built clean on macOS desktop (engine_tests 26981/753 pass) and Android arm64-v8a (bgfx target).  Awaiting team's Pixel 9 verification — `adb logcat -s SamaEngineBgfx:V` should show:
+- `Create swapchain` exactly once (at init) instead of ~650 times
+- `Successfully created swapchain` exactly once
+- `SamaEngineBgfxStats` with `bgfx::frameMs` < 1 ms, FPS at panel rate
+- One `Sama: vkQueuePresentKHR returned VK_SUBOPTIMAL_KHR — treating as success` line (the SUBOPTIMAL is still happening every frame; we just stopped acting on it)
+
 ---
 
 ## Physics
