@@ -664,6 +664,35 @@ If we need per-call VK timing again later (e.g., for a future Android perf regre
 
 Also added a stamp-file staleness check to `CMakeLists.txt` (commit `1d4aac4`) so consumers automatically get a clean re-extract whenever the patch set changes — closes the bear trap that delayed this whole investigation by weeks (see the "Operational lesson" section above).
 
+### Follow-up (2026-06-18, upstream check + PR drafts)
+
+Audited all six bgfx patches we maintain against bgfx `master` HEAD:
+
+| Patch | Upstream status | Verdict |
+|---|---|---|
+| `bgfx_emulator_compat.patch` | Upstream still chains `m_deviceShadingRateImageProperties` unconditionally | Keep |
+| `bgfx_mali_shadow_fix.patch` | Upstream `colorAttachmentCount` still set unconditionally for depth-only subpass | Keep |
+| `bgfx_imgui_default_font.patch` | Upstream example imgui glue still uses `AddFontFromMemoryTTF` with embedded Roboto TTF | Keep (likely won't ever be upstreamed; example tree) |
+| `bgfx_android_mailbox_present.patch` | `s_presentMode[]` table order unchanged upstream | Keep; minor upstream-PR candidate (one-line reorder, no semantic risk) |
+| `bgfx_android_vk_suboptimal_no_recreate.patch` | Upstream still groups `SUBOPTIMAL` with `OUT_OF_DATE` in both case statements | Keep; **draft upstream PR at `docs/upstream-prs/bgfx-treat-suboptimal-as-success.md`** |
+| `bgfx_android_vk_clamped_resolution_no_recreate.patch` | Upstream still compares `m_resolution.width/height` (clamped) against `_resolution` (requested); no shadow fields | Keep; **draft upstream PR at `docs/upstream-prs/bgfx-shadow-requested-resolution.md`** |
+
+**Watch for bump-time conflicts.**  Two recent upstream commits touch the swapchain code without addressing either bug:
+
+- `1d8f6d8` (2026-06-17) "Vulkan: do not block acquiring window swap chain images"
+- `edbec2f` (2026-06-17) "Vulkan: recreate window swap chains flagged for recreation"
+
+Neither overlaps with our patches at the time of writing (verified line by line — both touch the *when* of recreation, not the *whether*).  But re-read their diffs before the next bgfx version bump; if they refactor the case-block structures the patch line numbers anchor against, our patches will need to be re-anchored or regenerated.
+
+**Upstream PR drafts.**  Two drafts in `docs/upstream-prs/`:
+
+1. `bgfx-treat-suboptimal-as-success.md` — splits `VK_SUBOPTIMAL_KHR` from `VK_ERROR_OUT_OF_DATE_KHR` in both call sites, treats SUBOPTIMAL as success.  PR description covers the spec quote ("can still be used to successfully present"), the Unreal/Unity/Godot ecosystem precedent, an alternative flag-gated design for the maintainer to consider, and the Pixel 9 / Android 16 repro with before/after metrics.
+2. `bgfx-shadow-requested-resolution.md` — adds `m_lastRequestedWidth/Height` to `RendererContextVK`, uses them for the next-frame "did the app ask for a different size" comparison.  PR description frames this as a bgfx bug regardless of platform (any device whose driver clamps swapchain extent down hits this), with Pixel 9 as the test case and three alternative-design considerations for the maintainer.
+
+Both drafts are upstream-flavoured (no `Sama:` log prefixes, generic static names like `s_suboptimalLogged`), anchored against bgfx master line numbers (not our local patched tree), and link to each other as companion fixes.  Team to review and submit when there's appetite.
+
+The MAILBOX patch is also upstream-PR-able but I haven't drafted a PR for it — the bgfx maintainer's prior decision to put FIFO first may have been deliberate (e.g., portability over perf), and the case for changing default is weaker than for SUBOPTIMAL.  Can draft if the team wants.
+
 **Status.**  Built clean on macOS desktop (engine_tests 26981/753 pass) and Android arm64-v8a (bgfx target).  Awaiting team's Pixel 9 verification — `adb logcat -s SamaEngineBgfx:V` should show:
 - `Create swapchain` exactly once (at init) instead of ~650 times
 - `Successfully created swapchain` exactly once
