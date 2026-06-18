@@ -509,6 +509,59 @@ If both appear, the configuration is correct.  Then the `SamaEngineBgfxStats` li
 
 But MAILBOX should be sufficient.  This is the most likely "right answer."
 
+### Follow-up (2026-06-18, vk per-call timing instrumentation)
+
+Team rebuilt with the MAILBOX patch and reported back: it did **not** close B2 on Pixel 9.  10 consecutive `SamaEngineBgfxStats` samples on the figure-8 level (idle ball) post-patch:
+
+```
+bgfx::frameMs = 9.21, 24.77, 10.85, 16.86, 21.47, 14.06, 16.20, 19.97, 17.91, 14.85
+mean 16.6 ms, median 17.4 ms
+```
+
+Still pinned to the vsync floor.
+
+**But MAILBOX did engage.**  The `Selected present mode` BX_TRACE line didn't surface in their logcat (`BX_CONFIG_DEBUG=0` in release builds — bgfx's `BX_TRACE` is a no-op there even when our callback is wired).  So we can't read it directly.  *But* the **9.21 ms outlier** in the sample is the giveaway: under strict FIFO, `vkAcquireNextImageKHR` blocks at panel refresh and no frame can be < ~16.7 ms at 60 Hz.  Some frames sneaking under that floor means MAILBOX is active and the compositor enforces refresh-rate gating *somewhere else* in the present pipeline.
+
+That maps directly onto the team's own fallback hypothesis 2 from the previous follow-up:
+
+> The compositor enforces refresh-rate gating at `vkQueuePresentKHR` regardless of present mode.  In that case the `present()` call blocks and the wait moves there.
+
+The mean stayed at vsync; the wait just *moved*.  Acquire is no longer the gate, but something is.
+
+Also: `dumpsys gfxinfo` shows 4 GraphicBufferAllocator entries.  After we reverted `numBackBuffers = 3`, that count is Android's surface-side BLAST Consumer triple-buffer plus one in-flight image — bgfx's default 2-deep swapchain ask plus the compositor's own buffering.  Nothing else we need to tune at the bgfx level for buffer count.
+
+**Next diagnostic.**  Time each of the four blocking Vulkan calls on the render thread individually and print every 60 frames.  New patch `patches/bgfx_android_vk_call_timing.patch` adds file-static accumulators in the bgfx VK backend at:
+
+- `SwapChainVK::acquire` → `vkAcquireNextImageKHR`
+- `CommandQueueVK::kick` → `vkQueueSubmit`
+- `CommandQueueVK::kick` (after submit, when `_wait=true`) → `vkWaitForFences`
+- `SwapChainVK::present` → `vkQueuePresentKHR`
+
+Captures each call's wall-clock via `bx::getHPCounter` and prints all four at the natural end-of-frame point inside `present()`:
+
+```
+I SamaEngineBgfx: Sama vk per-call ms: acquire=0.030 submit=0.080 waitFences=2.10 present=13.85
+```
+
+Single-frame snapshot (not a 60-frame average) — for a steady-state diagnostic the math is easier to read.  60-frame gate keeps logcat readable.  `bx::getHPCounter` is a handful of cycles; overhead is negligible against the calls being measured.
+
+**Reading the output.**
+
+| Pattern | Hypothesis | Next move |
+|---|---|---|
+| `acquire ~0 ms`, `present ~14 ms` | Compositor gates at `vkQueuePresentKHR` (the team's hypothesis 2) | Upstream of bgfx — `Surface.setFrameRate(targetFPS)` plumbing (audit's `#P2`) or `ANativeWindow_setFrameRate` with `compatibility=ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT` |
+| `acquire ~0 ms`, `present ~0 ms`, `waitFences ~14 ms` | GPU completion is the gate (not present)—`waitFences` is held until the GPU finishes the prior frame | RenderDoc Android / Android GPU Inspector capture; check `gpuTime` ≠ `gpuLatency` |
+| `acquire ~0 ms`, `present ~0 ms`, `waitFences ~0 ms`, `submit ~14 ms` | Command-buffer alloc or driver compile (rare in steady state) | Vulkan validation layer dump on driver hot path |
+| Time vanishes between calls (sum << 14 ms) | The gap is *upstream* of the four instrumented calls — bgfx internal scheduling, mutex, or `bgfx::renderFrame` API loop | Bigger instrumentation pass at the bgfx control loop layer (`bgfx_p.h` Context::renderFrame) |
+
+**Crucially: this is one APK rebuild.**  Same `Sama vk per-call ms` log line surfaces regardless of which hypothesis is correct — the team reads the four numbers from one logcat session and we know.
+
+**The Surface.setFrameRate path (audit #P2).**  If the `present ~14 ms` pattern is what we see, the answer is what the audit already flagged.  Currently `engine::rendering::TierConfig::targetFPS` is parsed and stored but no Android-side panel-rate negotiation exists.  Need to call `ANativeWindow_setFrameRate(window, targetFPS, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT)` from the platform init code after the native window is acquired and before bgfx::init.  Android 11+ negotiates a matching display mode (e.g. 60 Hz on a 120 Hz panel); below 11 it's a no-op, which is fine.  That fixes the compositor's refresh-rate gating at the source — the panel runs at the rate we asked for and `vkQueuePresentKHR` returns immediately to the cadence we want.
+
+**Tradeoff.**  Per-call timing instrumentation stays unconditional in the bgfx patch (no `#ifdef`).  Cost on the render thread per frame: 4× `bx::getHPCounter` calls + 4× subtraction + 1× modulo + (every 60 frames) one `BX_TRACE`.  Sub-microsecond.  Negligible against any frame-pacing target.  Leaving it in even after the bug is found gives us a permanent diagnostic for future Android perf regressions.
+
+The patch is appended to the existing `FetchContent_Declare(bgfx_cmake)` `PATCH_COMMAND` chain after `bgfx_android_mailbox_present.patch`.  Applied automatically on fresh fetch; idempotent.  Builds clean on macOS desktop (engine_tests 26981/753 pass) and Android arm64-v8a (bgfx target).
+
 ---
 
 ## Physics

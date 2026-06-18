@@ -817,6 +817,25 @@ logcat so integrators can verify multi-threaded is actually engaged
   "Follow-up (2026-06-18, hypothesis 1 ruled out — present mode is
   the real bug)".  PR draft to upstream the reorder to bgfx ready to
   send.
+  <br><br>
+  <strong>Update (later same day, 2026-06-18):</strong> the MAILBOX
+  patch did engage on the team's Pixel 9 (one frame in 10 came in at
+  9.21 ms — impossible under strict FIFO at 60 Hz, so MAILBOX is
+  active), but mean <code>bgfx::frameMs</code> stayed at the vsync
+  floor (~16.6 ms).  The wait <em>moved</em>: compositor enforces
+  refresh-rate gating somewhere else in the present pipeline, most
+  likely <code>vkQueuePresentKHR</code> itself.  New patch
+  <code>patches/bgfx_android_vk_call_timing.patch</code> times each
+  of the four blocking VK calls on the render thread
+  (<code>vkAcquireNextImageKHR</code>, <code>vkQueueSubmit</code>,
+  <code>vkWaitForFences</code>, <code>vkQueuePresentKHR</code>) and
+  emits one BX_TRACE per 60 frames so the team can read in logcat
+  which call is eating the budget.  If <code>present ~14 ms</code>,
+  the next move is upstream of bgfx — the audit's
+  <code>#P2 Surface.setFrameRate()</code> /
+  <code>ANativeWindow_setFrameRate</code> plumbing.  See NOTES.md
+  "Follow-up (2026-06-18, vk per-call timing instrumentation)" for
+  the full diagnostic table.
 </div>
 
 <details>
