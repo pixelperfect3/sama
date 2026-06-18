@@ -1436,6 +1436,7 @@ add_executable(engine_screenshot_tests
     tests/screenshot/TestSsHelmet.cpp
     tests/screenshot/TestSsIk.cpp
     tests/screenshot/TestSsAnimation.cpp
+    tests/screenshot/TestSsSkybox.cpp
 )
 
 target_link_libraries(engine_screenshot_tests PRIVATE
