@@ -128,6 +128,7 @@ FetchContent_Declare(
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_emulator_compat.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_mali_shadow_fix.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_imgui_default_font.patch
+                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_android_mailbox_present.patch
                    || ${CMAKE_COMMAND} -E echo "Patch already applied or not needed"
 )
 

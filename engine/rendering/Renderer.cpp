@@ -164,32 +164,16 @@ bool Renderer::init(const RendererDesc& desc)
     init.resolution.height = desc.height;
     init.resolution.reset = BGFX_RESET_VSYNC;
 
-#ifdef __ANDROID__
-    // Request triple-buffering on Android Vulkan.  bgfx's default is 2
-    // (bgfx.cpp:3764 — Resolution::numBackBuffers init list).  With only
-    // 2 swapchain images, the render thread can be at most ONE frame
-    // ahead of the SurfaceFlinger compositor before vkAcquireNextImageKHR
-    // blocks waiting for the compositor to release an image.  At 60 Hz
-    // panel refresh this manifests as ~16 ms of render-thread wait, which
-    // in turn back-pressures the game thread's bgfx::frame() handoff —
-    // exactly the symptom the integrating team measured on Pixel 9 after
-    // ruling out GPU bottleneck and vsync.
-    //
-    // bgfx clamps the requested count to [surfaceCapabilities.minImageCount,
-    // surfaceCapabilities.maxImageCount, BGFX_CONFIG_MAX_BACK_BUFFERS]
-    // (renderer_vk.cpp:7697-7713) so requesting 3 on a surface that
-    // requires fewer / allows more is safe.
-    //
-    // The decisive evidence will land in logcat under SamaEngineBgfx as
-    // a "Create swapchain numSwapChainImages N" line at init time.  If
-    // N comes back as 3 (or higher), this addresses hypothesis 1 from
-    // the 2026-06-18 investigation in docs/NOTES.md.
-    //
-    // Apple / Metal and desktop bgfx backends manage swapchain depth
-    // differently and weren't part of the reported problem, so the
-    // change is Android-only.
-    init.resolution.numBackBuffers = 3;
-#endif
+    // Attempted fix: `init.resolution.numBackBuffers = 3` on Android to
+    // request triple-buffering — reverted 2026-06-18 because it did not
+    // close the waitSubmit gap on Pixel 9.  The actual swapchain
+    // already had room (the team's bgfx trace showed numSwapChainImages
+    // ≥ 3 was being honoured) but `vkAcquireNextImageKHR` still blocks
+    // on the render thread.  Investigation moved to hypothesis 2: bgfx
+    // calls acquire inline (synchronously) on the render thread rather
+    // than feeding the acquire semaphore into the next frame's submit.
+    // See docs/NOTES.md "Follow-up (2026-06-18, hypothesis 1 ruled out)"
+    // for the next step.
 
 #ifdef __ANDROID__
     // Android Vulkan surfaces typically support RGBA8, not BGRA8 (the bgfx default).

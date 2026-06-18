@@ -441,6 +441,74 @@ Expected per-frame numbers if this hypothesis is correct:
 
 The team will report after they rebuild and try the 3-image fix.
 
+### Follow-up (2026-06-18, hypothesis 1 ruled out — present mode is the real bug)
+
+The team reported back: triple-buffering did not close the `waitSubmit` gap on Pixel 9.  bgfx's swapchain trace confirmed `numSwapChainImages` came back as 3, so the request was honoured — the gap is somewhere else.
+
+Reverted the `numBackBuffers = 3` change (it was harmless but unhelpful; one frame of input latency for no benefit isn't a tradeoff anyone would take).  Investigation moved to hypothesis 2: how bgfx invokes `vkAcquireNextImageKHR`.
+
+**Reading bgfx's Vulkan backend (`build/_deps/bgfx_cmake-src/bgfx/src/renderer_vk.cpp`):**
+
+- `SwapChainVK::acquire` (line 8167) calls `vkAcquireNextImageKHR` with `UINT64_MAX` timeout and a semaphore for GPU-side ordering.  The CPU call blocks if no image is available; the semaphore only gates GPU work that uses the image.
+- `FrameBufferVK::acquire` (line 8538) wraps that.
+- `RendererContextVK::setFrameBuffer` (line 3042) calls it whenever a view's framebuffer transitions to the backbuffer.  Per frame, that fires once at the first opaque pass.
+- Per-frame sequence on the render thread:  acquire (blocks if no image) → build commands → `vkQueueSubmit` (waits on acquire semaphore) → `vkQueuePresentKHR`.
+
+That's all standard — the bug isn't in *how* bgfx invokes acquire; it's in *which present mode it asked for*.  And the present mode picker is where the actual bug lives.
+
+**The real smoking gun.** `s_presentMode` at `renderer_vk.cpp:151`:
+
+```cpp
+static const PresentMode s_presentMode[] =
+{
+    { VK_PRESENT_MODE_FIFO_KHR,         true,  ... },  // [0] picked first when vsync=true
+    { VK_PRESENT_MODE_FIFO_RELAXED_KHR, true,  ... },  // [1]
+    { VK_PRESENT_MODE_MAILBOX_KHR,      true,  ... },  // [2] NEVER REACHED
+    { VK_PRESENT_MODE_IMMEDIATE_KHR,    false, ... },  // [3]
+};
+```
+
+`findPresentMode` (line 8104) walks this array in order, picking the first whose `vsync` field matches the requested setting.  With `BGFX_RESET_VSYNC` set (the default), `_vsync == true`, so `s_presentMode[0]` = FIFO matches immediately and the loop exits.  MAILBOX is at index `[2]` with `vsync=true` but is *never reached*.
+
+**FIFO** is the present mode where `vkAcquireNextImageKHR` blocks until SurfaceFlinger releases an image back to the swapchain.  On Android that happens at panel refresh — ~16.67 ms at 60 Hz.  The wait charges to the render thread, fills the bgfx command ring, and back-pressures the game thread's `bgfx::frame()` handoff.  Exact match for the team's 13.84 ms `waitSubmit`.
+
+**MAILBOX** would let the render thread keep submitting frames; the compositor takes the most recent at refresh and discards earlier unpresented ones.  Same no-tearing guarantee as FIFO; no blocking on acquire when the swapchain has free images.  Pixel 9 / Mali-G715 supports MAILBOX (it's a standard mode on most Android Vulkan devices, including all of Tensor G2 / G3 / G4 family).
+
+This means even when the team disabled vsync (the earlier diagnostic), bgfx fell through to `findPresentMode(false)` → looked for IMMEDIATE → not supported on Pixel 9 → fell back to `s_presentMode[0]` (FIFO with the "Defaulting to" trace at line 8161 — which we now see in logcat thanks to the wired callback).  So vsync-off was FIFO too.  Both the vsync-off result and the GPU-strip result were "FIFO blocking on acquire" — exactly the same condition.
+
+**Fix landed today.**  New patch `patches/bgfx_android_mailbox_present.patch` reorders `s_presentMode` so MAILBOX is checked first (when `vsync=true`), falling through to FIFO when the device doesn't support MAILBOX.  Also adds a `BX_TRACE` printing the selected mode so the team can verify in logcat:
+
+```
+I SamaEngineBgfx: Selected present mode: VK_PRESENT_MODE_MAILBOX_KHR (vsync requested: 1)
+```
+
+The patch is wired into the existing `FetchContent_Declare(bgfx_cmake)` `PATCH_COMMAND` chain alongside three other bgfx patches we already carry.  Applied automatically every fresh fetch; idempotent (`git apply` no-ops on already-applied patches).
+
+**Why this isn't just `init.resolution.reset &= ~BGFX_RESET_VSYNC`.**  Without `BGFX_RESET_VSYNC`, bgfx looks for IMMEDIATE (true tearing).  If the device doesn't support IMMEDIATE — which Android Vulkan rarely does — it falls back to FIFO anyway.  IMMEDIATE also gives screen tearing, which we don't want in production.  MAILBOX gives the throughput of vsync-off without tearing.
+
+**Tradeoff.**  MAILBOX renders more frames than the panel can display; the discarded ones are GPU work that produced no pixels.  For a frame that genuinely fits in the vsync period, MAILBOX renders one and the next acquire returns immediately — same effective throughput as FIFO would have.  For a frame that doesn't fit, MAILBOX renders as fast as the GPU allows, the compositor takes the most recent at refresh, and the game thread can keep submitting.  Result: same wall-clock per frame as FIFO when the GPU is fast enough, faster when it isn't.  Power cost: MAILBOX can draw the GPU into rendering frames that are discarded — for a battery-sensitive game this matters, and MAILBOX shouldn't be the default if the engine is targeting "draw exactly one frame per refresh."  The integrating team's game is GPU-bound enough that this isn't the dominant power draw; the audit's `#P2` `Surface.setFrameRate(30)` plumbing is the better long-term answer for power.
+
+**Upstreaming.**  The reorder is a one-line semantic improvement; worth a PR to bgfx upstream.  Open question for the maintainer: why was MAILBOX originally placed after FIFO?  The most charitable reading is "FIFO is universally supported, so prefer it for portability" — but the search-by-vsync-flag pattern means MAILBOX is never selected even on devices that support it, which is the worst of both worlds.  PR draft message + the patch are ready to send.
+
+**What happens next.**  Team rebuilds against `main`, runs once, captures `adb logcat -s SamaEngineBgfx` from init through a steady-state 5 s sample.  Two lines to look for:
+
+```
+I SamaEngineBgfx: Selected present mode: VK_PRESENT_MODE_MAILBOX_KHR (vsync requested: 1)
+I SamaEngineBgfx: Create swapchain numSwapChainImages 3, ...
+```
+
+If both appear, the configuration is correct.  Then the `SamaEngineBgfxStats` line every 120 frames will show whether `waitSubmit` dropped:
+
+- Hypothesis 1+2 confirmed dead, **hypothesis 2 was about how bgfx invokes acquire and the answer is "fine"** — the bug was in the present mode picker.
+- Expected new numbers: `waitSubmit` → small fraction of a ms (no longer vsync-bounded), `bgfx::frameMs` → close to hand-off cost, FPS → panel limit, GPU utilisation visibly higher (because MAILBOX may render more frames than the panel displays).
+
+**If MAILBOX still doesn't help.**  Three remaining possibilities:
+1. Pixel 9's MAILBOX implementation has a bug where it still acquires synchronously (unlikely but possible on early Tensor drivers).
+2. The compositor enforces refresh-rate gating at `vkQueuePresentKHR` regardless of present mode.  In that case the `present()` call blocks and the wait moves there — visible in a frame-pacing trace.
+3. The acquire-semaphore-into-next-submit pattern that bgfx uses is correct but something else upstream of acquire (image layout transition?  fence wait?  command buffer alloc?) is the actual blocker — would need a Vulkan frame capture (RenderDoc Android / Android GPU Inspector) to see.
+
+But MAILBOX should be sufficient.  This is the most likely "right answer."
+
 ---
 
 ## Physics

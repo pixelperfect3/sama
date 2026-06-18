@@ -788,29 +788,35 @@ logcat so integrators can verify multi-threaded is actually engaged
 (rules out a silent fallback before investigating back-pressure).</p>
 
 <div class="thirty" style="border-color:#c97a4a;background:#fff5e6">
-  <strong>Honesty flag — investigation closed.</strong>  Multi-threaded
-  mode <em>was</em> engaged the whole time; the conclusive bgfx trace
-  routed through our new <code>BgfxLogcatCallback</code> confirmed it.
-  Real root cause: bgfx defaults <code>Resolution::numBackBuffers = 2</code>
-  (<code>bgfx.cpp:3764</code>).  With a 2-image swapchain on Android
-  Vulkan the render thread can be at most ONE frame ahead of
-  SurfaceFlinger; the next <code>vkAcquireNextImageKHR</code> blocks
-  ~16 ms waiting for the compositor to release an image.  That wait
-  shows up on the render thread, fills the bgfx ring, and back-pressures
-  the game thread's <code>bgfx::frame()</code> handoff — producing the
-  team's measured 13.84 ms <code>waitSubmit</code>.  Fix landed today:
-  <code>Renderer.cpp:167-192</code> requests <code>numBackBuffers = 3</code>
-  on Android (triple-buffering).  Tradeoff: one frame of additional
-  input latency (~16 ms at 60 Hz).  Acceptable for the engine's
-  PBR-heavy 3D workload; for input-sensitive games we'd expose the
-  count via <code>EngineDesc</code>.  Earlier vsync-off and GPU-strip
-  diagnostics were both red herrings — SurfaceFlinger paces at panel
-  refresh independent of bgfx's present-mode request, and dropping
-  GPU work doesn't free swapchain images faster.  See
-  <code>docs/NOTES.md</code> "Follow-up (2026-06-18, conclusive)" for
-  the full forensic chain and the two remaining hypotheses (semaphore-
-  driven acquire pipeline / Choreographer cadence floor) if 3 images
-  doesn't fully close the gap.
+  <strong>Honesty flag — investigation closed (for real this time).</strong>
+  Multi-threaded mode is engaged; swapchain depth is fine.  The actual
+  bug is in bgfx's present-mode selection — <code>s_presentMode</code>
+  at <code>renderer_vk.cpp:151</code> lists FIFO first with
+  <code>vsync=true</code>, and <code>findPresentMode</code> picks the
+  first vsync-matching entry, so MAILBOX (also <code>vsync=true</code>
+  but at index <code>[2]</code>) is never reached on Android Vulkan
+  even when the device supports it.  FIFO blocks
+  <code>vkAcquireNextImageKHR</code> until SurfaceFlinger releases an
+  image at panel refresh (~16.67 ms at 60 Hz); MAILBOX wouldn't.
+  Reordering the table so MAILBOX comes first is a one-line semantic
+  improvement that fits naturally as a patch.  Landed today:
+  <code>patches/bgfx_android_mailbox_present.patch</code> applied via
+  the existing <code>FetchContent_Declare(bgfx_cmake) PATCH_COMMAND</code>
+  chain.  Also adds a <code>BX_TRACE</code> printing the selected mode
+  so it's visible in logcat (routed through our
+  <code>BgfxLogcatCallback</code> from §5a above).  Expected: team
+  rebuilds, sees <code>"Selected present mode:
+  VK_PRESENT_MODE_MAILBOX_KHR"</code> at init,
+  <code>waitSubmit</code> drops from ~14 ms to sub-ms,
+  <code>bgfx::frameMs</code> collapses to hand-off cost, FPS reaches
+  panel limit.  Earlier hypotheses (silent single-threaded fallback,
+  GPU bottleneck, swapchain depth) all dead.  The
+  <code>numBackBuffers = 3</code> change from the prior commit was
+  reverted — harmless but unhelpful (one frame of input latency for no
+  benefit).  Full forensic chain in <code>docs/NOTES.md</code>
+  "Follow-up (2026-06-18, hypothesis 1 ruled out — present mode is
+  the real bug)".  PR draft to upstream the reorder to bgfx ready to
+  send.
 </div>
 
 <details>

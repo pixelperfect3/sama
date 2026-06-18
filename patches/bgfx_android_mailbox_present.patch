@@ -1,0 +1,65 @@
+From: Sama Engine <engine@local>
+Subject: [PATCH] renderer_vk: prefer MAILBOX over FIFO when vsync requested
+
+Context
+-------
+bgfx's findPresentMode walks s_presentMode in order, picking the first
+mode whose vsync flag matches the requested setting.  With the original
+table, VK_PRESENT_MODE_FIFO_KHR is at index [0] with vsync=true, so it
+is always picked when BGFX_RESET_VSYNC is set.  VK_PRESENT_MODE_MAILBOX_KHR
+sits at index [2] with vsync=true but is never reached.
+
+FIFO blocks vkAcquireNextImageKHR until SurfaceFlinger releases an image
+back to the swapchain, which on Android happens at panel refresh — ~16.67
+ms at 60 Hz.  This wait charges to the render thread (call site
+SwapChainVK::acquire), fills bgfx's command ring, and back-pressures the
+game thread's bgfx::frame() handoff, capping per-frame wall-clock at the
+vsync period regardless of GPU work.
+
+MAILBOX allows the render thread to keep submitting frames; the
+compositor takes the most recent one at refresh and discards earlier
+unpresented ones.  No tearing (still synchronized at refresh), no
+acquire blocking when the swapchain has free images.
+
+The cure
+--------
+Reorder s_presentMode so MAILBOX is checked before FIFO.  findPresentMode
+will now pick MAILBOX when (a) BGFX_RESET_VSYNC is requested AND (b) the
+device reports MAILBOX support; falls through to FIFO otherwise.
+
+Also adds a BX_TRACE printing the selected mode so the integrating team
+can verify the patch took effect via logcat (the bgfx callback we wire
+up in engine/rendering/Renderer.cpp routes BX_TRACE to the
+SamaEngineBgfx tag on Android).
+
+Decision documented in docs/NOTES.md "Follow-up (2026-06-18, present
+mode investigation)".
+
+---
+ bgfx/src/renderer_vk.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
+--- a/bgfx/src/renderer_vk.cpp
++++ b/bgfx/src/renderer_vk.cpp
+@@ -150,9 +150,9 @@ VK_IMPORT_DEVICE
+
+ 	static const PresentMode s_presentMode[] =
+ 	{
++		{ VK_PRESENT_MODE_MAILBOX_KHR,      true,  "VK_PRESENT_MODE_MAILBOX_KHR"      },
+ 		{ VK_PRESENT_MODE_FIFO_KHR,         true,  "VK_PRESENT_MODE_FIFO_KHR"         },
+ 		{ VK_PRESENT_MODE_FIFO_RELAXED_KHR, true,  "VK_PRESENT_MODE_FIFO_RELAXED_KHR" },
+-		{ VK_PRESENT_MODE_MAILBOX_KHR,      true,  "VK_PRESENT_MODE_MAILBOX_KHR"      },
+ 		{ VK_PRESENT_MODE_IMMEDIATE_KHR,    false, "VK_PRESENT_MODE_IMMEDIATE_KHR"    },
+ 	};
+
+@@ -8160,6 +8160,9 @@ VK_IMPORT_DEVICE
+ 			BX_TRACE("Present mode not found! Defaulting to %s.", s_presentMode[idx].name);
+ 		}
+
++		BX_TRACE("Selected present mode: %s (vsync requested: %d)",
++			s_presentMode[idx].name, _vsync);
++
+ 		return idx;
+ 	}
+
