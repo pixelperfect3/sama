@@ -648,11 +648,21 @@ Next-frame comparison sees `m_lastRequestedWidth(2424) == _resolution.width(2424
 | `bgfx_emulator_compat.patch` | Gate VK_KHR_fragment_shading_rate chaining on extension support | (Unrelated — Android emulator gfxstream crash) |
 | `bgfx_mali_shadow_fix.patch` | Mali-specific shadow rendering fix | (Unrelated) |
 | `bgfx_android_mailbox_present.patch` | Reorder present mode table so MAILBOX is checked first | Speculative fix; landed before SUBOPTIMAL was found |
-| `bgfx_android_vk_call_timing.patch` | Time vkAcquire/Submit/Present/WaitFences per-frame | Diagnostic only; stays in for future regressions |
+| ~~`bgfx_android_vk_call_timing.patch`~~ | ~~Time vkAcquire/Submit/Present/WaitFences per-frame~~ | Reverted post-B2 close (see below) — was diagnostic only |
 | `bgfx_android_vk_suboptimal_no_recreate.patch` | Treat VK_SUBOPTIMAL_KHR as success | Closed trigger 1 (every present returned SUBOPTIMAL) |
 | `bgfx_android_vk_clamped_resolution_no_recreate.patch` | Compare last-requested resolution, not clamped-actual | Closes trigger 2 (this commit) |
 
-The MAILBOX patch is still wanted — it's an unrelated improvement that lets us run "vsync-on without acquire blocking" when the panel can accept it.  The timing patch stays in.  The two `no_recreate` patches are the actual fix.
+The MAILBOX patch is still wanted — it's an unrelated improvement that lets us run "vsync-on without acquire blocking" when the panel can accept it (and it's what gave the integration team the 120 Hz auto-promotion on Pixel 9).  The two `no_recreate` patches are the actual fix.
+
+### Follow-up (2026-06-18, call-timing patch reverted)
+
+After B2 closed cleanly with just the SUBOPTIMAL + clamped-resolution patches, integration team feedback flagged the timing patch as no-longer-pulling-weight: it served its purpose as a diagnostic but every shipped APK with `BX_CONFIG_DEBUG=ON` now pays for the BX_TRACE format-string + logcat write every 60 frames, plus the file-static accumulators on the render thread hot path.  Even with `BX_CONFIG_DEBUG=OFF` the four `bx::getHPCounter` calls per frame are wasted cycles when we're no longer diagnosing.
+
+Reverted `bgfx_android_vk_call_timing.patch` entirely from the chain (`patches/` directory and `CMakeLists.txt` PATCH_COMMAND).  Suboptimal patch's hunk 1 (which previously anchored against the timing patch's added context) regenerated to anchor against the pristine `s_presentMode` table closing brace.  The shadow-bool `s_samaSuboptimalLogged` now sits alone — no dependency on prior patches.
+
+If we need per-call VK timing again later (e.g., for a future Android perf regression), this patch is in git history at commit `4a024e8` and can be cherry-picked back onto the chain.  Trade-off is correct for now: production builds shouldn't carry diagnostic instrumentation that isn't being read.
+
+Also added a stamp-file staleness check to `CMakeLists.txt` (commit `1d4aac4`) so consumers automatically get a clean re-extract whenever the patch set changes — closes the bear trap that delayed this whole investigation by weeks (see the "Operational lesson" section above).
 
 **Status.**  Built clean on macOS desktop (engine_tests 26981/753 pass) and Android arm64-v8a (bgfx target).  Awaiting team's Pixel 9 verification — `adb logcat -s SamaEngineBgfx:V` should show:
 - `Create swapchain` exactly once (at init) instead of ~650 times

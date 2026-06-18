@@ -94,15 +94,15 @@ Counterpart commit on engine side documents the diagnostic and the
 decision; see docs/NOTES.md "Follow-up (2026-06-18, root cause found
 — SUBOPTIMAL_KHR swapchain rebuild loop)".
 ---
- bgfx/src/renderer_vk.cpp | 32 +++++++++++++++++++++++++++++---
- 1 file changed, 29 insertions(+), 3 deletions(-)
+ bgfx/src/renderer_vk.cpp | 38 ++++++++++++++++++++++++++++++++++----
+ 1 file changed, 34 insertions(+), 4 deletions(-)
 
 diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
 --- a/bgfx/src/renderer_vk.cpp
 +++ b/bgfx/src/renderer_vk.cpp
-@@ -165,6 +165,13 @@
- 	static int64_t  s_samaVkPresentNs    = 0;
- 	static uint32_t s_samaVkFrameCount   = 0;
+@@ -156,6 +156,13 @@
+ 		{ VK_PRESENT_MODE_IMMEDIATE_KHR,    false, "VK_PRESENT_MODE_IMMEDIATE_KHR"    },
+ 	};
 
 +	// Sama suboptimal-as-success diagnostic — see
 +	// patches/bgfx_android_vk_suboptimal_no_recreate.patch.
@@ -114,7 +114,7 @@ diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
  #define VK_IMPORT_FUNC(_optional, _func) PFN_##_func _func
  #define VK_IMPORT_INSTANCE_FUNC VK_IMPORT_FUNC
  #define VK_IMPORT_DEVICE_FUNC   VK_IMPORT_FUNC
-@@ -8227,10 +8234,23 @@
+@@ -8216,10 +8223,23 @@
  				return false;
 
  			case VK_ERROR_OUT_OF_DATE_KHR:
@@ -139,7 +139,7 @@ diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
  			default:
  				BX_ASSERT(VK_SUCCESS == result, "vkAcquireNextImageKHR(...); VK error 0x%x: %s", result, getName(result) );
  				return false;
-@@ -8312,10 +8332,25 @@
+@@ -8282,10 +8302,25 @@
  				break;
 
  			case VK_ERROR_OUT_OF_DATE_KHR:

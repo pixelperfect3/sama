@@ -172,7 +172,6 @@ FetchContent_Declare(
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_mali_shadow_fix.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_imgui_default_font.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_android_mailbox_present.patch
-                   ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_android_vk_call_timing.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_android_vk_suboptimal_no_recreate.patch
                    ${CMAKE_CURRENT_SOURCE_DIR}/patches/bgfx_android_vk_clamped_resolution_no_recreate.patch
                    || ${CMAKE_COMMAND} -E echo "Patch already applied or not needed"
