@@ -1,0 +1,168 @@
+From: Sama Engine <engine@local>
+Subject: [PATCH] renderer_vk: treat VK_SUBOPTIMAL_KHR as success, do not recreate swapchain
+
+Context — the actual bug
+------------------------
+After every prior hypothesis (vsync, GPU work, swapchain depth, present
+mode, per-call timing) the team's first capture with BX_TRACE actually
+firing surfaced the real problem in two lines of logcat repeating every
+15-17 ms for the entire activity lifetime:
+
+  BGFX vkQueuePresentKHR(...): result = VK_SUBOPTIMAL_KHR
+  BGFX Create swapchain numSwapChainImages 5, ...
+  BGFX Successfully created swapchain (2251x1080) with 5 images.
+
+bgfx tears down and recreates the swapchain on EVERY frame because
+Pixel 9 / Android 16 returns VK_SUBOPTIMAL_KHR from every
+vkQueuePresentKHR.  The cost is vkDeviceWaitIdle + vkDestroySwapchainKHR
++ vkCreateSwapchainKHR + image-view recreation per frame, ~15 ms.  That
+is what every prior measurement was capturing — backbuffer count,
+present mode, GPU work all irrelevant because the swapchain dies
+immediately after the frame ships, all that work is thrown away.
+
+Almost certainly Pixel 9's display-cutout situation: activity drawable
+region is 2251×1080 (visible in dumpsys SurfaceFlinger as
+displayCutoutSafeInsets=Rect(173, 0 - 0, 0)), but the Vulkan surface's
+currentExtent reports 2424×1080 (full panel).  Swapchain created at
+the smaller activity-region size perpetually SUBOPTIMALs against the
+surface's preferred extent.  Rebuilding does NOT clear the flag —
+the next present returns SUBOPTIMAL again, and the next, forever.
+
+Why bgfx does this by default
+-----------------------------
+The Vulkan spec lumps SUBOPTIMAL_KHR with OUT_OF_DATE_KHR as "swapchain
+needs attention."  OUT_OF_DATE_KHR is a hard error (the swapchain
+genuinely cannot continue to be used and MUST be recreated).
+SUBOPTIMAL_KHR is a soft hint ("the surface has a preferred config
+your swapchain doesn't match; the present operation completed
+successfully but you might want to rebuild eventually").  bgfx's
+present-result switch treats both identically — conservative for
+correctness, catastrophic for performance on devices like Pixel 9 where
+SUBOPTIMAL is permanent.
+
+The fix
+-------
+Split the cases in both call sites:
+
+  SwapChainVK::acquire    (line ~8225): vkAcquireNextImageKHR result
+  SwapChainVK::present    (line ~8307): vkQueuePresentKHR result
+
+VK_ERROR_OUT_OF_DATE_KHR keeps the existing behaviour (set
+m_needToRecreateSwapchain, return false on acquire).
+VK_SUBOPTIMAL_KHR becomes a separate case: treat as VK_SUCCESS, emit
+a one-shot BX_TRACE so the team can confirm it triggered without
+flooding logcat (file-static s_samaSuboptimalLogged covers both
+sites — one log line per process lifetime).
+
+The frame WAS acquired / presented correctly.  Rendering continues at
+the activity-region resolution we asked for (2251×1080), which is the
+correct visible area.  We accept "the surface technically allows a
+larger swapchain but we chose smaller" forever — that is correct,
+intentional, and what the cutout-safe rendering pipeline requires.
+
+Expected impact
+---------------
+bgfx::frameMs drops from ~16 ms (vsync-pinned by per-frame recreation)
+to ~0.1 ms — the original team estimate.  Per-call timing from the
+prior patch should now show all four Vulkan calls in sub-ms territory.
+FPS reaches panel limit.  No visible artefact: the 2251×1080
+activity-region was the correct render target all along; we just stop
+discarding our work every frame.
+
+Why this is correct, not just a workaround
+------------------------------------------
+The Vulkan spec explicitly allows applications to keep using a
+swapchain that returns SUBOPTIMAL_KHR (VkSwapchainKHR(3) and the Vulkan
+Guide both confirm).  Most production engines (Unreal, Unity, Godot)
+ignore SUBOPTIMAL — it is the standard pattern.  bgfx's conservative
+"always rebuild" is the outlier and predates platforms where SUBOPTIMAL
+became permanent.  Worth proposing upstream alongside the MAILBOX
+reorder — either ignore SUBOPTIMAL entirely or expose a flag.
+
+A more invasive "correct" fix would create the swapchain at the
+surface's currentExtent (2424×1080) and use viewport+scissor to render
+only inside the cutout-safe area.  That avoids the SUBOPTIMAL flag at
+the source but requires platform-side knowledge of cutout insets being
+plumbed into the renderer, and pays the cost of allocating swapchain
+images we never use.  Worth doing eventually for cutout-aware
+rendering (status bar reveal, edge-to-edge fullscreen), but blocks on
+plumbing we don't yet have.  Treating SUBOPTIMAL as success is the
+right fix today; the cutout-aware swapchain is the right fix for the
+future and they don't conflict.
+
+Counterpart commit on engine side documents the diagnostic and the
+decision; see docs/NOTES.md "Follow-up (2026-06-18, root cause found
+— SUBOPTIMAL_KHR swapchain rebuild loop)".
+---
+ bgfx/src/renderer_vk.cpp | 32 +++++++++++++++++++++++++++++---
+ 1 file changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/bgfx/src/renderer_vk.cpp b/bgfx/src/renderer_vk.cpp
+--- a/bgfx/src/renderer_vk.cpp
++++ b/bgfx/src/renderer_vk.cpp
+@@ -165,6 +165,13 @@
+ 	static int64_t  s_samaVkPresentNs    = 0;
+ 	static uint32_t s_samaVkFrameCount   = 0;
+
++	// Sama suboptimal-as-success diagnostic — see
++	// patches/bgfx_android_vk_suboptimal_no_recreate.patch.
++	// One-shot trace gate so logcat doesn't flood when the surface
++	// reports SUBOPTIMAL every frame (Pixel 9 / Android 16 display
++	// cutout behaviour).
++	static bool s_samaSuboptimalLogged = false;
++
+ #define VK_IMPORT_FUNC(_optional, _func) PFN_##_func _func
+ #define VK_IMPORT_INSTANCE_FUNC VK_IMPORT_FUNC
+ #define VK_IMPORT_DEVICE_FUNC   VK_IMPORT_FUNC
+@@ -8227,10 +8234,23 @@
+ 				return false;
+
+ 			case VK_ERROR_OUT_OF_DATE_KHR:
+-			case VK_SUBOPTIMAL_KHR:
+ 				m_needToRecreateSwapchain = true;
+ 				return false;
+
++			case VK_SUBOPTIMAL_KHR:
++				// SUBOPTIMAL is a hint, not an error — the frame WAS
++				// acquired; the surface just has a preferred config
++				// the swapchain doesn't match.  On Pixel 9 / Android 16
++				// the display cutout makes this permanent: rebuilding
++				// the swapchain doesn't fix it, just thrashes.
++				// Treat as success; log once.
++				if (!s_samaSuboptimalLogged)
++				{
++					BX_TRACE("Sama: vkAcquireNextImageKHR returned VK_SUBOPTIMAL_KHR — treating as success (will not recreate swapchain)");
++					s_samaSuboptimalLogged = true;
++				}
++				break;
++
+ 			default:
+ 				BX_ASSERT(VK_SUCCESS == result, "vkAcquireNextImageKHR(...); VK error 0x%x: %s", result, getName(result) );
+ 				return false;
+@@ -8312,10 +8332,25 @@
+ 				break;
+
+ 			case VK_ERROR_OUT_OF_DATE_KHR:
+-			case VK_SUBOPTIMAL_KHR:
+ 				m_needToRecreateSwapchain = true;
+ 				break;
+
++			case VK_SUBOPTIMAL_KHR:
++				// SUBOPTIMAL means the frame WAS presented; the
++				// surface just reports a preferred config that
++				// doesn't match the swapchain.  Pixel 9 / Android 16
++				// reports this every frame due to display-cutout
++				// inset mismatch — rebuilding the swapchain costs
++				// vkDeviceWaitIdle + destroy + create + image views
++				// every frame and does NOT clear the SUBOPTIMAL flag.
++				// Treat as success; log once.
++				if (!s_samaSuboptimalLogged)
++				{
++					BX_TRACE("Sama: vkQueuePresentKHR returned VK_SUBOPTIMAL_KHR — treating as success (will not recreate swapchain)");
++					s_samaSuboptimalLogged = true;
++				}
++				break;
++
+ 			default:
+ 				BX_ASSERT(VK_SUCCESS == result, "vkQueuePresentKHR(...); VK error 0x%x: %s", result, getName(result) );
+ 				break;

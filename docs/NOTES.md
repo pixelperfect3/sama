@@ -562,6 +562,56 @@ Single-frame snapshot (not a 60-frame average) — for a steady-state diagnostic
 
 The patch is appended to the existing `FetchContent_Declare(bgfx_cmake)` `PATCH_COMMAND` chain after `bgfx_android_mailbox_present.patch`.  Applied automatically on fresh fetch; idempotent.  Builds clean on macOS desktop (engine_tests 26981/753 pass) and Android arm64-v8a (bgfx target).
 
+### Follow-up (2026-06-18, root cause found — SUBOPTIMAL_KHR swapchain rebuild loop)
+
+Team rebuilt with `-DBX_CONFIG_DEBUG=ON` so bgfx's BX_TRACE actually fires (it's a no-op in release; the wired callback was correct but had nothing to route).  The first capture surfaced the real bug in two lines of logcat repeating every 15-17 ms for the entire activity lifetime:
+
+```
+SamaEngineBgfx: BGFX vkQueuePresentKHR(...): result = VK_SUBOPTIMAL_KHR
+SamaEngineBgfx: BGFX Create swapchain numSwapChainImages 5, minImageCount 5, BX_COUNTOF(m_backBufferColorImage) 10
+SamaEngineBgfx: BGFX Successfully created swapchain (2251x1080) with 5 images.
+```
+
+**bgfx tears down and recreates the entire swapchain on every single frame** because Pixel 9 / Android 16 returns `VK_SUBOPTIMAL_KHR` from every `vkQueuePresentKHR`.  Cost: `vkDeviceWaitIdle` + `vkDestroySwapchainKHR` + `vkCreateSwapchainKHR` + image-view recreation per frame ≈ 15 ms.  **That is what every prior measurement was capturing.**  Backbuffer count, present mode, GPU stripping — all irrelevant because the swapchain dies the instant after the frame ships and the work is thrown away.
+
+Why every prior fix failed:
+- Triple-buffer (#6a0cd65) — fresh swapchain still rebuilt next frame
+- MAILBOX (#089fe5b) — fresh swapchain still rebuilt next frame
+- Per-call timing (#4a024e8) — would have shown the time inside present, but the real cost is the `recreateSwapchain` path AFTER present returns
+
+**Why SUBOPTIMAL is permanent on Pixel 9 / Android 16.**  Almost certainly the display-cutout situation: activity drawable region is 2251×1080 (visible in `dumpsys SurfaceFlinger` as `displayCutoutSafeInsets=Rect(173, 0 - 0, 0)`), but the Vulkan surface's `currentExtent` reports the full panel `2424×1080`.  Swapchain created at the smaller activity-region size perpetually SUBOPTIMALs against the surface's preferred extent.  Rebuilding does NOT clear the flag — the new swapchain is still at the smaller size, the next present returns SUBOPTIMAL again, and we loop forever.
+
+Also: `numSwapChainImages` came back as 5 (not the 3 we'd asked for in the earlier #R7 attempt) because Pixel 9's `minImageCount` is 4.  Our `numBackBuffers=3` setting was overridden by the device requirement.  Independent of the bug — but explains why that earlier diagnostic showed no win.
+
+**The fix.**  New patch `patches/bgfx_android_vk_suboptimal_no_recreate.patch` splits the present-result and acquire-result switches in `renderer_vk.cpp`:
+
+- `VK_ERROR_OUT_OF_DATE_KHR` — keep existing behaviour (must recreate)
+- `VK_SUBOPTIMAL_KHR` — treat as `VK_SUCCESS`, log once, don't recreate
+
+One-shot trace gated by a file-static bool so logcat surfaces "we hit SUBOPTIMAL once and chose to ignore it" without flooding the log when the surface reports SUBOPTIMAL every frame.
+
+**Why this is correct, not just a workaround.**  The Vulkan spec explicitly allows applications to keep using a swapchain that returns `VK_SUBOPTIMAL_KHR` (VkSwapchainKHR(3) man page, Vulkan Guide).  It's the *standard* pattern — Unreal, Unity, Godot all ignore SUBOPTIMAL by default.  bgfx's conservative "always rebuild" is the outlier; it predates platforms where SUBOPTIMAL became permanent.  The frame was acquired / presented correctly, just to a swapchain the surface considers non-ideal.  Rendering at 2251×1080 is what we want — that's the cutout-safe area.  We accept "surface technically allows larger" forever; the visible output is identical to a non-suboptimal pass.
+
+**Two-paths analysis.**
+
+| Path | Description | Cost | Verdict |
+|---|---|---|---|
+| 1 (this patch) | Treat SUBOPTIMAL as success in bgfx | 2-line semantic split in 2 case statements | Right answer today |
+| 2 (eventual) | Create swapchain at `currentExtent` (full panel), use viewport+scissor to crop to cutout-safe area | Plumb cutout insets from Android platform layer to renderer; allocate larger swapchain images we never sample | Right answer for future cutout-aware rendering (status bar reveal, edge-to-edge) |
+
+Path 1 lands now and unblocks the team; Path 2 is the proper long-term answer when we add cutout-aware fullscreen.  They don't conflict.
+
+**Expected impact.**  `bgfx::frameMs` drops from ~16 ms (vsync-pinned by per-frame recreation cost) to ~0.1 ms — the original docs claim.  Per-call timing from #4a024e8 should now show all four Vulkan calls in sub-ms territory.  FPS reaches panel limit (60 Hz; or 120 Hz if `Surface.setFrameRate(120)` is plumbed via audit's #P2).  No visible artefact: the 2251×1080 activity-region was the correct render target all along; we just stop discarding our work every frame.
+
+**Honesty about hypothesis tree.**  Looking back at the prior follow-ups, the actual bug was *not* in any of the five enumerated hypotheses (vsync / GPU / silent single-threaded fallback / swapchain depth / present mode).  It was a hidden sixth: "bgfx's response to a soft-hint result code is a hard rebuild."  The per-call timing patch (#4a024e8) was a step in the right direction — it would have revealed the cost as soon as we surfaced "present completes in 0.1 ms but the next frame's acquire takes 15 ms because the swapchain just got destroyed and recreated."  In hindsight the right starting move from day one would have been "look at every BX_TRACE bgfx emits at init and per frame" — which only worked once the team flipped `BX_CONFIG_DEBUG=ON`.  Logging gates that silence themselves in release builds are how production engines hide bugs from themselves.
+
+**Status.**  Patch wired into the `FetchContent_Declare(bgfx_cmake)` `PATCH_COMMAND` chain after the timing patch.  Builds clean on macOS desktop (engine_tests 26981/753 pass) and Android arm64-v8a (bgfx target).  Awaiting team's verification on Pixel 9 — single `adb logcat -s SamaEngineBgfx:V` capture should show:
+- One `Sama: vkQueuePresentKHR returned VK_SUBOPTIMAL_KHR — treating as success` line
+- `SamaEngineBgfxStats` showing `bgfx::frameMs` < 1 ms, `waitSubmit` ~ 0, FPS at panel rate
+- No more `Create swapchain` / `Successfully created swapchain` repeating
+
+**Upstream PR.**  Worth proposing to bgfx alongside the MAILBOX reorder.  Either ignore SUBOPTIMAL entirely or expose a flag (`BGFX_RESET_TOLERATE_SUBOPTIMAL` or similar).  Both patches share a theme: "bgfx's defaults are conservative in ways that misfire on modern Android."
+
 ---
 
 ## Physics

@@ -836,6 +836,41 @@ logcat so integrators can verify multi-threaded is actually engaged
   <code>ANativeWindow_setFrameRate</code> plumbing.  See NOTES.md
   "Follow-up (2026-06-18, vk per-call timing instrumentation)" for
   the full diagnostic table.
+  <br><br>
+  <strong>Root cause found (still 2026-06-18):</strong> the team
+  flipped <code>BX_CONFIG_DEBUG=ON</code> so bgfx's <code>BX_TRACE</code>
+  actually fires (it's a no-op in release; the wired callback was
+  correct but had nothing to route).  First capture surfaced the
+  real bug as two lines repeating every 15-17 ms for the entire
+  activity lifetime:
+  <pre style="background:#fafafa; padding:8px; font-size:0.85em">
+BGFX vkQueuePresentKHR(...): result = VK_SUBOPTIMAL_KHR
+BGFX Successfully created swapchain (2251x1080) with 5 images.</pre>
+  bgfx tears down and recreates the swapchain on <em>every single
+  frame</em> because Pixel 9 / Android 16 returns
+  <code>VK_SUBOPTIMAL_KHR</code> from every
+  <code>vkQueuePresentKHR</code> (display-cutout inset mismatch:
+  activity drawable region 2251×1080 vs surface
+  <code>currentExtent</code> 2424×1080).  Cost: <code>vkDeviceWaitIdle</code>
+  + <code>vkDestroySwapchainKHR</code> + <code>vkCreateSwapchainKHR</code>
+  + image-view recreation per frame ≈ 15 ms.  <em>Every prior
+  measurement was capturing the swapchain recreation cost</em> —
+  backbuffer count, present mode, GPU stripping all irrelevant
+  because the swapchain dies the instant after the frame ships.
+  <br><br>
+  New patch <code>patches/bgfx_android_vk_suboptimal_no_recreate.patch</code>
+  splits the present-result and acquire-result switches in
+  <code>renderer_vk.cpp</code>: <code>VK_ERROR_OUT_OF_DATE_KHR</code>
+  keeps existing behaviour (must recreate); <code>VK_SUBOPTIMAL_KHR</code>
+  is treated as <code>VK_SUCCESS</code> with a one-shot trace.  This
+  is the standard pattern in Unreal/Unity/Godot — SUBOPTIMAL is a soft
+  hint the Vulkan spec explicitly allows applications to ignore.
+  Expected: <code>bgfx::frameMs</code> drops to ~0.1 ms (matches the
+  original doc claim); FPS reaches panel rate; no visible artefact
+  (we already render at the cutout-safe 2251×1080).  See NOTES.md
+  "Follow-up (2026-06-18, root cause found — SUBOPTIMAL_KHR swapchain
+  rebuild loop)" for the full forensic chain.  Worth upstreaming to
+  bgfx alongside the MAILBOX reorder.
 </div>
 
 <details>
