@@ -898,6 +898,39 @@ BGFX Successfully created swapchain (2251x1080) with 5 images.</pre>
   <code>no_recreate</code> patches together describe one coherent
   "make bgfx behave on modern Android" change; both worth upstreaming
   alongside MAILBOX.
+  <br><br>
+  <strong>Resolved (2026-06-18, verified on Pixel 9 / Android 16):</strong>
+  <table style="margin-top:6px; font-size:0.85em; border-collapse:collapse">
+    <tr><th align="left" style="padding:2px 12px 2px 0">Metric</th>
+        <th align="left" style="padding:2px 12px 2px 0">Before</th>
+        <th align="left" style="padding:2px 0">After</th></tr>
+    <tr><td><code>bgfx::frameMs</code></td>
+        <td>~16 ms (vsync-pinned)</td>
+        <td><strong>0.27 – 6.27 ms</strong></td></tr>
+    <tr><td><code>vkQueuePresentKHR</code> time</td>
+        <td>~14 ms</td>
+        <td><strong>0.1 – 2 ms</strong></td></tr>
+    <tr><td><code>Create swapchain</code> count</td>
+        <td>~650 per 12 s</td>
+        <td><strong>1 (init only)</strong></td></tr>
+    <tr><td>Panel refresh</td>
+        <td>60 Hz</td>
+        <td><strong>120 Hz (auto-promoted)</strong></td></tr>
+    <tr><td>Uncapped FPS counter</td>
+        <td>~50</td>
+        <td><strong>~336</strong></td></tr>
+  </table>
+  Root cause confirmed exactly as diagnosed: SUBOPTIMAL→recreate
+  loop <em>plus</em> the clamped-vs-requested resolution loop, both
+  independent (either alone would leave the other active).  The
+  120 Hz auto-promotion is a free bonus from Android's
+  <code>Choreographer</code> reading "consistent &lt;8 ms frames" and
+  promoting the panel — meaning audit <code>#P2</code>
+  (<code>Surface.setFrameRate()</code> explicit plumbing) is now lower
+  priority for the uncap-to-panel case (still needed for explicit-cap
+  scenarios like battery-sensitive 30 Hz fallback).  Full
+  before/after chain in NOTES.md "Resolution (2026-06-18, B2 closed
+  on Pixel 9)".
 </div>
 
 <details>

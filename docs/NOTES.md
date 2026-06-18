@@ -660,6 +660,44 @@ The MAILBOX patch is still wanted — it's an unrelated improvement that lets us
 - `SamaEngineBgfxStats` with `bgfx::frameMs` < 1 ms, FPS at panel rate
 - One `Sama: vkQueuePresentKHR returned VK_SUBOPTIMAL_KHR — treating as success` line (the SUBOPTIMAL is still happening every frame; we just stopped acting on it)
 
+### Resolution (2026-06-18, B2 closed on Pixel 9)
+
+Team verified on Pixel 9 / Android 16:
+
+| Metric | Before | After |
+|---|---|---|
+| `bgfx::frameMs` | ~16 ms (vsync-pinned) | **0.27 – 6.27 ms** |
+| `vkQueuePresentKHR` time | ~14 ms | **0.1 – 2 ms** |
+| `Create swapchain` count | ~650 per 12 s | **1 (init only)** |
+| Panel refresh | 60 Hz | **120 Hz (auto-promoted)** |
+| Uncapped FPS counter | ~50 | **~336** |
+
+Root cause confirmed exactly as diagnosed: SUBOPTIMAL→recreate loop (closed by `bgfx_android_vk_suboptimal_no_recreate.patch`) **plus** a second recreate trigger from the driver's 2424→2251 cutout clamp being compared against the original request next frame (closed by `bgfx_android_vk_clamped_resolution_no_recreate.patch`).  Both patches were necessary; either alone would have left the other loop active.
+
+The 120 Hz auto-promotion is a free bonus: Android's `Choreographer` reads "this app is consistently submitting frames in <8 ms" and switches the panel into 120 Hz mode automatically.  This means audit `#P2` (`Surface.setFrameRate()` plumbing) is now lower priority — the system is doing the right thing without us asking.  We'd still want explicit `setFrameRate()` for cases where we want to *cap* below the panel rate (battery-sensitive scenes, 30 Hz fallback for thermal throttling); but the auto-uncap-to-120 path is good enough for the steady state.
+
+### Operational lesson (2026-06-18, FetchContent_Declare PATCH_COMMAND only runs once)
+
+**The bear trap that turned a multi-hour fix into multi-week debugging.**
+
+CMake's `FetchContent_Declare(... PATCH_COMMAND ...)` runs the patch chain *only on first extraction*.  Subsequent `cmake` reconfigures see the source directory already exists and skip both fetch and patch entirely.  If a new patch is added to the chain (or any existing patch changes), the bgfx tree in an already-built `_deps/` directory is silently left unpatched.
+
+The team's `sample_game` Android build tree was extracted in April.  Every commit since then that added a renderer_vk patch (MAILBOX, call-timing, SUBOPTIMAL, clamped-resolution) appeared correctly in `git pull` but never applied to the Android `_deps/bgfx_cmake-src/`.  Reconfigure was a no-op; rebuild was a no-op for renderer_vk.cpp because the source hadn't changed.  Their builds compiled the unpatched April source for weeks while the upstream patches all looked correct in git.
+
+**Workaround the team used.**  `rm -rf build/android/arm64-v8a/_deps/bgfx_cmake-{src,subbuild}` forces re-extract + re-patch on next configure.  Alternatively, manually `git apply` the four patches in-place against the existing tree and force a rebuild of `bgfx.dir`.
+
+**Two real fixes worth considering:**
+
+1. **Stamp-file approach (recommended):** compute a hash of the patch files in `CMakeLists.txt`, store it in `${CMAKE_BINARY_DIR}/_deps/bgfx_cmake-patches.stamp`, and on every configure check whether the hash changed.  If it did, blow away `_deps/bgfx_cmake-{src,subbuild}` to force re-extract.  ~15 lines of CMake.  Trade-off: any patch chain change triggers a full bgfx rebuild — acceptable because bgfx changes are rare (months apart) and the alternative is silent-wrong-binary.
+
+2. **Migrate off `FetchContent_Declare PATCH_COMMAND`:** vendor bgfx as a git submodule and apply patches via a shell script that's idempotent (`git apply --check && git apply` per patch).  More invasive; trades the FetchContent automation for explicit control.  Probably overkill until we hit this trap a second time.
+
+**Detection-only fallback (cheap):** add a CMake `file(STRINGS ... LIMIT_COUNT 1)` check that greps the on-disk renderer_vk.cpp for a marker string from the most recent patch (e.g. `s_samaSuboptimalLogged`).  If missing, `message(FATAL_ERROR "bgfx patches are stale — rm -rf ${_deps_dir} and reconfigure")`.  ~5 lines.  Doesn't auto-fix but makes the failure mode loud at configure time instead of silent at runtime.
+
+**Lesson for future bgfx patches.**  Any commit that touches `patches/bgfx_*` should mention in the PR description: *"Existing builds need `rm -rf build/<target>/_deps/bgfx_cmake-{src,subbuild}` to pick up this patch.  CI does this implicitly; local devs and downstream teams may not."*  Until/unless we wire up the stamp-file fix.
+
+This trap exists for every `FetchContent_Declare` we have with `PATCH_COMMAND` — not just bgfx.  Audit candidates: any future fetched dependency that we patch.  Currently bgfx is the only one in the chain.
+
 ---
 
 ## Physics
