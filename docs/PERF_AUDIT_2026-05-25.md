@@ -27,25 +27,23 @@ suggested first-sprint quick wins.
 | **Allocations on the hot path** | 3 | 0 | 4 | 0 | 7 |
 | **Threading** | 3 | 1 | 1 | 0 | 5 |
 | **Rendering / bgfx** | 3 | 0 | 8 | 0 | 11 |
-| **Shaders** | 3 | 0 | 6 | 0 | 9 |
+| **Shaders** | 5 | 0 | 4 | 0 | 9 |
 | **Asset pipeline** | 0 | 0 | 3 | 0 | 3 |
 | **Tier-aware settings** | 3 | 0 | 4 | 0 | 7 |
 | **Android power** | 1 | 0 | 5 | 0 | 6 |
 | **Frame pacing & vsync** | 0 | 0 | 4 | 0 | 4 |
 | **Binary size / cold-start power** | 0 | 0 | 5 | 0 | 5 |
 | **Debug / editor code in release** | 0 | 0 | 4 | 0 | 4 |
-| **TOTAL** | **30** | **3** | **68** | **2** | **103** |
+| **TOTAL** | **32** | **3** | **66** | **2** | **103** |
 
-Headline list at 80% landed.  Three more landings on 2026-06-23
-from the audit's "Next-best landings" queue: `#T4` (FXAA off on low
-tier), tonemap `pow → sqrt`, and `#R-setTex-batch` (IBL/light/shadow
-texture-binding hoist out of DrawCallBuildSystem inner loop).
-Remaining big-win candidates are in "Shaders" (deferred `#S1` LOW_TIER
-cluster-skip variant, plus `pow(x,5)` Fresnel approximation) and
-`#P2` (Surface.setFrameRate Android plumbing — though now lower
-priority after the integration team's 120 Hz auto-promotion via
-Choreographer in the B2 fix).  Memory items and the Threading
-per-worker queues refactor are still ahead.
+Headline list at 80% landed.  Five landings on 2026-06-23 — three
+from the morning batch (`#T4`, `#S-tonemap-sqrt`, `#R-setTex-batch`)
+plus two more shader trivials in the afternoon (`#S-fresnel-poly`,
+`#S-logratio-hoist`).  Remaining big-win candidates are `#P2`
+(Surface.setFrameRate Android plumbing — lower priority after the
+integration team's 120 Hz auto-promotion via Choreographer in the B2
+fix), the deferred `#S1` LOW_TIER cluster-skip variant, and the
+Memory + Threading per-worker queues refactors.
 
 ### What's landed since the audit was opened
 
@@ -76,14 +74,19 @@ the per-commit deltas with measured numbers.
 - **#opt-in scheduler** `EngineDesc::useSystemThreadPool` opt-in +
   `SystemExecutor` wired to ThreadPool POD path + 10 000-frame
   conservation race-check.
-- **(2026-06-23)** `#T4` low-tier FXAA off, `#S-tonemap-sqrt` gamma 2.0
-  approximation, `#R-setTex-batch` 7-slot texture-binding hoist out
-  of DrawCallBuildSystem inner loop (perf_smoke mean −6.6%).
+- **(2026-06-23)** Five landings in one day:
+  - **morning batch (3):** `#T4` low-tier FXAA off, `#S-tonemap-sqrt`
+    gamma 2.0 approximation, `#R-setTex-batch` 7-slot texture-binding
+    hoist out of DrawCallBuildSystem inner loop (perf_smoke mean
+    −6.6%).
+  - **afternoon batch (2):** `#S-fresnel-poly` Schlick polynomial
+    Fresnel (no `pow`), `#S-logratio-hoist` `log(far/near)` baked
+    into `u_frameParams[1].w` (saves 1 log + 1 fdiv per fragment).
 
 ### Next-best landings if someone picks this up
 
 Ordered by impact-per-risk on the remaining open items (updated
-2026-06-23 after #T4 / tonemap / setTex-batch landed):
+2026-06-23 after the second batch landed):
 
 1. **#P2** (Headline #2 successor) `Surface.setFrameRate` plumbing
    on Android — *medium*, halves GPU work + power on 60 Hz panels
@@ -94,13 +97,14 @@ Ordered by impact-per-risk on the remaining open items (updated
 2. **#S1 texture-indirection half** `LOW_TIER` PBR variant that
    skips the cluster light loop — *medium*, big win on no-lights
    scenes (low tier with `maxActiveLights ≤ 0`).
-3. **Shaders §** `fs_pbr.sc:51-79` — replace `pow(x, 5.0)` in Fresnel
-   with the Schlick polynomial approximation `x = 1 - cos; x²·x²·x`
-   — *trivial*, one pow per light per fragment saved (chokes Mali-G57
-   in particular).
-4. **Shaders §** `fs_pbr.sc:218-220` — `logRatio = log(far/near)`
-   constant per frame, currently divided per fragment.  Bake into a
-   frame uniform.  *trivial*.
+3. **Shaders §** `fs_pbr.sc:108-119` — triple-normalize of
+   `v_tangent / v_bitangent / v_normal`.  Bitangent already comes
+   from VS as `cross(N, T) * sign` so it's near-orthonormal.
+   Gram-Schmidt T against N + skip explicit bitangent normalize.
+   Saves 2 rsqrt per fragment.  *trivial*.
+4. **Shaders §** `fs_pbr.sc:166-186` — unconditional PCF 2x2 shadow
+   filter.  Low tier should use 1-tap hard PCF.  Saves 3 shadow
+   samples per fragment.  *low*.
 
 ---
 
@@ -183,8 +187,8 @@ Ordered by impact-per-risk on the remaining open items (updated
 ## Shaders
 
 - [ ] ⭐ **(#S1) fs_pbr.sc:228-249** — clustered light loop samples `s_lightGrid` + `s_lightIndex` + `s_lightData` ×4 per light, all RGBA32F. Low tier with 0-1 lights = pure waste. Add `LOW_TIER` variant that skips cluster loop. **Halves fragment cost on no-lights scenes.** *low*.
-- [ ] **fs_pbr.sc:51-79** — full GGX + Smith + Fresnel per fragment per light; `pow(x, 5.0)` chokes Mali-G57. Schlick polynomial approximation. **Saves one `pow` per light.** *trivial*.
-- [ ] **fs_pbr.sc:218-220** — `log(viewZ/nearPlane) / logRatio` per fragment; `logRatio` constant per frame — bake into uniform. *trivial*.
+- [x] **(#S-fresnel-poly) fs_pbr.sc:107** — `fresnelSchlick()` was `pow(x, 5.0)`.  **Landed:** expanded as `x2 = x*x; x2*x2*x` — same closed-form Schlick polynomial, 3 multiplies instead of one `pow`.  Called in both the directional-light path and the cluster-light loop, so saves 1 pow per light per fragment.  Mali-G57 hit hardest (`pow` lowers to `exp+log`, ~20 cycles vs ~3 for the polynomial); other backends' optimisers usually constant-fold `pow(_, 5.0)` to a polynomial anyway but the explicit form removes the dependency on optimiser heuristics.  Tests: all 23/23 screenshot pass byte-for-byte (no golden regen needed — fp result within sub-LSB of the pow path); 26982/753 unit pass.  Mali-specific delta not measurable from Mac M-series; lands on the integration team's Pixel-class profiling.  *trivial → landed.*
+- [x] **(#S-logratio-hoist) fs_pbr.sc:218-220** — `logRatio = log(farPlane/nearPlane)` computed per fragment, then `log(viewZ/nearPlane) / logRatio * 24.0` per fragment for the cluster slice index.  Both `log(far/near)` and the `fdiv` are frame-constant.  **Landed:** baked `invLogRatio = 1 / std::log(far/near)` into the previously-unused `u_frameParams[1].w` slot (CPU side in both `update()` and `updateSkinned()`, one `std::log` + one `fdiv` per frame, sub-microsecond).  Shader form becomes `depthSlice = log(viewZ/nearPlane) * u_frameParams[1].w * 24.0` — one log + one fmul instead of two log + one fdiv + one fmul.  Per-fragment saving on Mali-G57: 1 log + 1 fdiv (~16 cycles each on Bifrost/Valhall) ≈ ~33 megaops/frame at 1080p.  Degenerates gracefully when near/far are invalid (`invLogRatio = 0` → `depthSlice` clamps to slice 0, no NaN).  Tests: 23/23 screenshot byte-identical (visual output unchanged), 26982/753 unit pass.  No host microbench added — the equivalence `log(z/n)/log(f/n) == log(z/n)*(1/log(f/n))` is fp algebra; the `clustered_lights` screenshot test pins the cluster math end-to-end as the regression guard.  *trivial → landed.*
 - [ ] **fs_pbr.sc:108-119** — `normalize(v_tangent/v_bitangent/v_normal)` triple-normalize; bitangent was `cross(N,T)*sign` in VS so it's near-orthonormal — Gram-Schmidt T against N, skip explicit bitangent normalize. Saves 2 `rsqrt`. *trivial*.
 - [x] ⭐ **(#S1 precision half) fs_pbr.sc (overall)** — was no `precision mediump float` anywhere; Mali Bifrost/Valhall fp16 throughput was being left on the table.  **Landed:** instead of a blanket `precision mediump float;` at the top (which would have demoted everything including position/UV math), each variable is explicitly tagged.  `mediump`: BRDF helper signatures (D, G, F, Smith) and their locals; material samples (albedo / normal / ORM / occlusion / emissive — all from 8-bit textures); F0; directional + per-light BRDF intermediates (NdotL, NdotV, NdotH, kD, specular); light colour, type, spot direction + cone factors (ld1/ld2/ld3 of the 4 light-data rows); attenuation scalars; IBL irradiance / prefiltered / brdf-LUT samples; Lo / ambient / emissive / final colour / opacity.  `highp` (default) kept on: `v_worldPos`, `v_viewPos`, `camPos`, `lightViewPos` (ld0.xyz); `Lv = lightViewPos - v_viewPos`; `dist = length(Lv)` and the `lightRad` it's compared against; cluster index math (`sliceIdx`, `clusterIdx`, `lightOffset`, `lightCount`) — fp16 stores integers exactly only up to 2048 and the flat light index can reach 8191; the `idx = texture2D(s_lightIndex, ...).x` for the same reason; shadow UVs / `texelSize` / `shadowZ` because PCF tap alignment needs sub-pixel accuracy at 2048-res shadow maps; tangent / bitangent / Ngeom inputs (the final N after `normalize(...)` is mediump but the inputs cumulate VS interpolation error).  Comment block at the top of fs_pbr.sc spells out the policy so future edits stay aligned.  No regressions — all 22 screenshot tests pass (no banding visible in PBR helmet, IBL, shadow, lighting, post-process screenshots).  ESSL output (decoded from `fs_pbr_essl.bin.h`) confirms the qualifiers landed — `mediump` keyword appears alongside `highp`.  Cannot exercise the actual Mali fp16 win from a Mac desktop test; integration validation will require an Android emulator + Pixel-class device frame trace.  *medium (banding-risk).*  Headline-list count of "7+" was actually 5 (1× `s_lightIndex` + 4× `s_lightData` per light); precision win lands on all of them plus the ~5 fixed material samples.
 - [ ] **fs_pbr.sc:166-186** — PCF 2x2 shadow filter unconditional; low tier should use 1-tap hard PCF. **Saves 3 texture samples per fragment.** *low*.
@@ -276,4 +280,5 @@ Ordered by impact-per-risk on the remaining open items (updated
 - 2026-06-13 (cull batch): three cull-system items landed in one commit.  (1) `computeConservativeWorldAabb()` helper extracted into `engine/rendering/systems/CullHelpers.h` — replaces `glm::abs(Vec4)` ×3 + `Mat3` ctor + `Mat3 * Vec3` with 9 `fabsf` + 9 muls + 6 adds, no Mat3 / Vec4 temporaries.  (2) FrustumCullSystem caches the prior `has<VisibleTag>` result and skips the redundant `emplace`/`remove` round-trip when state didn't change between frames.  (3) ShadowCullSystem gains a single-pass `update(reg, res, span<Frustum>, baseCascadeIdx)` overload — walks the mesh view once, builds the AABB once, accumulates the cascade mask in a local before writing back; the per-cascade form delegates to it.  perf_smoke A/B (702 entities, 600 frames, 5 runs each side): FrustumCullSystem mean **0.048 ms → 0.034 ms (−29%)** median.  ShadowCullSystem not measured by perf_smoke (the scene doesn't drive it).  All 26 971 unit assertions + 22/22 screenshot tests pass — byte-identical visual output, no banding/popping from the cull edits.  2 new ShadowCullSystem tests pin the multi-cascade ↔ per-cascade equivalence and the "preserves bits outside owned range" contract.
 - 2026-06-13: #H1 cluster landed + per-frame ThreadPool opt-in scaffolding (multiple commits in one batch).  ThreadPool rewrite: POD `submitTask(fn, arg)` path with no allocation; bounded-ring storage replaces `std::deque<std::function<void()>>`; `std::counting_semaphore<>` for work-available wakeup (eliminates CV-with-mutex-held wakeup pattern); atomic `activeTasks_` with `notify` only on transition-to-zero edge.  `submit(std::function)` kept as back-compat wrapper so AssetManager and existing users are untouched.  4 new ThreadPool test cases (POD-path basic, 1000-task stress, submit/submitTask interleave, multi-cycle waitAll drain).  SystemExecutor wiring: switched to POD `submitTask` path; 7 new test cases including a 10 000-frame conservation-law race-check that's TSAN-friendly (`cmake -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"` to enable).  Engine plumbing: new `EngineDesc::useSystemThreadPool` (default **false** — per-frame systems remain single-threaded by default, preserving historical behaviour) and `EngineDesc::systemThreadPoolSize` (default 0 = engine picks `hardware_concurrency() - 2` clamped to [2, 8]); `Engine::systemThreadPool()` accessor returns nullptr when opt-in is off; `maybeCreateSystemThreadPool` private helper wired into all three init paths (desktop / Android / iOS).  4 new EngineDesc plumbing test cases.  CMake: `engine_threading` added to all three `engine_core` link branches.  All 26 960 unit assertions + 745 cases + 22 screenshot tests pass.  Audit's "<0.5 μs dispatch latency" target not yet measured on-device; spin-poll-then-CV `waitAll()` should hit it on the common path but per-worker queues + work-stealing (true MPMC) is the remaining refactor for high contention.
 - 2026-06-12 (later still, TransformSystem batch): both remaining open TransformSystem CPU-hot-loop items landed in one commit.  (a) `composeLocal` rewritten from `translate * mat4_cast(q) * scale` (~176 muls + 3 Mat4 temporaries) to direct TRS construction (~29 muls, no Mat4 temporaries).  (b) `setWorldMatrix` replaced by `writeWorldMatrix(reg, entity, cached_wtc, world)` — callers now do a single `reg.get<WorldTransform>()` at the top of each entity's processing instead of `has + get + emplace` (3 sparse-set hits per child).  `perf_smoke --dirty-all` clean A/B in the same session, 5 runs each: mean 0.062 → 0.046 ms (**−26%**), p99 0.074 → 0.056 ms (**−24%**), max 0.077 → 0.061 ms (**−21%**) on 702 entities at 600 frames.  Default (clean fast path) flat within noise (mean 0.033 → 0.034).  Audit projection of 50% saving was based on muls-only counting; the measured 26% includes view iteration + dirty-flag check overhead that share the per-entity envelope.  New `--dirty-all` CLI flag in `perf_smoke` to make the worst-case path reproducible (default scene goes all-clean after frame 0, so the audit's per-entity composeLocal claim would yield no signal otherwise).  All 6894 unit + 22 screenshot tests pass.
+- 2026-06-23 (afternoon batch): two more fs_pbr.sc trivials landed.  (1) **#S-fresnel-poly** — `fresnelSchlick()` rewritten as `x = clamp(1 - cosTheta, 0, 1); x2 = x*x; F0 + (1-F0)*(x2*x2*x)`; same closed-form Schlick polynomial, 3 muls instead of one pow; Mali-G57 hit hardest (pow lowers to exp+log ~20 cycles vs ~3 for the polynomial).  Called in both directional and per-cluster-light paths so saves 1 pow per light per fragment.  (2) **#S-logratio-hoist** — `logRatio = log(far/near)` baked into the previously-unused `u_frameParams[1].w` slot at frame build time (one std::log + one fdiv on the CPU side, sub-microsecond); shader form drops from `log(viewZ/near) / log(far/near) * 24.0` to `log(viewZ/near) * u_frameParams[1].w * 24.0` — saves 1 log + 1 fdiv per fragment (~16 cycles each on Bifrost/Valhall), ~33 megaops/frame at 1080p.  Both byte-identical on goldens (no regen needed); 26982/753 unit + 23/23 screenshot pass.  Mali-specific GPU saving not measurable from Mac M-series (host vsync-pinned, GPU below saturation); lands on integration team's Pixel-class profiling.  No host microbench added — both changes are fp-algebra identities; `clustered_lights` screenshot test pins the cluster slice math end-to-end as the regression guard.
 - 2026-06-23: three "Next-best landings" items landed in one short session.  (1) **#T4** — `defaultTiers()` low-tier `enableFXAA` flipped `true → false` with audit-comment + new `CHECK(low.enableFXAA == false)` test; trivial change, ~0.8 ms saving on 720p Mali-G57 per the audit (not measurable on desktop M-series — landed on Pixel-class Android only).  (2) **#S-tonemap-sqrt** — `fs_tonemap.sc:24` swapped `pow(color, 1/2.2)` for `sqrt(color)` (gamma 2.0 approximation, max delta ~0.018 across [0, 1]).  14 goldens regenerated for tonemap-using tests; `ui_button_states.png` confirmed intentionally NOT regenerated (UI test doesn't go through tonemap; `--update-goldens` byte-rewrite was PNG-encoder noise).  Visual signature is uniform mid-tone gamma shift, no banding.  (3) **#R-setTex-batch** — hoist 7 frame-constant texture bindings (slots 5/6/7/8/12/13/14) out of both `update()` and `updateSkinned()` inner loops; submit with `BGFX_DISCARD_ALL & ~BGFX_DISCARD_BINDINGS` so bgfx preserves the binding state across submits (gated in `RenderBind::clear`, bgfx_p.h:1825).  perf_smoke A/B (702 entities × 600 frames × 5 runs, M-series Mac, multi-threaded): DrawCallBuildSystem mean **0.288 → 0.269 ms (−6.6%)**, max **0.713 → 0.611 ms (−14.3%)**, p99 0.488 → 0.567 ms (+16.2% — mild regression on a metric the budget doesn't gate).  Mac M-series under-represents the real saving: ~4900 saved set ops/frame on a still-mutex-locked encoder code path lands bigger on Pixel-class CPUs.  All 26 982 unit + 23/23 screenshot tests pass byte-for-byte (visual output identical).
