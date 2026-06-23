@@ -101,10 +101,19 @@ mediump float geometrySmith(mediump vec3 N, mediump vec3 V, mediump vec3 L,
          * geometrySchlick(max(dot(N, L), 0.0), roughness);
 }
 
-// Fresnel-Schlick approximation.
+// Fresnel-Schlick approximation.  Audit "Shaders" §: x^5 expanded as
+// (x^2)^2 * x — 3 multiplies instead of one pow.  Mathematically the same
+// closed-form Schlick polynomial; Mali-G57 in particular chokes on pow
+// (the audit's primary motivation).  Other backends usually lower
+// pow(_, 5.0) to a polynomial anyway but the explicit form avoids leaving
+// the choice to the optimiser.  No precision change — fp16 representation
+// of x^5 from a 3-mul chain differs from pow's internal exp/log path
+// only in the LSB, well inside the screenshot-test 8/255 threshold.
 mediump vec3 fresnelSchlick(mediump float cosTheta, mediump vec3 F0)
 {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+    mediump float x = clamp(1.0 - cosTheta, 0.0, 1.0);
+    mediump float x2 = x * x;
+    return F0 + (1.0 - F0) * (x2 * x2 * x);
 }
 
 void main()
