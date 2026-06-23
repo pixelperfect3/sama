@@ -28,7 +28,12 @@ std::unordered_map<std::string, TierConfig> defaultTiers()
         t.enableIBL = false;
         t.enableSSAO = false;
         t.enableBloom = false;
-        t.enableFXAA = true;
+        // FXAA off for low tier — audit #T4: on 720p Mali-G57 the fullscreen
+        // FXAA pass costs ~0.8 ms, which is a large fraction of the 33 ms
+        // frame budget at this tier's 30 fps target.  Edge quality without
+        // FXAA is acceptable at the tier's renderScale = 0.75 (the
+        // upsample-blur to native already softens aliasing).
+        t.enableFXAA = false;
         t.depthPrepass = false;
         t.renderScale = 0.75f;
         t.targetFPS = 30;

@@ -38,6 +38,10 @@ TEST_CASE("defaultTiers low tier values", "[game][tier]")
     CHECK(low.enableIBL == false);
     CHECK(low.enableSSAO == false);
     CHECK(low.enableBloom == false);
+    // FXAA off on low — audit #T4 (~0.8 ms saving on 720p Mali-G57).
+    // A regression flipping this back to true on the low preset would
+    // burn most of the frame budget at the tier's 30 fps target.
+    CHECK(low.enableFXAA == false);
     // Bloom is off on low; steps=0 prevents a tier-override that flips
     // enableBloom=true from accidentally inheriting a 9-pass chain.  Item
     // #T3 in docs/PERF_AUDIT_2026-05-25.md.
