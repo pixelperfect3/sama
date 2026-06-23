@@ -199,6 +199,30 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     auto visibleView =
         reg.view<VisibleTag, WorldTransformComponent, MeshComponent, MaterialComponent>();
 
+    // Frame-constant texture bindings — audit "Rendering" §:
+    // slots 5/6/7/8 (shadow + IBL triple) and 12/13/14 (cluster light data)
+    // never change across the visible loop.  Bind them ONCE here, then
+    // submit each draw with BGFX_DISCARD_ALL & ~BGFX_DISCARD_BINDINGS so
+    // bgfx preserves the binding state across submits (verified in
+    // bgfx_p.h:1825 — RenderBind::clear is gated on BGFX_DISCARD_BINDINGS).
+    // The per-material slots (0..4) are still rebound every iteration; the
+    // discard mask preserves THEIR bindings too across submits, but we
+    // overwrite them with the next material's textures so they are correct
+    // per draw.  State / transform / vertex+index buffers / uniforms still
+    // get the standard per-draw discard so each draw constructs its own
+    // RenderDraw from scratch.
+    if (hasShadowAtlas)
+        enc->setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+    enc->setTexture(6, uniforms.s_irradiance, iblIrradiance);
+    enc->setTexture(7, uniforms.s_prefiltered, iblPrefiltered);
+    enc->setTexture(8, uniforms.s_brdfLut, iblBrdfLut);
+    enc->setTexture(12, uniforms.s_lightData, whiteTex);
+    enc->setTexture(13, uniforms.s_lightGrid, whiteTex);
+    enc->setTexture(14, uniforms.s_lightIndex, whiteTex);
+
+    constexpr uint8_t kPreserveBindings =
+        static_cast<uint8_t>(BGFX_DISCARD_ALL & ~BGFX_DISCARD_BINDINGS);
+
     visibleView.each(
         [&](ecs::EntityID entity, const VisibleTag& /*tag*/, const WorldTransformComponent& wtc,
             const MeshComponent& mc, const MaterialComponent& matc)
@@ -231,7 +255,9 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             enc->setUniform(uniforms.u_lightParams, lightParamsData);
             enc->setUniform(uniforms.u_iblParams, iblParamsData);
 
-            // Per-draw: bind all texture slots declared in fs_pbr.sc.
+            // Per-material texture slots only — frame-constant slots
+            // (5, 6, 7, 8, 12, 13, 14) were bound once before the loop and
+            // persist via the kPreserveBindings discard mask below.
             // Material texture IDs reference RenderResources; fall back to
             // whiteTex when not set so Metal validation never sees a nil argument.
             auto resolveOrWhite = [&](uint32_t texId) -> bgfx::TextureHandle
@@ -250,14 +276,6 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
             enc->setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
             enc->setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
             enc->setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
-            enc->setTexture(12, uniforms.s_lightData, whiteTex);
-            enc->setTexture(13, uniforms.s_lightGrid, whiteTex);
-            enc->setTexture(14, uniforms.s_lightIndex, whiteTex);
-            if (hasShadowAtlas)
-                enc->setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
-            enc->setTexture(6, uniforms.s_irradiance, iblIrradiance);
-            enc->setTexture(7, uniforms.s_prefiltered, iblPrefiltered);
-            enc->setTexture(8, uniforms.s_brdfLut, iblBrdfLut);
 
             enc->setTransform(&wtc.matrix[0][0]);
             enc->setVertexBuffer(0, mesh->positionVbh);
@@ -272,12 +290,13 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
                 enc->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
                               BGFX_STATE_BLEND_ALPHA);
-                enc->submit(kViewTransparent, bgfx::ProgramHandle{program.idx});
+                enc->submit(kViewTransparent, bgfx::ProgramHandle{program.idx}, 0,
+                            kPreserveBindings);
             }
             else
             {
                 enc->setState(BGFX_STATE_DEFAULT);
-                enc->submit(kViewOpaque, bgfx::ProgramHandle{program.idx});
+                enc->submit(kViewOpaque, bgfx::ProgramHandle{program.idx}, 0, kPreserveBindings);
             }
         });
 
@@ -436,6 +455,21 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
     auto skinnedView =
         reg.view<VisibleTag, animation::SkinComponent, MeshComponent, MaterialComponent>();
 
+    // Frame-constant texture bindings — see the static-mesh update() above
+    // for the full rationale.  Bound once before the loop; persist via
+    // kPreserveBindings discard mask on each submit().
+    if (hasShadowAtlas)
+        enc->setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
+    enc->setTexture(6, uniforms.s_irradiance, iblIrradiance);
+    enc->setTexture(7, uniforms.s_prefiltered, iblPrefiltered);
+    enc->setTexture(8, uniforms.s_brdfLut, iblBrdfLut);
+    enc->setTexture(12, uniforms.s_lightData, whiteTex);
+    enc->setTexture(13, uniforms.s_lightGrid, whiteTex);
+    enc->setTexture(14, uniforms.s_lightIndex, whiteTex);
+
+    constexpr uint8_t kPreserveBindings =
+        static_cast<uint8_t>(BGFX_DISCARD_ALL & ~BGFX_DISCARD_BINDINGS);
+
     skinnedView.each(
         [&](ecs::EntityID /*entity*/, const VisibleTag& /*tag*/,
             const animation::SkinComponent& skin, const MeshComponent& mc,
@@ -465,7 +499,8 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             enc->setUniform(uniforms.u_lightParams, lightParamsData);
             enc->setUniform(uniforms.u_iblParams, iblParamsData);
 
-            // Per-draw: textures
+            // Per-material texture slots only — frame-constant slots
+            // (5/6/7/8/12/13/14) bound once before the loop.
             auto resolveOrWhite = [&](uint32_t texId) -> bgfx::TextureHandle
             {
                 if (texId != 0)
@@ -482,14 +517,6 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
             enc->setTexture(2, uniforms.s_orm, resolveOrWhite(mat->ormMapId));
             enc->setTexture(3, uniforms.s_emissive, resolveOrWhite(mat->emissiveMapId));
             enc->setTexture(4, uniforms.s_occlusion, resolveOrWhite(mat->occlusionMapId));
-            enc->setTexture(12, uniforms.s_lightData, whiteTex);
-            enc->setTexture(13, uniforms.s_lightGrid, whiteTex);
-            enc->setTexture(14, uniforms.s_lightIndex, whiteTex);
-            if (hasShadowAtlas)
-                enc->setTexture(5, uniforms.s_shadowMap, frame.shadowAtlas);
-            enc->setTexture(6, uniforms.s_irradiance, iblIrradiance);
-            enc->setTexture(7, uniforms.s_prefiltered, iblPrefiltered);
-            enc->setTexture(8, uniforms.s_brdfLut, iblBrdfLut);
 
             // Upload bone matrices via setTransform with count > 1.
             const math::Mat4* bones = boneBuffer + skin.boneMatrixOffset;
@@ -508,12 +535,14 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
                 enc->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                               BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA |
                               BGFX_STATE_BLEND_ALPHA);
-                enc->submit(kViewTransparent, bgfx::ProgramHandle{skinnedProgram.idx});
+                enc->submit(kViewTransparent, bgfx::ProgramHandle{skinnedProgram.idx}, 0,
+                            kPreserveBindings);
             }
             else
             {
                 enc->setState(BGFX_STATE_DEFAULT);
-                enc->submit(kViewOpaque, bgfx::ProgramHandle{skinnedProgram.idx});
+                enc->submit(kViewOpaque, bgfx::ProgramHandle{skinnedProgram.idx}, 0,
+                            kPreserveBindings);
             }
         });
 
