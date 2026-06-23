@@ -1,5 +1,7 @@
 #include "engine/rendering/systems/DrawCallBuildSystem.h"
 
+#include <cmath>
+
 #include "engine/animation/AnimationComponents.h"
 #include "engine/rendering/EcsComponents.h"
 #include "engine/rendering/Material.h"
@@ -173,10 +175,19 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     const float frameH = static_cast<float>(frame.viewportH);
 
     // u_frameParams[0] = {viewportW, viewportH, near, far}
-    // u_frameParams[1] = {camPos.x, camPos.y, camPos.z, 0} — camera world position for V vector
+    // u_frameParams[1] = {camPos.x, camPos.y, camPos.z, invLogRatio}
+    //   invLogRatio = 1 / log(far/near) — cluster slice math constant
+    //   per frame (audit fs_pbr.sc:218-220).  Eliminates one log + one
+    //   fdiv per fragment in the cluster-loop entry math.  Degenerates
+    //   gracefully to 0 when near/far are invalid (depthSlice clamps
+    //   to slice 0, cluster lookup still proceeds — no NaN).
+    const float invLogRatio =
+        (frame.farPlane > frame.nearPlane && frame.nearPlane > 0.0f)
+            ? 1.0f / std::log(frame.farPlane / frame.nearPlane)
+            : 0.0f;
     const float frameParamsData[8] = {
         frameW,          frameH,          frame.nearPlane, frame.farPlane,
-        frame.camPos[0], frame.camPos[1], frame.camPos[2], 0.0f};
+        frame.camPos[0], frame.camPos[1], frame.camPos[2], invLogRatio};
 
     // u_lightParams = {numLights, screenW, screenH, 0}
     // numLights=0 disables the clustered loop; screenW/H prevent tile div-by-zero.

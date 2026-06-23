@@ -34,7 +34,13 @@ uniform vec4 u_material[2];
 // dir points from the surface toward the light source (normalised, away from surface).
 uniform vec4 u_dirLight[2];
 
-// [0] = {viewportWidth, viewportHeight, near, far}   [1] = {camPos.x, camPos.y, camPos.z, 0}
+// [0] = {viewportWidth, viewportHeight, near, far}
+// [1] = {camPos.x, camPos.y, camPos.z, invLogRatio}
+//   invLogRatio = 1 / log(far/near) — cluster-slice math constant per
+//   frame.  Hoisted from per-fragment to eliminate one log + one fdiv
+//   per fragment in the cluster loop (audit fs_pbr.sc:218-220).
+//   Zero when near/far are invalid; clamp protects the downstream slice
+//   index from NaN.
 uniform vec4 u_frameParams[2];
 
 // Clustered lighting (Phase 6):
@@ -266,9 +272,12 @@ void main()
     // Clamp to valid range before log — avoids NaN/Inf at or behind near plane.
     viewZ = clamp(viewZ, nearPlane, farPlane);
 
-    // Logarithmic depth slice index.
-    float logRatio   = log(farPlane / nearPlane);
-    float depthSlice = log(viewZ / nearPlane) / logRatio * 24.0;
+    // Logarithmic depth slice index — invLogRatio (1/log(far/near)) is
+    // hoisted into u_frameParams[1].w at frame build time, eliminating
+    // one log + one fdiv per fragment vs the per-fragment-computed form.
+    // The hoisted form is zero when the camera near/far are invalid; the
+    // clamp below pins depthSlice to slice 0 in that case (no NaN).
+    float depthSlice = log(viewZ / nearPlane) * u_frameParams[1].w * 24.0;
     int sliceIdx     = int(clamp(depthSlice, 0.0, 23.0));
 
     int clusterIdx = sliceIdx * 144 + int(tile.y) * 16 + int(tile.x);
