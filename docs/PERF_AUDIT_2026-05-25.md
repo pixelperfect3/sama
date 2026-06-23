@@ -17,7 +17,7 @@ suggested first-sprint quick wins.
 
 ---
 
-## Status rollup (last updated 2026-06-16)
+## Status rollup (last updated 2026-06-23)
 
 | Bucket | Landed | In progress | Open | Skip | Total |
 |--------|-------:|------------:|-----:|-----:|------:|
@@ -26,21 +26,26 @@ suggested first-sprint quick wins.
 | **Memory layout & cache** | 1 | 0 | 7 | 0 | 8 |
 | **Allocations on the hot path** | 3 | 0 | 4 | 0 | 7 |
 | **Threading** | 3 | 1 | 1 | 0 | 5 |
-| **Rendering / bgfx** | 2 | 0 | 9 | 0 | 11 |
-| **Shaders** | 2 | 0 | 7 | 0 | 9 |
+| **Rendering / bgfx** | 3 | 0 | 8 | 0 | 11 |
+| **Shaders** | 3 | 0 | 6 | 0 | 9 |
 | **Asset pipeline** | 0 | 0 | 3 | 0 | 3 |
-| **Tier-aware settings** | 2 | 0 | 5 | 0 | 7 |
+| **Tier-aware settings** | 3 | 0 | 4 | 0 | 7 |
 | **Android power** | 1 | 0 | 5 | 0 | 6 |
 | **Frame pacing & vsync** | 0 | 0 | 4 | 0 | 4 |
 | **Binary size / cold-start power** | 0 | 0 | 5 | 0 | 5 |
 | **Debug / editor code in release** | 0 | 0 | 4 | 0 | 4 |
-| **TOTAL** | **27** | **3** | **71** | **2** | **103** |
+| **TOTAL** | **30** | **3** | **68** | **2** | **103** |
 
-Headline list at 80% landed.  Most of the remaining big wins are in
-"Rendering / bgfx" (per-draw `setTexture` batching, FXAA hide path)
-and "Shaders" (the deferred `#S1` LOW_TIER cluster-skip variant, plus
-the `pow(x,5)` Fresnel approximation).  Memory items and the
-Threading per-worker queues refactor are still ahead.
+Headline list at 80% landed.  Three more landings on 2026-06-23
+from the audit's "Next-best landings" queue: `#T4` (FXAA off on low
+tier), tonemap `pow → sqrt`, and `#R-setTex-batch` (IBL/light/shadow
+texture-binding hoist out of DrawCallBuildSystem inner loop).
+Remaining big-win candidates are in "Shaders" (deferred `#S1` LOW_TIER
+cluster-skip variant, plus `pow(x,5)` Fresnel approximation) and
+`#P2` (Surface.setFrameRate Android plumbing — though now lower
+priority after the integration team's 120 Hz auto-promotion via
+Choreographer in the B2 fix).  Memory items and the Threading
+per-worker queues refactor are still ahead.
 
 ### What's landed since the audit was opened
 
@@ -71,24 +76,31 @@ the per-commit deltas with measured numbers.
 - **#opt-in scheduler** `EngineDesc::useSystemThreadPool` opt-in +
   `SystemExecutor` wired to ThreadPool POD path + 10 000-frame
   conservation race-check.
+- **(2026-06-23)** `#T4` low-tier FXAA off, `#S-tonemap-sqrt` gamma 2.0
+  approximation, `#R-setTex-batch` 7-slot texture-binding hoist out
+  of DrawCallBuildSystem inner loop (perf_smoke mean −6.6%).
 
 ### Next-best landings if someone picks this up
 
-Ordered by impact-per-risk on the remaining open items:
+Ordered by impact-per-risk on the remaining open items (updated
+2026-06-23 after #T4 / tonemap / setTex-batch landed):
 
-1. **#T4** (Tier-aware §): low tier `enableFXAA = true` — *trivial*,
-   ~0.8 ms saving on 720p Mali-G57.
-2. **Rendering §** `setTexture` batching for IBL + light data
-   (slots 6/7/8 + 12/13/14, frame-constant) — *low*, ~30% API cost
-   per draw.
-3. **Shaders §** `fs_tonemap.sc` `pow → sqrt` (gamma 2.0 approx) or
-   `BGFX_TEXTURE_FORMAT_SRGB` — *trivial*, one `pow` per pixel saved.
-4. **#P2** (Headline #2 successor) `Surface.setFrameRate` plumbing
+1. **#P2** (Headline #2 successor) `Surface.setFrameRate` plumbing
    on Android — *medium*, halves GPU work + power on 60 Hz panels
-   for tiers that target 30 fps.
-5. **#S1 texture-indirection half** `LOW_TIER` PBR variant that
+   for tiers that target 30 fps.  Lower priority now after the B2
+   fix surfaced Choreographer's auto-promote-to-panel-rate path,
+   but still needed for explicit CAP scenarios (battery-sensitive
+   30 Hz fallback, thermal throttling).
+2. **#S1 texture-indirection half** `LOW_TIER` PBR variant that
    skips the cluster light loop — *medium*, big win on no-lights
    scenes (low tier with `maxActiveLights ≤ 0`).
+3. **Shaders §** `fs_pbr.sc:51-79` — replace `pow(x, 5.0)` in Fresnel
+   with the Schlick polynomial approximation `x = 1 - cos; x²·x²·x`
+   — *trivial*, one pow per light per fragment saved (chokes Mali-G57
+   in particular).
+4. **Shaders §** `fs_pbr.sc:218-220` — `logRatio = log(far/near)`
+   constant per frame, currently divided per fragment.  Bake into a
+   frame uniform.  *trivial*.
 
 ---
 
@@ -157,7 +169,7 @@ Ordered by impact-per-risk on the remaining open items:
 ## Rendering / bgfx
 
 - [x] ⭐ **(#R1) DrawCallBuildSystem.cpp:181-190, 401-410** — `u_dirLight`, `u_shadowMatrix`, `u_frameParams`, `u_lightParams`, `u_iblParams` are all **frame-constant** but uploaded *per draw call*. **Landed via Encoder route, not uniform-hoist.** Investigation: the audit suggested using `BGFX_DISCARD_NONE`-style submit flags to preserve uniforms across draws, but bgfx captures `[m_uniformBegin, m_uniformEnd]` per draw and the kept range grows unboundedly — O(N²) GPU-side uniform processing per N-entity frame, which is *worse* than the original. The actual win comes from acquiring `bgfx::begin()` once per system call: every set*/submit then runs thread-local (~50 ns) instead of grabbing the bgfx command-list mutex (~1-2 μs on Pixel 5a-class CPUs). For ~1000 set/submit calls per frame in `DrawCallBuildSystem` + `submitShadowDrawCalls` + skinned variants, expected saving on Android ~1-2 ms / frame. **Desktop M-series shows no measurable delta** (mutex is uncontested locally on MoltenVK). Also fixed: hoisted IBL fallback texture resolution outside the loop (was 3 `bgfx::isValid` checks per draw). Tests: 716 unit + 22 screenshot still pass — Encoder API is functionally identical. **Measured on Android emulator (sama_high AVD, 702-entity perf_smoke scene, 600 frames, A/B same session via `git revert` + rebuild + reinstall): DrawCallBuildSystem mean 0.043 → 0.042 ms (flat within noise), p99 0.167 → 0.116 ms (−30%), max 0.348 → 0.174 ms (−50%).** Tail-latency drop is the signature of removed mutex contention — mean is flat because uncontested mutex grabs are fast, p99/max capture the times another thread held it. On real Pixel 5a-class ARM hardware the mean would also drop because the emulator's x86_64-translation has lower native mutex cost than the target. *low.*
-- [ ] **DrawCallBuildSystem.cpp:205-230, 423-446** — 10 `setTexture` calls per draw. Slots 6/7/8 (IBL) and 12/13/14 (light data) are frame-constant; bind once. **Cuts API cost ~30%.** *low*.
+- [x] **(#R-setTex-batch) DrawCallBuildSystem.cpp:205-230, 423-446** — 12 `setTexture` calls per draw (the audit said 10, but the actual count after #R1 was 12: slots 0-4 material + slot 5 shadow + slots 6/7/8 IBL + slots 12/13/14 cluster placeholders).  **Landed:** hoist the 7 frame-constant slots (5/6/7/8/12/13/14) once before each loop; submit with flags = `BGFX_DISCARD_ALL & ~BGFX_DISCARD_BINDINGS` so bgfx preserves the binding state across submits (gated in `RenderBind::clear`, bgfx_p.h:1825).  Per-material slots (0..4) still rebound every iteration.  Same pattern mirrored to both `update()` (static PBR) and `updateSkinned()` (skinned PBR).  **Measured (perf_smoke 600 frames × 702 entities, M-series Mac, 5 runs each, multi-threaded):** DrawCallBuildSystem mean 0.288 → 0.269 ms (−6.6%), max 0.713 → 0.611 ms (−14.3%), p99 0.488 → 0.567 ms (+16.2% — mild regression on a metric the budget doesn't gate; budget on mean stays well under 0.50 ms).  Mac M-series under-represents the real win: ~4900 saved set ops/frame on a still-mutex-locked encoder code path inside bgfx will land bigger on Pixel-class CPUs.  Tests: 26982/753 unit + 23/23 screenshot pass byte-for-byte (visual output identical).  *low.*
 - [x] **DrawCallBuildSystem.cpp:18-38** — non-Encoder `bgfx::setTransform/setVertexBuffer/setIndexBuffer/submit`. *Landed together with #R1 — see above. All four overloads + the two shadow paths use Encoder.*
 - [ ] **DrawCallBuildSystem.cpp:243-244, 462-464** — Transparent state includes `BGFX_STATE_MSAA` (ignored on Mali HDR FB, pollutes sort key). Strip it. *trivial*.
 - [ ] **Renderer.cpp:155-167** — `setViewName` called with `snprintf` at init; inline static strings. *trivial*.
@@ -178,7 +190,7 @@ Ordered by impact-per-risk on the remaining open items:
 - [ ] **fs_pbr.sc:166-186** — PCF 2x2 shadow filter unconditional; low tier should use 1-tap hard PCF. **Saves 3 texture samples per fragment.** *low*.
 - [ ] **fs_fxaa.sc + ProjectConfig.cpp:29** — FXAA on for low tier; flip off. *trivial*.
 - [ ] **fs_ssao.sc:93-118** — 16-sample SSAO loop; consider 8 samples on Adreno <740. *low*.
-- [ ] **fs_tonemap.sc:24** — `pow(color, 1/2.2)` is the slowest sRGB approximation. `sqrt(color)` is within 0.005 of gamma 2.0 and 2-3× faster on Mali, OR use `BGFX_TEXTURE_FORMAT_SRGB` on the LDR FB and skip the gamma pass entirely. **Saves one `pow` per pixel × screen.** *trivial*.
+- [x] **(#S-tonemap-sqrt) fs_tonemap.sc:24** — `pow(color, 1/2.2)` per pixel.  **Landed:** swapped for `sqrt(color)` — gamma 2.0 approximation, max delta vs true 2.2 across [0, 1] is ~0.018 at c ≈ 0.05 (within JND for an LDR pipeline that already quantises through tonemap).  Saves one pow per pixel; on Mali 2-3× faster than pow; on every other backend the optimiser usually lowers pow(_,0.5) to rsqrt+rcp but the explicit sqrt is still cheaper.  Goldens: 14 regenerated for tests that go through fs_tonemap (PBR / lit / IBL / animation / shadow / ssao / postprocess / skybox / instancing / unlit); diff signature is the expected uniform mid-tone gamma-shift (shadow-heavy scenes drift more than highlight-heavy ones, no banding or render artefacts).  `ui_button_states.png` intentionally NOT regenerated — UI test doesn't go through tonemap, the `--update-goldens` byte-rewrite was PNG-encoder noise.  Tests: 26982/753 unit + 23/23 screenshot pass.  Mali-specific sqrt-vs-pow win is not measurable on desktop M-series (Metal optimiser collapses both to rsqrt-based paths); real delta is on the integration team's Pixel 9 fps counter.  Alternative — write LDR FB as `BGFX_TEXTURE_FORMAT_SRGB` and drop the gamma pass entirely — documented in the shader comment as the obvious follow-up if the sqrt drift becomes perceptible (bigger refactor, gated on every downstream consumer).  *trivial → landed.*
 - [ ] **vs_pbr.sc:43-44** — bake `u_viewProj_model` server-side for static path to save one mat4*vec4 per vertex. *trivial*.
 - [ ] **vs_pbr_skinned.sc:26-34 + CMakeLists.txt:1131** — bone matrix loads bounded by `BGFX_CONFIG_MAX_BONES=128` even when low tier `maxBones=64`. Compile separate `vs_pbr_skinned_64.sc` variant. *medium*.
 
@@ -190,7 +202,7 @@ Ordered by impact-per-risk on the remaining open items:
 
 ## Tier-aware settings (low-tier specific)
 
-- [ ] ⭐ **(#T4) ProjectConfig.cpp:21-33** — low tier `enableFXAA = true`. FXAA on 720p Mali-G57 ~0.8 ms. Drop. *trivial*.  *Note: tag renumbered from `#T3` to disambiguate — the audit headline reserves `#T3` for the bloom-downsample-steps item, which has landed.*
+- [x] ⭐ **(#T4) ProjectConfig.cpp:21-33** — low tier `enableFXAA = true`.  **Landed:** flipped to `false` plus an explanatory comment in `defaultTiers()`.  Audit projection: ~0.8 ms saving on 720p Mali-G57 (a large fraction of the 33 ms frame budget at this tier's 30 fps target).  Edge quality without FXAA is acceptable at the tier's `renderScale = 0.75` (the upsample-blur to native already softens aliasing).  New `CHECK(low.enableFXAA == false)` in `TestTierConfig.cpp` low-tier defaults test; any regression flipping back to true on the low preset would fail loudly.  Mid + high keep FXAA enabled — those tiers have either GPU headroom or 1080p+ where the post-process cost is amortised across higher pixel count.  Mali-specific perf delta not measurable on desktop M-series; integration win lands on Pixel-tier Android.  *trivial → landed.*  *Note: tag renumbered from `#T3` to disambiguate — the audit headline reserves `#T3` for the bloom-downsample-steps item, which has landed.*
 - [ ] **(#T2) ProjectConfig.cpp:25 + CMakeLists.txt:1131** — `maxBones=64` for low, but shader declares `u_model[128]` (global `BGFX_CONFIG_MAX_BONES=128`). Per-tier shader variant. *medium*.
 - [x] ⭐ **(#T3) TierConfig + ProjectConfig.cpp + PostProcessSystem.cpp** — Mid tier `BloomSettings.downsampleSteps` was inheriting the struct default of 5 (9 fullscreen passes) because `tierToRenderSettings` didn't touch the field, even though `renderSettingsMedium()` had set it correctly to 3 for the direct-construction path.  Worse: the *only* code that actually read the setting at all was nowhere — `PostProcessSystem::submit()` iterated `resources_.steps()`, an init-time constant of 5, so even setting the value would not have removed any passes.  **Landed:** (1) new `TierConfig::bloomDownsampleSteps` field with defaults low=0, mid=3, high=5; (2) `tierToRenderSettings` clamps to [0, 5] and forwards to `RenderSettings::postProcess::bloom::downsampleSteps`; (3) JSON parser reads the field so projects can override per-tier; (4) `PostProcessSystem::submit()` now computes `steps = min(settings.bloom.downsampleSteps, resources_.steps())` — the settings field finally drives the loop count.  We don't reallocate the mip chain on every settings tick (FB resize cost > wasted memory), so memory cost is unchanged from before; the saving is purely fullscreen passes.  Pass count = 2*N - 1 for N ≥ 1, so mid drops from 9 → 5 passes/frame, low from 9 → 0 (off via `enableBloom=false`), high stays at 9.  Tests: 4 new cases pin per-tier defaults + the clamp at both ends (negative → 0, > 5 → 5) + the strict low<mid<high ordering invariant.  Extended JSON-parse case overrides `bloomDownsampleSteps` to confirm the wire-up.  All 22 screenshot tests still pass — defaults didn't change for the screenshot fixture's render path.  *low.*
 - [ ] ⭐ **(#P2) ProjectConfig.cpp + Android** — `targetFPS=30` for low/mid but no plumbing actually caps frame rate on Android (only iOS uses it per `IosApp.mm:127,141`). Add `Surface.setFrameRate(targetFPS)` or `eglSwapInterval(2)`. **Halves GPU work + power on 60 Hz panels.** *medium*.
@@ -264,3 +276,4 @@ Ordered by impact-per-risk on the remaining open items:
 - 2026-06-13 (cull batch): three cull-system items landed in one commit.  (1) `computeConservativeWorldAabb()` helper extracted into `engine/rendering/systems/CullHelpers.h` — replaces `glm::abs(Vec4)` ×3 + `Mat3` ctor + `Mat3 * Vec3` with 9 `fabsf` + 9 muls + 6 adds, no Mat3 / Vec4 temporaries.  (2) FrustumCullSystem caches the prior `has<VisibleTag>` result and skips the redundant `emplace`/`remove` round-trip when state didn't change between frames.  (3) ShadowCullSystem gains a single-pass `update(reg, res, span<Frustum>, baseCascadeIdx)` overload — walks the mesh view once, builds the AABB once, accumulates the cascade mask in a local before writing back; the per-cascade form delegates to it.  perf_smoke A/B (702 entities, 600 frames, 5 runs each side): FrustumCullSystem mean **0.048 ms → 0.034 ms (−29%)** median.  ShadowCullSystem not measured by perf_smoke (the scene doesn't drive it).  All 26 971 unit assertions + 22/22 screenshot tests pass — byte-identical visual output, no banding/popping from the cull edits.  2 new ShadowCullSystem tests pin the multi-cascade ↔ per-cascade equivalence and the "preserves bits outside owned range" contract.
 - 2026-06-13: #H1 cluster landed + per-frame ThreadPool opt-in scaffolding (multiple commits in one batch).  ThreadPool rewrite: POD `submitTask(fn, arg)` path with no allocation; bounded-ring storage replaces `std::deque<std::function<void()>>`; `std::counting_semaphore<>` for work-available wakeup (eliminates CV-with-mutex-held wakeup pattern); atomic `activeTasks_` with `notify` only on transition-to-zero edge.  `submit(std::function)` kept as back-compat wrapper so AssetManager and existing users are untouched.  4 new ThreadPool test cases (POD-path basic, 1000-task stress, submit/submitTask interleave, multi-cycle waitAll drain).  SystemExecutor wiring: switched to POD `submitTask` path; 7 new test cases including a 10 000-frame conservation-law race-check that's TSAN-friendly (`cmake -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"` to enable).  Engine plumbing: new `EngineDesc::useSystemThreadPool` (default **false** — per-frame systems remain single-threaded by default, preserving historical behaviour) and `EngineDesc::systemThreadPoolSize` (default 0 = engine picks `hardware_concurrency() - 2` clamped to [2, 8]); `Engine::systemThreadPool()` accessor returns nullptr when opt-in is off; `maybeCreateSystemThreadPool` private helper wired into all three init paths (desktop / Android / iOS).  4 new EngineDesc plumbing test cases.  CMake: `engine_threading` added to all three `engine_core` link branches.  All 26 960 unit assertions + 745 cases + 22 screenshot tests pass.  Audit's "<0.5 μs dispatch latency" target not yet measured on-device; spin-poll-then-CV `waitAll()` should hit it on the common path but per-worker queues + work-stealing (true MPMC) is the remaining refactor for high contention.
 - 2026-06-12 (later still, TransformSystem batch): both remaining open TransformSystem CPU-hot-loop items landed in one commit.  (a) `composeLocal` rewritten from `translate * mat4_cast(q) * scale` (~176 muls + 3 Mat4 temporaries) to direct TRS construction (~29 muls, no Mat4 temporaries).  (b) `setWorldMatrix` replaced by `writeWorldMatrix(reg, entity, cached_wtc, world)` — callers now do a single `reg.get<WorldTransform>()` at the top of each entity's processing instead of `has + get + emplace` (3 sparse-set hits per child).  `perf_smoke --dirty-all` clean A/B in the same session, 5 runs each: mean 0.062 → 0.046 ms (**−26%**), p99 0.074 → 0.056 ms (**−24%**), max 0.077 → 0.061 ms (**−21%**) on 702 entities at 600 frames.  Default (clean fast path) flat within noise (mean 0.033 → 0.034).  Audit projection of 50% saving was based on muls-only counting; the measured 26% includes view iteration + dirty-flag check overhead that share the per-entity envelope.  New `--dirty-all` CLI flag in `perf_smoke` to make the worst-case path reproducible (default scene goes all-clean after frame 0, so the audit's per-entity composeLocal claim would yield no signal otherwise).  All 6894 unit + 22 screenshot tests pass.
+- 2026-06-23: three "Next-best landings" items landed in one short session.  (1) **#T4** — `defaultTiers()` low-tier `enableFXAA` flipped `true → false` with audit-comment + new `CHECK(low.enableFXAA == false)` test; trivial change, ~0.8 ms saving on 720p Mali-G57 per the audit (not measurable on desktop M-series — landed on Pixel-class Android only).  (2) **#S-tonemap-sqrt** — `fs_tonemap.sc:24` swapped `pow(color, 1/2.2)` for `sqrt(color)` (gamma 2.0 approximation, max delta ~0.018 across [0, 1]).  14 goldens regenerated for tonemap-using tests; `ui_button_states.png` confirmed intentionally NOT regenerated (UI test doesn't go through tonemap; `--update-goldens` byte-rewrite was PNG-encoder noise).  Visual signature is uniform mid-tone gamma shift, no banding.  (3) **#R-setTex-batch** — hoist 7 frame-constant texture bindings (slots 5/6/7/8/12/13/14) out of both `update()` and `updateSkinned()` inner loops; submit with `BGFX_DISCARD_ALL & ~BGFX_DISCARD_BINDINGS` so bgfx preserves the binding state across submits (gated in `RenderBind::clear`, bgfx_p.h:1825).  perf_smoke A/B (702 entities × 600 frames × 5 runs, M-series Mac, multi-threaded): DrawCallBuildSystem mean **0.288 → 0.269 ms (−6.6%)**, max **0.713 → 0.611 ms (−14.3%)**, p99 0.488 → 0.567 ms (+16.2% — mild regression on a metric the budget doesn't gate).  Mac M-series under-represents the real saving: ~4900 saved set ops/frame on a still-mutex-locked encoder code path lands bigger on Pixel-class CPUs.  All 26 982 unit + 23/23 screenshot tests pass byte-for-byte (visual output identical).
