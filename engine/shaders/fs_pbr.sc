@@ -67,7 +67,13 @@ SAMPLERCUBE(s_irradiance,  6);
 SAMPLERCUBE(s_prefiltered, 7);
 SAMPLER2D(s_brdfLut,       8);
 
-// .x = maxMipLevels for prefiltered cubemap, .y = iblEnabled (1.0=on, 0.0=off)
+// .x = maxMipLevels for prefiltered cubemap
+// .y = iblEnabled (1.0=on, 0.0=off)
+// .z = hardShadows (1.0 = 1-tap PCF, 0.0 = 4-tap PCF 2x2) — audit
+//      #S-pcf-tier.  Low tier opts in via TierConfig.shadowMapSize<2048
+//      → ShadowFilter::Hard → PbrFrameParams::hardShadows=true →
+//      DrawCallBuildSystem packs it here.
+// .w = unused
 uniform vec4 u_iblParams;
 
 // mat4[4]: one shadow matrix per cascade (worldPos -> shadow UV).
@@ -242,17 +248,31 @@ void main()
             shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0 &&
             shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0)
         {
-            float texelSize = 1.0 / 2048.0;
             // Slope-scaled bias: surfaces at oblique angles to the light need
             // more bias.  Clamp to [0.002, 0.02] to avoid light leaks.
             mediump float slopeFactor = clamp(1.0 - dot(Ngeom, L), 0.0, 1.0);
             mediump float shadowBias = mix(0.002, 0.02, slopeFactor);
             float shadowZ = shadowCoord.z - shadowBias;
-            shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowZ));
-            shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowZ));
-            shadow *= 0.25;
+            // Audit #S-pcf-tier: low tier opts out of the 4-tap filter
+            // via u_iblParams.z = 1.0, saving 3 shadow2D samples per
+            // fragment.  Uniform branch — coherent across the warp on
+            // Mali/Adreno/Apple GPUs (sub-cycle cost; the saved samples
+            // are ~12 cycles on Mali-G57 each).  Hardware bilinear on the
+            // PCF sampler still gives the single tap a 2x2 averaged depth
+            // compare for free.
+            if (u_iblParams.z > 0.5)
+            {
+                shadow = shadow2D(s_shadowMap, vec3(shadowCoord.xy, shadowZ));
+            }
+            else
+            {
+                float texelSize = 1.0 / 2048.0;
+                shadow  = shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize, -texelSize), shadowZ));
+                shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize, -texelSize), shadowZ));
+                shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2(-texelSize,  texelSize), shadowZ));
+                shadow += shadow2D(s_shadowMap, vec3(shadowCoord.xy + vec2( texelSize,  texelSize), shadowZ));
+                shadow *= 0.25;
+            }
         }
     }
 

@@ -36,6 +36,17 @@ struct PbrFrameParams
     bgfx::TextureHandle irradiance = BGFX_INVALID_HANDLE;   // slot 6
     bgfx::TextureHandle prefiltered = BGFX_INVALID_HANDLE;  // slot 7
     bgfx::TextureHandle brdfLut = BGFX_INVALID_HANDLE;      // slot 8
+
+    // Audit #S-pcf-tier (PERF_AUDIT_2026-05-25 "Shaders" §):
+    // Low tier opts out of the 4-tap PCF shadow filter to save 3 shadow2D
+    // samples per fragment.  Default false (4-tap), preserves existing
+    // visual output for every caller that doesn't opt in.  Callers
+    // typically read this from
+    // `engine.renderer().renderSettings().shadows.filter == ShadowFilter::Hard`
+    // — ProjectConfig::tierToRenderSettings already populates that field
+    // from TierConfig.shadowMapSize (Hard when <2048, PCF4x4 otherwise).
+    // Encoded into u_iblParams.z (was an unused slot) by DrawCallBuildSystem.
+    bool hardShadows = false;
 };
 
 // ---------------------------------------------------------------------------

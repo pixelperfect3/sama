@@ -126,6 +126,11 @@ rendering::RenderSettings ProjectConfig::tierToRenderSettings(const TierConfig& 
 
     rs.shadows.directionalRes = static_cast<uint16_t>(tier.shadowMapSize);
     rs.shadows.cascadeCount = static_cast<uint8_t>(tier.shadowCascades);
+    // ShadowFilter::Hard takes the 1-tap shadow path in fs_pbr.sc
+    // (saves 3 shadow2D samples per fragment).  Game code reads this
+    // via `engine.renderer().renderSettings().shadows.filter` and
+    // forwards into `PbrFrameParams::hardShadows` at frame build time.
+    // Audit #S-pcf-tier.
     rs.shadows.filter = (tier.shadowMapSize >= 2048) ? rendering::ShadowFilter::PCF4x4
                                                      : rendering::ShadowFilter::Hard;
 

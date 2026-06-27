@@ -194,8 +194,13 @@ void DrawCallBuildSystem::update(ecs::Registry& reg, const RenderResources& res,
     const float lightParamsData[4] = {0.0f, frameW, frameH, 0.0f};
 
     // u_iblParams = {maxMipLevels, iblEnabled, 0, 0}
+    // u_iblParams = {maxMipLevels, iblEnabled, hardShadows, 0}
+    //   .z = hardShadows (1.0 selects the 1-tap shadow path in fs_pbr.sc;
+    //   0.0 keeps the 4-tap PCF default).  See PbrFrameParams::hardShadows
+    //   for the wiring rationale (audit #S-pcf-tier).
     const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
-                                    frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
+                                    frame.iblEnabled ? 1.0f : 0.0f,
+                                    frame.hardShadows ? 1.0f : 0.0f, 0.0f};
 
     // Resolve IBL textures once — the active triple is constant for the loop.
     const bool iblActive = frame.iblEnabled && bgfx::isValid(frame.brdfLut);
@@ -449,8 +454,13 @@ void DrawCallBuildSystem::updateSkinned(ecs::Registry& reg, const RenderResource
         frame.camPos[0], frame.camPos[1], frame.camPos[2], 0.0f};
 
     const float lightParamsData[4] = {0.0f, frameW, frameH, 0.0f};
+    // u_iblParams = {maxMipLevels, iblEnabled, hardShadows, 0}
+    //   .z = hardShadows (1.0 selects the 1-tap shadow path in fs_pbr.sc;
+    //   0.0 keeps the 4-tap PCF default).  See PbrFrameParams::hardShadows
+    //   for the wiring rationale (audit #S-pcf-tier).
     const float iblParamsData[4] = {frame.iblEnabled ? frame.maxMipLevels : 0.0f,
-                                    frame.iblEnabled ? 1.0f : 0.0f, 0.0f, 0.0f};
+                                    frame.iblEnabled ? 1.0f : 0.0f,
+                                    frame.hardShadows ? 1.0f : 0.0f, 0.0f};
 
     // Resolve IBL textures once — see the static-mesh overload for the
     // rationale behind hoisting these (cube fallback when IBL disabled).
