@@ -146,14 +146,26 @@ void main()
     mediump float ao = max(texture2D(s_occlusion, v_texcoord0).x, 0.1);
 
     // -----------------------------------------------------------------------
-    // Normal — TBN normal mapping.  TBN frame stays highp; normalSample
-    // (from an 8-bit texture) is mediump.  The final world-space N is
-    // mediump (unit vector — fp16 representation has ~10 bits of
-    // precision per axis, well within the angular accuracy that PBR
-    // shading needs).
+    // Normal — TBN normal mapping.  Audit "Shaders" § (fs_pbr.sc:108-119):
+    // skip normalize on T and B.
+    //
+    // vs_pbr.sc emits per-vertex `v_tangent = normalize(...)` (unit) and
+    // `v_bitangent = cross(N, T) * sign` (unit when N⊥T, which is true at
+    // each vertex).  Linear interpolation across the triangle preserves
+    // direction but drifts magnitude uniformly across T/B/N.  The final
+    // `normalize(T*ns.x + B*ns.y + N*ns.z)` below cancels the magnitude
+    // drift — so the per-axis normalize for T and B is wasted work.
+    //
+    // We keep `normalize(v_normal)` because Ngeom is also used directly
+    // for the shadow bias (`dot(Ngeom, L)` at line ~225) and the IBL
+    // hemisphere ambient — both expect a unit vector.
+    //
+    // Saves 2 rsqrt per fragment on every backend; Mali-G57 in particular
+    // benefits because rsqrt and the implicit dot+sqrt fold to the same
+    // FP16 ALU pipe slot, so each saved rsqrt frees a cycle for shading.
     // -----------------------------------------------------------------------
-    vec3 T = normalize(v_tangent);
-    vec3 B = normalize(v_bitangent);
+    vec3 T = v_tangent;
+    vec3 B = v_bitangent;
     vec3 Ngeom = normalize(v_normal);
 
     // Sample normal map (slot 1), decode [0,1] -> [-1,1] tangent-space normal.
@@ -162,7 +174,9 @@ void main()
 
     // Transform tangent-space normal to world space.
     // Expanded manually (T*ns.x + B*ns.y + N*ns.z) to avoid
-    // mtxFromCols which transposes on Metal's shader path.
+    // mtxFromCols which transposes on Metal's shader path.  The outer
+    // normalize() takes care of the un-normalized T/B magnitudes (see
+    // comment block above).
     mediump vec3 N =
         normalize(T * normalSample.x + B * normalSample.y + Ngeom * normalSample.z);
 
